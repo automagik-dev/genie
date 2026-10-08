@@ -1,0 +1,85 @@
+{
+  "schemaVersion": 1,
+  "scope": "C5 native-observer source only; actual complete fresh native workflow still required",
+  "snapshot": "G8-REPAIR5-SOURCE-SNAPSHOT.json",
+  "recordedAt": "2026-10-06T15:20:39.812117Z",
+  "correctnessVerdict": "SHIP",
+  "qualityVerdict": "SHIP",
+  "correctnessReview": {
+    "text": "{\n  \"overall_correctness\": \"correct\",\n  \"explanation\": \"SHIP \u2014 scoped C4\u2192C5 native-observer SOURCE repair only, with no concrete patch-introduced blocking defect found: prepareNativeEnvironment (observer lines 227\u2013240) is consumed before profile creation at line 420, derives canonical private HOME/GENIE_HOME/TMPDIR/XDG directories beneath the owning clone\u2019s .g8-runtime, rejects symlink/non-directory/non-private paths and reserved launch.env overrides, preserves external DSH profile/session/journal roots and the existing workspace-write sandbox, and forwards the resulting nonsecret environment into process state, plugin installation and LaunchEnvironmentSnapshot; explicit root meta.delegationDepth=0 at line 479 is forwarded unchanged by the actual installed AgentFactory.createAgent into SessionSt\u2026\n  \"confidence\": 0.97,\n  \"findings\": []\n}\n\n[Some lines truncated to 768 chars]",
+    "details": {
+      "totalLines": 6,
+      "displayContent": {
+        "text": "{\n  \"overall_correctness\": \"correct\",\n  \"explanation\": \"SHIP \u2014 scoped C4\u2192C5 native-observer SOURCE repair only, with no concrete patch-introduced blocking defect found: prepareNativeEnvironment (observer lines 227\u2013240) is consumed before profile creation at line 420, derives canonical private HOME/GENIE_HOME/TMPDIR/XDG directories beneath the owning clone\u2019s .g8-runtime, rejects symlink/non-directory/non-private paths and reserved launch.env overrides, preserves external DSH profile/session/journal roots and the existing workspace-write sandbox, and forwards the resulting nonsecret environment into process state, plugin installation and LaunchEnvironmentSnapshot; explicit root meta.delegationDepth=0 at line 479 is forwarded unchanged by the actual installed AgentFactory.createAgent into SessionSt\u2026\n  \"confidence\": 0.97,\n  \"findings\": []\n}",
+        "startLine": 1,
+        "lineNumbers": [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6
+        ]
+      },
+      "fileSize": 3333,
+      "meta": {
+        "source": {
+          "type": "internal",
+          "value": "agent://G8CorrectnessReview"
+        },
+        "limits": {
+          "columnTruncated": {
+            "maxColumn": 768,
+            "unit": "chars"
+          }
+        }
+      },
+      "resolvedPath": "/home/genie/.omp/agent/sessions/-workspace-repos-genie/2026-10-05T14-02-09-036Z_01a10c5f-370c-7000-b1a1-e7fa3d0156ea/G8CorrectnessReview.md",
+      "contentType": "text/markdown"
+    }
+  },
+  "qualityReview": {
+    "text": "{\n  \"overall_correctness\": \"correct\",\n  \"explanation\": \"SHIP for the bounded repair5/B5 source delta sealed in G8-REPAIR5-SOURCE-SNAPSHOT.json, not overall Group8 completion: native-workflow-observer.mjs lines 215\u2013242 and 422 route observer-derived mutable HOME/GENIE_HOME/TMPDIR/XDG paths through the actual launch environment, reject reserved overrides and noncanonical/symlink/nonprivate directories, and retain external profile/journal/session and credential boundaries; line 479 supplies delegationDepth: 0 through the public agent factory into the canonical session header without weakening exact-header reconciliation or descendant depth propagation. Reused attributable evidence comprises G8-CONTAINED-NATIVE-SDK-PROOF.json (actual public native bash, workspace-write/full enforcement, contained wr\u2026\n  \"confidence\": 0.96,\n  \"findings\": []\n}\n\n[Some lines truncated to 768 chars]",
+    "details": {
+      "totalLines": 6,
+      "displayContent": {
+        "text": "{\n  \"overall_correctness\": \"correct\",\n  \"explanation\": \"SHIP for the bounded repair5/B5 source delta sealed in G8-REPAIR5-SOURCE-SNAPSHOT.json, not overall Group8 completion: native-workflow-observer.mjs lines 215\u2013242 and 422 route observer-derived mutable HOME/GENIE_HOME/TMPDIR/XDG paths through the actual launch environment, reject reserved overrides and noncanonical/symlink/nonprivate directories, and retain external profile/journal/session and credential boundaries; line 479 supplies delegationDepth: 0 through the public agent factory into the canonical session header without weakening exact-header reconciliation or descendant depth propagation. Reused attributable evidence comprises G8-CONTAINED-NATIVE-SDK-PROOF.json (actual public native bash, workspace-write/full enforcement, contained wr\u2026\n  \"confidence\": 0.96,\n  \"findings\": []\n}",
+        "startLine": 1,
+        "lineNumbers": [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6
+        ]
+      },
+      "fileSize": 1772,
+      "meta": {
+        "source": {
+          "type": "internal",
+          "value": "agent://G8QualityReview"
+        },
+        "limits": {
+          "columnTruncated": {
+            "maxColumn": 768,
+            "unit": "chars"
+          }
+        }
+      },
+      "resolvedPath": "/home/genie/.omp/agent/sessions/-workspace-repos-genie/2026-10-05T14-02-09-036Z_01a10c5f-370c-7000-b1a1-e7fa3d0156ea/G8QualityReview.md",
+      "contentType": "text/markdown"
+    }
+  },
+  "correctnessRepairCycles": 5,
+  "correctnessRepairBudget": 5,
+  "qualityRepairCycles": 1,
+  "qualityRepairCap": 1,
+  "containedProfileChecks": "G8-CONTAINED-NATIVE-PROFILE-CHECKS.json; actual19exit0/nodepthalias/no models",
+  "nativeAccountingComplete": false,
+  "previousPaidFailuresPreserved": true,
+  "scoredEngineCells": 0,
+  "scoredNativeCells": 0,
+  "experimentalPRs": 0,
+  "ownerDecision": "G8-NATIVE-REPAIR5-OWNER-DECISION.json"
+}

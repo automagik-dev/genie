@@ -1,0 +1,51 @@
+{
+  "schemaVersion": 1,
+  "sourceRepair": "G3-CAP-RECEIPT-REPAIR3-SNAPSHOT.json",
+  "command": "bun install --frozen-lockfile && env -u NO_COLOR TMPDIR=/var/tmp flock /var/tmp/genie-full-check.lock bun run check",
+  "job": "bg_72",
+  "actualSuccessfulCompletion": true,
+  "actualSeconds": 534.04,
+  "rawOutput": "artifact://647",
+  "dependencyInstall": {
+    "installs": 296,
+    "packages": 367,
+    "changes": 0
+  },
+  "stageChain": [
+    "root+bothplugin typecheck",
+    "Biome",
+    "knip dead-code",
+    "skills lint",
+    "wishes lint",
+    "complexity budget",
+    "whole Bun test suite"
+  ],
+  "tests": {
+    "pass": 3215,
+    "skip": 2,
+    "fail": 0,
+    "tests": 3217,
+    "files": 156,
+    "expectCalls": 19176,
+    "seconds": 510.92
+  },
+  "warningsNotSuppressed": [
+    {
+      "path": "src/genie-commands/doctor.ts:1211",
+      "symbol": "codexPluginSurfaceChecks",
+      "complexity": 26,
+      "threshold": 25,
+      "architecturalReview": "G9-INTEGRATED-SOURCE-QUALITY.json independently evaluated cohesive bounded read-only classification; retain unchanged"
+    },
+    {
+      "tool": "knip",
+      "configurationHints": [
+        "mikro workspace",
+        "mikro ignoreWorkspaces",
+        "react ignoreDependencies",
+        "plugins/dsh-genie-board/build.test.ts entry pattern"
+      ]
+    }
+  ],
+  "limit": "Fresh full source gate, not final G9/outcome/remote CI acceptance"
+}

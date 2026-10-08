@@ -7,12 +7,14 @@
  * backend owns "what actually executes the turn", so a second engine can
  * slot in behind the same host-visible surface.
  *
- * Deliberately no `signal` parameter: the MCP server has no cancellation
- * wiring and `RLMOptions` (`src/rlm.ts`) has no `signal` field, so a signal
- * would have no producer and no legacy consumer. Each backend owns its own
- * stopping semantics — the legacy backend keeps its internal
- * `maxIterations`/`timeout` → `budgetHit` behavior; a future backend owns a
- * deadline/kill of its own.
  */
-export {};
+/** Failed backend operation carrying only actual observed receipts, never a fabricated zero. */
+export class BackendRunError extends Error {
+    receipt;
+    constructor(message, receipt, options) {
+        super(message, options);
+        this.receipt = receipt;
+        this.name = "BackendRunError";
+    }
+}
 //# sourceMappingURL=backend.js.map

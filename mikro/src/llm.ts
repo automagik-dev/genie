@@ -6,7 +6,9 @@
  */
 
 import { builtinModels } from "@earendil-works/pi-ai/providers/all";
-import type { Message, UserMessage, AssistantMessage as PiAssistantMessage, SimpleStreamOptions, KnownProvider, TextContent } from "@earendil-works/pi-ai";
+import { createAssistantMessageEventStream, calculateCost, InMemoryCredentialStore } from "@earendil-works/pi-ai";
+import type { Api, AssistantMessageEventStream, Context, Message, Model, Models, UserMessage, AssistantMessage as PiAssistantMessage, SimpleStreamOptions, MutableModels, TextContent } from "@earendil-works/pi-ai";
+import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import {
   ensureStationModels,
   registerStationProvider,
@@ -30,18 +32,52 @@ import type { Logger } from "./logger.js";
 import type { PgStorage } from "./storage.js";
 import { buildGeminiOnPayload, isGoogleProvider, type ThinkingLevel } from "./gemini.js";
 
-/**
- * Shared pi-ai Models runtime. `builtinModels()` registers every built-in
- * provider once per process; provider auth resolution (env API keys such as
- * ANTHROPIC_API_KEY / GEMINI_API_KEY) replaces the old compat env-key
- * injection that the root `completeSimple`/`getModel` helpers provided.
- */
-const models = builtinModels();
-// Register the local Lemonade gateway as a first-class `station/<model>`
-// provider at this resolution site (mirrored in src/sdk/rlm-driver.ts).
-registerStationProvider(models);
-// Same for the khal LiteLLM gateway (`khal/<model>`).
-registerKhalProvider(models);
+/** Catalogs are cached per config list, never overlaid onto another project's runtime. */
+const configuredModels = new WeakMap<readonly CustomProviderConfig[], MutableModels>();
+function newModels(): MutableModels {
+  const runtime = builtinModels({ credentials: new InMemoryCredentialStore() });
+  registerStationProvider(runtime);
+  registerKhalProvider(runtime);
+  return runtime;
+}
+const defaultModels = newModels();
+
+export function getModelRuntime(providers?: readonly CustomProviderConfig[]): MutableModels {
+  if (!providers?.length) return defaultModels;
+  let runtime = configuredModels.get(providers);
+  if (!runtime) {
+    runtime = newModels();
+    configuredModels.set(providers, runtime);
+  }
+  ensureCustomProviders(runtime, providers);
+  return runtime;
+}
+
+/** Only the selected dynamic gateway may perform catalog discovery. */
+export async function prepareModelRuntime(modelConfig: ModelConfig): Promise<MutableModels> {
+  const runtime = getModelRuntime(modelConfig.providers);
+  if (!modelConfig.providers?.some((provider) => provider.id === modelConfig.provider)) {
+    if (modelConfig.provider === STATION_PROVIDER_ID) await ensureStationModels(runtime);
+    if (modelConfig.provider === KHAL_PROVIDER_ID) await ensureKhalModels(runtime);
+  }
+  return runtime;
+}
+
+/** Fresh headless Pi session runtime: no operator files, ambient models config or auth writes. */
+export async function createPiModelRuntime(modelConfig: ModelConfig): Promise<ModelRuntime> {
+  const models = await prepareModelRuntime(modelConfig);
+  const runtime = await ModelRuntime.create({
+    credentials: new InMemoryCredentialStore(),
+    modelsPath: null,
+    allowModelNetwork: false,
+    refreshOnCreate: false,
+  });
+  for (const id of new Set([STATION_PROVIDER_ID, KHAL_PROVIDER_ID, ...(modelConfig.providers ?? []).map((p) => p.id)])) {
+    const provider = models.getProvider(id);
+    if (provider) runtime.registerNativeProvider(provider);
+  }
+  return runtime;
+}
 
 /** Token usage tracking. */
 export interface UsageStats {
@@ -53,6 +89,340 @@ export interface UsageStats {
   llmCalls: number;
   /** Reasoning/thinking tokens (a subset of outputTokens), when the provider reports them. */
   reasoningTokens?: number;
+}
+
+export type LLMFailureStopReason = "error" | "aborted" | "length";
+
+function redactHeaderCredentials(message: string, headers?: Record<string, string>): string {
+  if (!headers) return message;
+  for (const name in headers) {
+    const value = headers[name];
+    if (!value) continue;
+    message = message.replaceAll(value, "[redacted]");
+    const normalized = value.trim();
+    if (!normalized) continue;
+    message = message.replaceAll(normalized, "[redacted]");
+    const credential = /^(?:Bearer|Basic)\s+(.+)$/i.exec(normalized)?.[1];
+    if (credential) message = message.replaceAll(credential, "[redacted]");
+  }
+  return message;
+}
+
+/** Redact credentials and request bodies before provider diagnostics reach logs/callers. */
+export function secretSafeErrorMessage(message: string, modelConfig?: ModelConfig): string {
+  // File-auth credentials exist only during provider auth; never re-read them to sanitize a diagnostic.
+  if (modelConfig?.providers?.some((provider) => provider.id === modelConfig.provider && provider.apiKeyFile)) {
+    return "Provider diagnostic omitted for file-reference authentication";
+  }
+  const jsonStart = message.indexOf("{");
+  if (jsonStart >= 0) {
+    try {
+      const body = JSON.parse(message.slice(jsonStart));
+      const diagnostic = body?.error?.message ?? body?.message;
+      if (typeof diagnostic === "string") message = message.slice(0, jsonStart) + diagnostic;
+    } catch {
+      // Non-JSON provider diagnostics still pass through the redaction below.
+    }
+  }
+  let safe = message.split(/[\r\n]/, 1)[0]
+    .replace(/\{[\s\S]*|\[[\s\S]*/g, "[provider details omitted]")
+    .replace(/\b(Bearer|Basic)\s+\S+/gi, "$1 [redacted]")
+    .replace(/((?:api[_-]?key|token|secret|password|authorization)\s*[:=]\s*)[^\s,;]+/gi, "$1[redacted]")
+    .replace(/https?:\/\/\S+/gi, "[endpoint omitted]");
+  for (const name in process.env) {
+    const value = process.env[name];
+    if (value && /KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL/i.test(name)) safe = safe.replaceAll(value, "[redacted]");
+  }
+  for (const provider of modelConfig?.providers ?? []) {
+    for (const name of provider.apiKeyEnv) {
+      const value = process.env[name];
+      if (value) safe = safe.replaceAll(value, "[redacted]");
+    }
+    safe = redactHeaderCredentials(safe, provider.headers);
+    for (const model of provider.models) safe = redactHeaderCredentials(safe, model.headers);
+  }
+  return safe.slice(0, 500);
+}
+
+/** `usage` belongs to this failed logical operation; merge it once, never also its partial response. */
+export class LLMCompletionError extends Error {
+  readonly errorMessage: string;
+  constructor(
+    readonly stopReason: LLMFailureStopReason,
+    errorMessage?: string,
+    readonly usage?: UsageStats,
+    modelConfig?: ModelConfig,
+  ) {
+    const safe = secretSafeErrorMessage(errorMessage ?? "No provider diagnostic", modelConfig);
+    super(`LLM stopped with reason "${stopReason}": ${safe}`);
+    this.name = "LLMCompletionError";
+    this.errorMessage = safe;
+  }
+}
+
+
+const usageReported = new WeakSet<PiAssistantMessage>();
+const COMPLETIONS_USAGE_FIELDS = ["prompt_tokens", "completion_tokens", "total_tokens"];
+const ANTHROPIC_USAGE_FIELDS = ["input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"];
+const GOOGLE_USAGE_FIELDS = ["promptTokenCount", "candidatesTokenCount", "thoughtsTokenCount", "cachedContentTokenCount", "totalTokenCount"];
+const RESPONSES_USAGE_FIELDS = ["input_tokens", "output_tokens", "total_tokens"];
+const BEDROCK_USAGE_FIELDS = ["inputTokens", "outputTokens", "cacheReadInputTokens", "cacheWriteInputTokens", "totalTokens"];
+const PI_USAGE_FIELDS = ["input", "output", "cacheRead", "cacheWrite", "totalTokens"];
+
+function checkedRecord(value: unknown): Record<string, unknown> | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  return value as Record<string, unknown>;
+}
+
+function numericField(record: Record<string, unknown> | undefined, name: string): number | undefined {
+  const value = record?.[name];
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function checkedUsage(value: unknown, fields: readonly string[]): Record<string, unknown> | undefined {
+  const usage = checkedRecord(value);
+  if (!usage) return undefined;
+  for (const field of fields) {
+    if (numericField(usage, field) !== undefined) return usage;
+  }
+  return undefined;
+}
+
+/** Packet locations are the actual public SDK adapter inputs, including Codex's pre-translation done. */
+function providerUsagePacket(data: unknown, api: Api): Record<string, unknown> | undefined {
+  const packet = checkedRecord(data);
+  if (!packet) return undefined;
+  switch (api) {
+    case "openai-completions": {
+      const choice = Array.isArray(packet.choices) ? checkedRecord(packet.choices[0]) : undefined;
+      return checkedUsage(packet.usage || choice?.usage, COMPLETIONS_USAGE_FIELDS);
+    }
+    case "mistral-conversations":
+      return checkedUsage(packet.usage, COMPLETIONS_USAGE_FIELDS);
+    case "anthropic-messages":
+      if (packet.type === "message_start") return checkedUsage(checkedRecord(packet.message)?.usage, ANTHROPIC_USAGE_FIELDS);
+      if (packet.type === "message_delta") return checkedUsage(packet.usage, ANTHROPIC_USAGE_FIELDS);
+      return undefined;
+    case "google-generative-ai":
+    case "google-vertex":
+      return checkedUsage(packet.usageMetadata, GOOGLE_USAGE_FIELDS);
+    case "openai-responses":
+    case "azure-openai-responses":
+    case "openai-codex-responses":
+      if (packet.type === "response.completed" || packet.type === "response.incomplete" ||
+          packet.type === "response.failed" || (api === "openai-codex-responses" && packet.type === "response.done")) {
+        return checkedUsage(checkedRecord(packet.response)?.usage, RESPONSES_USAGE_FIELDS);
+      }
+      return undefined;
+    case "bedrock-converse-stream":
+      return checkedUsage(checkedRecord(packet.metadata)?.usage, BEDROCK_USAGE_FIELDS);
+    case "pi-messages":
+      return packet.type === "done" || packet.type === "error" ? checkedUsage(packet.usage, PI_USAGE_FIELDS) : undefined;
+    default:
+      return undefined;
+  }
+}
+
+/** Snapshot real raw counters before any observer can abort or throw ahead of SDK normalization. */
+function captureProviderUsage(
+  raw: Record<string, unknown>,
+  api: Api,
+  previous?: PiAssistantMessage["usage"],
+): PiAssistantMessage["usage"] {
+  const usage = previous ?? {
+    input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0,
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+  };
+  switch (api) {
+    case "openai-completions": {
+      const promptDetails = checkedRecord(raw.prompt_tokens_details);
+      usage.cacheRead = numericField(promptDetails, "cached_tokens") ?? numericField(raw, "prompt_cache_hit_tokens") ??
+        numericField(raw, "cached_tokens") ?? 0;
+      usage.cacheWrite = numericField(promptDetails, "cache_write_tokens") ?? 0;
+      usage.input = Math.max(0, (numericField(raw, "prompt_tokens") ?? 0) - usage.cacheRead - usage.cacheWrite);
+      usage.output = numericField(raw, "completion_tokens") ?? 0;
+      usage.reasoning = numericField(checkedRecord(raw.completion_tokens_details), "reasoning_tokens") ?? 0;
+      usage.totalTokens = usage.input + usage.output + usage.cacheRead + usage.cacheWrite;
+      break;
+    }
+    case "mistral-conversations": {
+      const prompt = numericField(raw, "prompt_tokens") ?? 0;
+      const cached = numericField(checkedRecord(raw.promptTokensDetails), "cachedTokens") ??
+        numericField(checkedRecord(raw.prompt_tokens_details), "cached_tokens") ??
+        numericField(checkedRecord(raw.promptTokenDetails), "cachedTokens") ??
+        numericField(checkedRecord(raw.prompt_token_details), "cached_tokens") ??
+        numericField(raw, "numCachedTokens") ?? numericField(raw, "num_cached_tokens") ?? 0;
+      usage.cacheRead = Math.min(prompt, Math.max(0, cached));
+      usage.cacheWrite = 0;
+      usage.input = Math.max(0, prompt - usage.cacheRead);
+      usage.output = numericField(raw, "completion_tokens") ?? 0;
+      usage.totalTokens = numericField(raw, "total_tokens") || usage.input + usage.output + usage.cacheRead;
+      break;
+    }
+    case "anthropic-messages":
+      usage.input = numericField(raw, "input_tokens") ?? usage.input;
+      usage.output = numericField(raw, "output_tokens") ?? usage.output;
+      usage.reasoning = numericField(checkedRecord(raw.output_tokens_details), "thinking_tokens") ?? usage.reasoning;
+      usage.cacheRead = numericField(raw, "cache_read_input_tokens") ?? usage.cacheRead;
+      usage.cacheWrite = numericField(raw, "cache_creation_input_tokens") ?? usage.cacheWrite;
+      usage.cacheWrite1h = numericField(checkedRecord(raw.cache_creation), "ephemeral_1h_input_tokens") ?? usage.cacheWrite1h;
+      usage.totalTokens = usage.input + usage.output + usage.cacheRead + usage.cacheWrite;
+      break;
+    case "google-generative-ai":
+    case "google-vertex":
+      usage.cacheRead = numericField(raw, "cachedContentTokenCount") ?? 0;
+      usage.cacheWrite = 0;
+      usage.input = (numericField(raw, "promptTokenCount") ?? 0) - usage.cacheRead;
+      usage.reasoning = numericField(raw, "thoughtsTokenCount") ?? 0;
+      usage.output = (numericField(raw, "candidatesTokenCount") ?? 0) + usage.reasoning;
+      usage.totalTokens = numericField(raw, "totalTokenCount") ?? 0;
+      break;
+    case "openai-responses":
+    case "azure-openai-responses":
+    case "openai-codex-responses": {
+      const inputDetails = checkedRecord(raw.input_tokens_details);
+      usage.cacheRead = numericField(inputDetails, "cached_tokens") ?? 0;
+      usage.cacheWrite = numericField(inputDetails, "cache_write_tokens") ?? 0;
+      usage.input = Math.max(0, (numericField(raw, "input_tokens") ?? 0) - usage.cacheRead - usage.cacheWrite);
+      usage.output = numericField(raw, "output_tokens") ?? 0;
+      usage.reasoning = numericField(checkedRecord(raw.output_tokens_details), "reasoning_tokens") ?? 0;
+      usage.totalTokens = numericField(raw, "total_tokens") ?? 0;
+      break;
+    }
+    case "bedrock-converse-stream":
+      usage.input = numericField(raw, "inputTokens") ?? 0;
+      usage.output = numericField(raw, "outputTokens") ?? 0;
+      usage.cacheRead = numericField(raw, "cacheReadInputTokens") ?? 0;
+      usage.cacheWrite = numericField(raw, "cacheWriteInputTokens") ?? 0;
+      usage.cacheWrite1h = 0;
+      if (Array.isArray(raw.cacheDetails)) {
+        for (const detail of raw.cacheDetails) {
+          const cache = checkedRecord(detail);
+          if (cache?.ttl === "1h") usage.cacheWrite1h += numericField(cache, "inputTokens") ?? 0;
+        }
+      }
+      usage.totalTokens = numericField(raw, "totalTokens") || usage.input + usage.output;
+      break;
+    case "pi-messages": {
+      usage.input = numericField(raw, "input") ?? 0;
+      usage.output = numericField(raw, "output") ?? 0;
+      usage.cacheRead = numericField(raw, "cacheRead") ?? 0;
+      usage.cacheWrite = numericField(raw, "cacheWrite") ?? 0;
+      usage.cacheWrite1h = numericField(raw, "cacheWrite1h");
+      usage.reasoning = numericField(raw, "reasoning");
+      usage.totalTokens = numericField(raw, "totalTokens") ?? 0;
+      const cost = checkedRecord(raw.cost);
+      usage.cost.input = numericField(cost, "input") ?? 0;
+      usage.cost.output = numericField(cost, "output") ?? 0;
+      usage.cost.cacheRead = numericField(cost, "cacheRead") ?? 0;
+      usage.cost.cacheWrite = numericField(cost, "cacheWrite") ?? 0;
+      usage.cost.total = numericField(cost, "total") ?? 0;
+      break;
+    }
+  }
+  return usage;
+}
+
+/** Preserve the SDK's computed prices when normalized counters already match the actual receipt. */
+function applyUsageReceipt(
+  message: PiAssistantMessage,
+  receipt: PiAssistantMessage["usage"] | undefined,
+  model: Model<Api>,
+): PiAssistantMessage {
+  if (!receipt) return message;
+  const normalized = message.usage;
+  if (normalized.input === receipt.input && normalized.output === receipt.output &&
+      normalized.cacheRead === receipt.cacheRead && normalized.cacheWrite === receipt.cacheWrite &&
+      normalized.totalTokens === receipt.totalTokens && (normalized.reasoning ?? 0) === (receipt.reasoning ?? 0) &&
+      (normalized.cacheWrite1h ?? 0) === (receipt.cacheWrite1h ?? 0)) return message;
+  if (model.api !== "pi-messages") calculateCost(model, receipt);
+  return { ...message, usage: receipt };
+}
+
+function failedStreamMessage(model: Model<Api>, stopReason: "error" | "aborted", message: string): PiAssistantMessage {
+  return {
+    role: "assistant", content: [], api: model.api, provider: model.provider, model: model.id,
+    // Required SDK shape only; never marked as reported usage.
+    usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+    stopReason, errorMessage: message, timestamp: Date.now(),
+  };
+}
+
+/**
+ * Public SDK stream boundary. Keeps the runtime's auth/provider/retry closure and caller observer.
+ * Provenance is attached only to terminal messages after an actual provider usage packet.
+ */
+export function streamLLMCompletion(
+  runtime: Pick<Models, "streamSimple">,
+  model: Model<Api>,
+  context: Context,
+  options?: SimpleStreamOptions,
+): AssistantMessageEventStream {
+  const output = createAssistantMessageEventStream();
+  let receipt: PiAssistantMessage["usage"] | undefined;
+  const fail = (reason: "error" | "aborted", message: string): void => {
+    const error = applyUsageReceipt(failedStreamMessage(model, reason, message), receipt, model);
+    if (receipt) usageReported.add(error);
+    output.push({ type: "error", reason, error });
+    output.end(error);
+  };
+  if (options?.signal?.aborted) {
+    fail("aborted", "Request was aborted");
+    return output;
+  }
+  const observer = options?.onProviderStreamEvent;
+  const sourceOptions: SimpleStreamOptions = {
+    ...options,
+    onProviderStreamEvent: async (packet, packetModel) => {
+      const rawUsage = providerUsagePacket(packet, packetModel.api);
+      if (rawUsage) receipt = captureProviderUsage(rawUsage, packetModel.api, receipt);
+      await observer?.(packet, packetModel);
+    },
+  };
+  void (async () => {
+    try {
+      for await (const event of runtime.streamSimple(model, context, sourceOptions)) {
+        if (event.type === "done" || event.type === "error") {
+          let message = applyUsageReceipt(event.type === "done" ? event.message : event.error, receipt, model);
+          if (event.type === "error" && options?.signal?.aborted && message.stopReason === "error") {
+            message = { ...message, stopReason: "aborted" };
+          }
+          if (receipt) usageReported.add(message);
+          if (event.type === "error") {
+            output.push({ ...event, reason: message.stopReason as "error" | "aborted", error: message });
+          } else output.push(message === event.message ? event : { ...event, message });
+          output.end(message);
+          return;
+        }
+        output.push(event);
+      }
+      fail(options?.signal?.aborted ? "aborted" : "error", "Provider stream ended without a terminal response");
+    } catch (error) {
+      fail(options?.signal?.aborted ? "aborted" : "error", error instanceof Error ? error.message : String(error));
+    }
+  })();
+  return output;
+}
+/** Provider token convention is unchanged, including cache tokens and reasoning subsets. */
+export function reportedUsage(response: PiAssistantMessage): UsageStats | undefined {
+  if (!usageReported.has(response)) return undefined;
+  return {
+    inputTokens: response.usage.input ?? 0,
+    outputTokens: response.usage.output ?? 0,
+    cacheReadTokens: response.usage.cacheRead ?? 0,
+    cacheWriteTokens: response.usage.cacheWrite ?? 0,
+    totalCost: response.usage.cost?.total ?? 0,
+    llmCalls: 1,
+    reasoningTokens: response.usage.reasoning ?? 0,
+  };
+}
+
+/** Call on complete results or streaming terminal messages before consuming text/tools. */
+export function assertLLMCompletion(response: PiAssistantMessage, modelConfig?: ModelConfig): void {
+  if (response.stopReason === "error" || response.stopReason === "aborted" || response.stopReason === "length") {
+    throw new LLMCompletionError(response.stopReason, response.errorMessage, reportedUsage(response), modelConfig);
+  }
 }
 
 /** Create a fresh usage tracker. */
@@ -177,17 +547,18 @@ export function formatModelRef(provider: string, modelId: string): string {
 /**
  * Resolve a pi-ai model for `<provider>/<modelId>`.
  *
- * `providers` are the config-declared providers riding on the model config;
- * they are registered on the shared runtime before lookup so a declared
- * `<id>/<model>` resolves exactly like a built-in. Exported so the MCP server
- * and `mikro doctor` can validate a pin without making a call.
+ * `providers` are registered only on their config-scoped catalog before lookup.
+ * A supplied runtime is used as-is, so isolated sessions reuse the same ID
+ * normalization and fallback without touching another catalog. Exported so
+ * MCP and `mikro doctor` can validate a pin without making a call.
  */
 export function resolveModel(
   provider: string,
   modelId: string,
-  providers?: readonly CustomProviderConfig[]
+  providers?: readonly CustomProviderConfig[],
+  runtime?: Models
 ) {
-  ensureCustomProviders(models, providers);
+  const models = runtime ?? getModelRuntime(providers);
   const normalizedModelId = normalizeProviderModelId(provider, modelId);
   let model = models.getModel(provider, normalizedModelId);
   if (!model) {
@@ -286,7 +657,7 @@ export function buildPiOptions(options?: LlmCompleteOptions): SimpleStreamOption
 
   const piOptions: SimpleStreamOptions = {
     maxTokens: options?.maxTokens ?? 16384,
-    ...(options?.maxRetries !== undefined ? { maxRetries: options.maxRetries } : {}),
+    maxRetries: options?.maxRetries ?? 3,
     signal: options?.signal,
     ...cacheOpts,
   };
@@ -325,60 +696,8 @@ export function buildPiOptions(options?: LlmCompleteOptions): SimpleStreamOption
 
   return piOptions;
 }
-
-/**
- * Call pi/ai completeSimple with messages.
- * Tracks cost and time_ms per call. Optionally emits to a Logger.
- */
-export async function llmComplete(
-  messages: ChatMessage[],
-  modelConfig: ModelConfig,
-  options?: LlmCompleteOptions
-): Promise<LLMResponse> {
-  // The station catalog is dynamic: the gateway may serve ids that are not in
-  // the static baseline. Apply the overlay before resolving so those resolve.
-  if (modelConfig.provider === STATION_PROVIDER_ID) {
-    await ensureStationModels(models);
-  }
-  // khal's catalog is *entirely* dynamic, so the same hook runs first here —
-  // and throws naming KHAL_API_KEY when the key is missing, so a keyless run
-  // never degrades into a misleading "unknown model" from an empty catalog.
-  if (modelConfig.provider === KHAL_PROVIDER_ID) {
-    await ensureKhalModels(models);
-  }
-  const model = resolveModel(modelConfig.provider, modelConfig.model, modelConfig.providers);
-  const startTime = Date.now();
-
-  const systemPrompt = messages.find((m) => m.role === "system")?.content;
-  const piMessages: Message[] = messages
-    .filter((m) => m.role !== "system")
-    .map((m) => {
-      if (m.role === "user") {
-        return {
-          role: "user" as const,
-          content: m.content,
-          timestamp: Date.now(),
-        } satisfies UserMessage;
-      }
-      // For assistant messages from our history, we store full PiAssistantMessage
-      // objects. If we have a raw ChatMessage (string content), wrap minimally.
-      if (m.piMessage) {
-        return m.piMessage as PiAssistantMessage;
-      }
-      // Fallback: construct a minimal assistant message for the API.
-      // This happens when we synthesize assistant messages (e.g., forced final).
-      return {
-        role: "assistant" as const,
-        content: [{ type: "text" as const, text: m.content }],
-        api: "anthropic-messages",
-        provider: modelConfig.provider,
-        model: modelConfig.model,
-        usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
-        stopReason: "stop" as const,
-        timestamp: Date.now(),
-      } satisfies PiAssistantMessage;
-    });
-
+/** Request controls shared by text completions, native tools and the Pi stream wrapper. */
+export function buildCompletionOptions(modelConfig: ModelConfig, options?: LlmCompleteOptions): SimpleStreamOptions {
   // Sampling, caching and reasoning options; the onPayload hook is attached below.
   const piOptions = buildPiOptions(options);
 
@@ -417,15 +736,64 @@ export async function llmComplete(
       return next;
     };
   }
+  return piOptions;
+}
 
-  const response = await models.completeSimple(
+/**
+ * Call pi/ai completeSimple with messages.
+ * Tracks cost and time_ms per call. Optionally emits to a Logger.
+ */
+export async function llmComplete(
+  messages: ChatMessage[],
+  modelConfig: ModelConfig,
+  options?: LlmCompleteOptions
+): Promise<LLMResponse> {
+  if (options?.signal?.aborted) throw new LLMCompletionError("aborted", "Request was aborted");
+  const models = await prepareModelRuntime(modelConfig);
+  const model = resolveModel(modelConfig.provider, modelConfig.model, modelConfig.providers);
+  const startTime = Date.now();
+
+  const systemPrompt = messages.find((m) => m.role === "system")?.content;
+  const piMessages: Message[] = messages
+    .filter((m) => m.role !== "system")
+    .map((m) => {
+      if (m.role === "user") {
+        return {
+          role: "user" as const,
+          content: m.content,
+          timestamp: Date.now(),
+        } satisfies UserMessage;
+      }
+      // For assistant messages from our history, we store full PiAssistantMessage
+      // objects. If we have a raw ChatMessage (string content), wrap minimally.
+      if (m.piMessage) {
+        return m.piMessage as PiAssistantMessage;
+      }
+      // Fallback: construct a minimal assistant message for the API.
+      // This happens when we synthesize assistant messages (e.g., forced final).
+      return {
+        role: "assistant" as const,
+        content: [{ type: "text" as const, text: m.content }],
+        api: "anthropic-messages",
+        provider: modelConfig.provider,
+        model: modelConfig.model,
+        usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+        stopReason: "stop" as const,
+        timestamp: Date.now(),
+      } satisfies PiAssistantMessage;
+    });
+  const piOptions = buildCompletionOptions(modelConfig, options);
+
+
+  const response = await streamLLMCompletion(
+    models,
     model,
     {
       systemPrompt,
       messages: piMessages,
     },
     piOptions
-  );
+  ).result();
 
   const timeMs = Date.now() - startTime;
   const inputTokens = response.usage?.input ?? 0;
@@ -461,8 +829,8 @@ export async function llmComplete(
   }
   const text = textParts.join("");
 
-  // Emit to logger if provided
-  if (options?.logger) {
+  // Never journal SDK-initialized zero billing as provider-reported usage.
+  if (options?.logger && usageReported.has(response)) {
     options.logger.llmCall({
       iteration: options.iteration ?? -1,
       input_tokens: inputTokens,
@@ -473,6 +841,8 @@ export async function llmComplete(
       response_model: responseModel,
     });
   }
+
+  assertLLMCompletion(response, modelConfig);
 
   return {
     text,
@@ -499,12 +869,13 @@ export async function llmComplete(
 export async function llmCompleteSimple(
   prompt: string,
   modelConfig: ModelConfig,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  options?: Omit<LlmCompleteOptions, "signal">
 ): Promise<LLMResponse> {
   return llmComplete(
     [{ role: "user", content: prompt }],
     modelConfig,
-    { signal }
+    { ...options, signal }
   );
 }
 
@@ -514,17 +885,30 @@ export async function llmCompleteSimple(
 export async function llmCompleteBatched(
   prompts: string[],
   modelConfig: ModelConfig,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  options?: Omit<LlmCompleteOptions, "signal">
 ): Promise<{ results: string[]; usage: UsageStats }> {
-  const responses = await Promise.all(
-    prompts.map((p) => llmCompleteSimple(p, modelConfig, signal))
+  const responses = await Promise.allSettled(
+    prompts.map((p) => llmCompleteSimple(p, modelConfig, signal, options))
   );
-
   const usage = createUsage();
-  const results = responses.map((r) => {
-    mergeUsage(usage, r.usage);
-    return r.text;
-  });
+  const results: string[] = [];
+  let failure: unknown;
+  for (const response of responses) {
+    if (response.status === "fulfilled") {
+      mergeUsage(usage, response.value.usage);
+      results.push(response.value.text);
+    } else {
+      failure ??= response.reason;
+      if (response.reason instanceof LLMCompletionError && response.reason.usage) {
+        mergeUsage(usage, response.reason.usage);
+      }
+    }
+  }
+  if (failure instanceof LLMCompletionError) {
+    throw new LLMCompletionError(failure.stopReason, failure.errorMessage, usage.llmCalls ? usage : undefined);
+  }
+  if (failure !== undefined) throw failure;
 
   return { results, usage };
 }
@@ -669,6 +1053,7 @@ export async function rlmQuery(
     onChildEnd?: (data: { spanId?: string; correlationId?: string; depth?: number; result: RlmChildResult; durationMs: number; isError?: boolean; errorMessage?: string }) => void;
   } = {}
 ): Promise<RlmChildResult> {
+  signal?.throwIfAborted();
   return new Promise<RlmChildResult>((resolve) => {
     const correlationId = uuidv7();
     const parentRunId = options.parentRunId ?? process.env.MIKRO_PARENT_RUN_ID ?? "root";
@@ -704,6 +1089,7 @@ export async function rlmQuery(
     });
     const spanId = options.onChildStart?.({ correlationId, prompt, depth });
     const startMs = Date.now();
+    signal?.throwIfAborted();
     const child = spawn(
       process.execPath,
       [process.argv[1], ...buildRlmChildArgs(prompt, { ...options, output: "json", stats: true, noSession: true })],
@@ -732,6 +1118,7 @@ export async function rlmQuery(
       signal.addEventListener("abort", terminateChildTree, {
         once: true,
       });
+      if (signal.aborted) terminateChildTree();
     }
 
     let stdout = "";
@@ -745,6 +1132,7 @@ export async function rlmQuery(
     });
 
     child.on("close", (code) => {
+      signal?.removeEventListener("abort", terminateChildTree);
       const durationMs = Date.now() - startMs;
       const { result, isError, errorMessage } = classifyRlmChildResult(code, stdout, stderr);
       options.logger?.childEnd({
@@ -769,6 +1157,7 @@ export async function rlmQuery(
     });
 
     child.on("error", (err) => {
+      signal?.removeEventListener("abort", terminateChildTree);
       const durationMs = Date.now() - startMs;
       const errorMessage = `Error: failed to spawn child mikro: ${err.message}`;
       const result: RlmChildResult = { answer: errorMessage };
@@ -807,6 +1196,7 @@ export async function rlmQueryBatched(
   const results: RlmChildResult[] = new Array(prompts.length);
 
   for (let i = 0; i < prompts.length; i += MAX_CONCURRENT) {
+    signal?.throwIfAborted();
     const batch = prompts.slice(i, i + MAX_CONCURRENT);
     const batchResults = await Promise.all(
       batch.map((p) => rlmQuery(p, cwd, signal, options))
@@ -849,6 +1239,8 @@ export async function handleLLMRequest(
   storage?: PgStorage,
   childUsage?: UsageStats,
   recursiveOptions: RlmChildInvocationOptions & {
+    /** Ordinary transport retries for direct REPL model calls, not task retries. */
+    maxRetries?: number;
     logger?: Logger;
     parentRunId?: string;
     onChildStart?: (data: { correlationId: string; prompt: string; depth: number }) => string | undefined;
@@ -859,12 +1251,15 @@ export async function handleLLMRequest(
     ? { ...config.model, model: config.model.subCallModel }
     : config.model;
 
+  // This owner accounts both success and provider-failure usage; callers must not merge it again.
+  try {
   switch (request.request_type) {
     case "llm_query": {
       const resp = await llmCompleteSimple(
         request.prompts[0],
         request.model ? { ...subCallModel, model: request.model } : subCallModel,
-        signal
+        signal,
+        { maxRetries: recursiveOptions.maxRetries }
       );
       mergeUsage(usage, resp.usage);
       return [resp.text];
@@ -874,7 +1269,7 @@ export async function handleLLMRequest(
       const modelCfg = request.model
         ? { ...subCallModel, model: request.model }
         : subCallModel;
-      const resp = await llmCompleteBatched(request.prompts, modelCfg, signal);
+      const resp = await llmCompleteBatched(request.prompts, modelCfg, signal, { maxRetries: recursiveOptions.maxRetries });
       mergeUsage(usage, resp.usage);
       return resp.results;
     }
@@ -898,14 +1293,20 @@ export async function handleLLMRequest(
         request.prompts,
         config.configDir,
         signal,
-        { ...recursiveOptions, model: resolveChildModelRef(config, request.model) }
-      );
-      for (const result of results) {
-        if (result.usage) {
-          mergeUsage(usage, result.usage);
-          if (childUsage) mergeUsage(childUsage, result.usage);
+        {
+          ...recursiveOptions,
+          model: resolveChildModelRef(config, request.model),
+          onChildEnd: (data) => {
+            // A later batch can abort without returning earlier paid results.
+            // Account each settled receipt before forwarding its existing trace event.
+            if (data.result.usage) {
+              mergeUsage(usage, data.result.usage);
+              if (childUsage) mergeUsage(childUsage, data.result.usage);
+            }
+            recursiveOptions.onChildEnd?.(data);
+          },
         }
-      }
+      );
       return results.map((result) => result.answer);
     }
 
@@ -921,6 +1322,7 @@ export async function handleLLMRequest(
         config.model,
         {
           signal,
+          maxRetries: recursiveOptions.maxRetries,
           geminiConfig: { ...config.gemini, googleSearch: true },
         }
       );
@@ -940,6 +1342,7 @@ export async function handleLLMRequest(
         config.model,
         {
           signal,
+          maxRetries: recursiveOptions.maxRetries,
           geminiConfig: { ...config.gemini, urlContext: true },
         }
       );
@@ -961,6 +1364,7 @@ export async function handleLLMRequest(
         config.model,
         {
           signal,
+          maxRetries: recursiveOptions.maxRetries,
           geminiConfig: config.gemini,
         }
       );
@@ -1006,5 +1410,9 @@ export async function handleLLMRequest(
       return request.prompts.map(
         () => `Error: unknown request type "${request.request_type}"`
       );
+  }
+  } catch (error) {
+    if (error instanceof LLMCompletionError && error.usage) mergeUsage(usage, error.usage);
+    throw error;
   }
 }

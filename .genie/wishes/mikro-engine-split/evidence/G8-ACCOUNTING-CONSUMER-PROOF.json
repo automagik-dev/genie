@@ -1,0 +1,70 @@
+{
+  "kind": "unscored-actual-frozen-wish-report-consumer-projection-before-after",
+  "actualCompiledConsumer": "/home/genie/orca/workspaces/genie/mikro-engine-split/dist/genie.js",
+  "actualPublicProjectionUsedByProducer": true,
+  "before": {
+    "totalToolCalls": null,
+    "offloadUsd": 0.04
+  },
+  "after": {
+    "totalToolCalls": 9,
+    "offloadUsd": 0.060000000000000005
+  },
+  "allThreePaidAttemptAttributions": {
+    "basis": "all reconciled caller attempts; actual MCP rounded-footer pricing, not SDK repricing or invoice",
+    "stages": {
+      "scout": {
+        "attempts": [
+          {
+            "runId": "unscored-fixture-caller-0",
+            "attempt": 0,
+            "sessionId": "unscored-fixture-sdk-session-0",
+            "sdkCallId": "unscored-fixture-pair-0",
+            "model": "deepseek/deepseek-flash",
+            "priceBasis": "unscored declared accounting fixture, not real SDK or invoice",
+            "costUsd": 0.01,
+            "seconds": 1
+          }
+        ],
+        "priceBases": [
+          "unscored declared accounting fixture, not real SDK or invoice"
+        ]
+      },
+      "review": {
+        "attempts": [
+          {
+            "runId": "unscored-fixture-caller-1",
+            "attempt": 0,
+            "sessionId": "unscored-fixture-sdk-session-1",
+            "sdkCallId": "unscored-fixture-pair-1",
+            "model": "deepseek/deepseek-flash",
+            "priceBasis": "unscored declared accounting fixture, not real SDK or invoice",
+            "costUsd": 0.02,
+            "seconds": 1
+          },
+          {
+            "runId": "unscored-fixture-caller-2",
+            "attempt": 0,
+            "sessionId": "unscored-fixture-sdk-session-2",
+            "sdkCallId": "unscored-fixture-pair-2",
+            "model": "deepseek/deepseek-flash",
+            "priceBasis": "unscored declared accounting fixture, not real SDK or invoice",
+            "costUsd": 0.03,
+            "seconds": 1
+          }
+        ],
+        "priceBases": [
+          "unscored declared accounting fixture, not real SDK or invoice"
+        ]
+      }
+    }
+  },
+  "actualCommandExitCodes": [
+    0,
+    0
+  ],
+  "actualNativeOrSdkOutcomes": false,
+  "declaredFixturesOnly": true,
+  "noOperatorOrNativeLedgerWritten": true,
+  "fixtureAssertionCorrection": "Initial throwaway equality used decimal0.06 exact versus observed ordinary IEEE754 sum0.060000000000000005; tolerance1e-12 accepts arithmetic, consumer/source unchanged, commands not replayed or ledger duplicated."
+}

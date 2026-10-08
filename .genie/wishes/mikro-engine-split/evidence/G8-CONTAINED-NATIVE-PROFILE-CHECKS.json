@@ -1,0 +1,455 @@
+{
+  "schemaVersion": 1,
+  "actualJob": "bg_54",
+  "actualExitCode": 0,
+  "actualWallSeconds": 210.87,
+  "actualCommand": [
+    "/home/genie/.hermes/node/bin/node",
+    "/home/genie/.local/share/mikro-engine-split/experiments-g8/profile-checks/check.mjs",
+    "/home/genie/.local/share/mikro-engine-split/experiments-g8/native-preparation-contained/check-bindings.json",
+    "/home/genie/.local/share/mikro-engine-split/experiments-g8/native-preparation-contained/check-results"
+  ],
+  "checks": [
+    {
+      "id": "g8-genie-existing-offload-rlm-r1",
+      "actualExitCode": 0,
+      "profileSha256": "9b6d624b0a6a15c71d720dd707872ea4990e0823b9c5d74f50fec52669e78312",
+      "effectiveConfigSha256": "f0852f3c598c491f2c36de287e0d520a3b2a477a8a1292ac8493a97c7ca3b32a",
+      "budgetBinding": {
+        "maxDepth": 0,
+        "loadedMaxDepth": null,
+        "maxDepthSource": "agent.spec.budget.maxDepth",
+        "method": "programmatic-after-applyAgent"
+      },
+      "model": "deepseek/deepseek-flash",
+      "sdkNominalRates": {
+        "input": 0.3,
+        "output": 1.2,
+        "cacheRead": 0.006,
+        "cacheWrite": 0
+      },
+      "api": "openai-completions",
+      "engine": "rlm",
+      "modelCalls": 0,
+      "actualCompletedAt": "2026-10-06T15:13:11.273Z"
+    },
+    {
+      "id": "g8-genie-existing-offload-rlm-r2",
+      "actualExitCode": 0,
+      "profileSha256": "264fb6667f6270cb1c0afc9ea7bc4971d108c7fe5b311b93491f310802694ca9",
+      "effectiveConfigSha256": "982e4dd8a0b0b68273d8f26dbb986fa4a9709f5288b84b84678ecce371af785c",
+      "budgetBinding": {
+        "maxDepth": 0,
+        "loadedMaxDepth": null,
+        "maxDepthSource": "agent.spec.budget.maxDepth",
+        "method": "programmatic-after-applyAgent"
+      },
+      "model": "deepseek/deepseek-flash",
+      "sdkNominalRates": {
+        "input": 0.3,
+        "output": 1.2,
+        "cacheRead": 0.006,
+        "cacheWrite": 0
+      },
+      "api": "openai-completions",
+      "engine": "rlm",
+      "modelCalls": 0,
+      "actualCompletedAt": "2026-10-06T15:13:25.479Z"
+    },
+    {
+      "id": "g8-genie-existing-offload-rlm-r3",
+      "actualExitCode": 0,
+      "profileSha256": "287148b47a9748a9fbb70e10067f00f03c6797560358038973270831b1855e5a",
+      "effectiveConfigSha256": "0b559caea4decfd6d670367df49360bfc044ba973c9c97eaafe49583bb10d4f3",
+      "budgetBinding": {
+        "maxDepth": 0,
+        "loadedMaxDepth": null,
+        "maxDepthSource": "agent.spec.budget.maxDepth",
+        "method": "programmatic-after-applyAgent"
+      },
+      "model": "deepseek/deepseek-flash",
+      "sdkNominalRates": {
+        "input": 0.3,
+        "output": 1.2,
+        "cacheRead": 0.006,
+        "cacheWrite": 0
+      },
+      "api": "openai-completions",
+      "engine": "rlm",
+      "modelCalls": 0,
+      "actualCompletedAt": "2026-10-06T15:13:35.287Z"
+    },
+    {
+      "id": "g8-genie-existing-offload-pi-r1",
+      "actualExitCode": 0,
+      "profileSha256": "b74b46bd39af53e01c450e5d84b36a998bb8117a83b93373ddd12d999f2a3b6d",
+      "effectiveConfigSha256": "55becdf5f1b37f99857b128267a1a53c8063759be0e2edf5b848451461f1bd0a",
+      "budgetBinding": {
+        "maxDepth": 0,
+        "loadedMaxDepth": null,
+        "maxDepthSource": "agent.spec.budget.maxDepth",
+        "method": "programmatic-after-applyAgent"
+      },
+      "model": "deepseek/deepseek-flash",
+      "sdkNominalRates": {
+        "input": 0.3,
+        "output": 1.2,
+        "cacheRead": 0.006,
+        "cacheWrite": 0
+      },
+      "api": "openai-completions",
+      "engine": "pi",
+      "modelCalls": 0,
+      "actualCompletedAt": "2026-10-06T15:13:43.163Z"
+    },
+    {
+      "id": "g8-genie-existing-offload-pi-r2",
+      "actualExitCode": 0,
+      "profileSha256": "e67473162250e87ea8a98d32231b93de7a879953bef51d3f40e471a62688ec48",
+      "effectiveConfigSha256": "a73b7f88f05363591809242c013da33186fbbfe67ba49e529f10a8e45e80187c",
+      "budgetBinding": {
+        "maxDepth": 0,
+        "loadedMaxDepth": null,
+        "maxDepthSource": "agent.spec.budget.maxDepth",
+        "method": "programmatic-after-applyAgent"
+      },
+      "model": "deepseek/deepseek-flash",
+      "sdkNominalRates": {
+        "input": 0.3,
+        "output": 1.2,
+        "cacheRead": 0.006,
+        "cacheWrite": 0
+      },
+      "api": "openai-completions",
+      "engine": "pi",
+      "modelCalls": 0,
+      "actualCompletedAt": "2026-10-06T15:13:51.821Z"
+    },
+    {
+      "id": "g8-genie-existing-offload-pi-r3",
+      "actualExitCode": 0,
+      "profileSha256": "dabdac8aa08900fc449e366ce3b7ad759c41bab69759808c5d19b90089675a5c",
+      "effectiveConfigSha256": "297756197134d01ed32d9d555d95de680f3e88041030473b7ea1326fcdcd3f2b",
+      "budgetBinding": {
+        "maxDepth": 0,
+        "loadedMaxDepth": null,
+        "maxDepthSource": "agent.spec.budget.maxDepth",
+        "method": "programmatic-after-applyAgent"
+      },
+      "model": "deepseek/deepseek-flash",
+      "sdkNominalRates": {
+        "input": 0.3,
+        "output": 1.2,
+        "cacheRead": 0.006,
+        "cacheWrite": 0
+      },
+      "api": "openai-completions",
+      "engine": "pi",
+      "modelCalls": 0,
+      "actualCompletedAt": "2026-10-06T15:14:04.446Z"
+    },
+    {
+      "id": "g8-genie-existing-offload-off-r1",
+      "actualExitCode": 0,
+      "profileSha256": "754cd24280820f1b60e9e8805a9e41217b5a47db0e2dfabbe75b12f94667cca7",
+      "effectiveConfigSha256": "70be69dead4fc0e03f4edd1b33d621457b6edcfae5b3b3d02567360ec6666cf6",
+      "budgetBinding": {
+        "maxDepth": 0,
+        "loadedMaxDepth": null,
+        "maxDepthSource": "agent.spec.budget.maxDepth",
+        "method": "programmatic-after-applyAgent"
+      },
+      "model": "deepseek/deepseek-flash",
+      "sdkNominalRates": {
+        "input": 0.3,
+        "output": 1.2,
+        "cacheRead": 0.006,
+        "cacheWrite": 0
+      },
+      "api": "openai-completions",
+      "engine": "rlm",
+      "modelCalls": 0,
+      "actualCompletedAt": "2026-10-06T15:14:12.887Z"
+    },
+    {
+      "id": "g8-genie-existing-offload-off-r2",
+      "actualExitCode": 0,
+      "profileSha256": "18e3352f9283103ffe9a685dd59232c087ebc7156f1bbc58760b5f870e8d6618",
+      "effectiveConfigSha256": "69b20cc108bcf21a11c6bff2866f3774644b01414ce62fd06ed75a55003df87a",
+      "budgetBinding": {
+        "maxDepth": 0,
+        "loadedMaxDepth": null,
+        "maxDepthSource": "agent.spec.budget.maxDepth",
+        "method": "programmatic-after-applyAgent"
+      },
+      "model": "deepseek/deepseek-flash",
+      "sdkNominalRates": {
+        "input": 0.3,
+        "output": 1.2,
+        "cacheRead": 0.006,
+        "cacheWrite": 0
+      },
+      "api": "openai-completions",
+      "engine": "rlm",
+      "modelCalls": 0,
+      "actualCompletedAt": "2026-10-06T15:14:26.365Z"
+    },
+    {
+      "id": "g8-genie-existing-offload-off-r3",
+      "actualExitCode": 0,
+      "profileSha256": "6477b672881c4fe5a4c00ef3f2efcadb34fade53e69dc4c15c035126c9a83715",
+      "effectiveConfigSha256": "859361f7ad355cd6213bff4e935180db87d154a047b2e1dd3c64ef47556a7828",
+      "budgetBinding": {
+        "maxDepth": 0,
+        "loadedMaxDepth": null,
+        "maxDepthSource": "agent.spec.budget.maxDepth",
+        "method": "programmatic-after-applyAgent"
+      },
+      "model": "deepseek/deepseek-flash",
+      "sdkNominalRates": {
+        "input": 0.3,
+        "output": 1.2,
+        "cacheRead": 0.006,
+        "cacheWrite": 0
+      },
+      "api": "openai-completions",
+      "engine": "rlm",
+      "modelCalls": 0,
+      "actualCompletedAt": "2026-10-06T15:14:38.675Z"
+    },
+    {
+      "id": "g8-brain-existing-offload-rlm-r1",
+      "actualExitCode": 0,
+      "profileSha256": "d8776b6ce28eec72aec50da295a4fd0c5b49bccc02f92898e7cbc7b9574b8ee0",
+      "effectiveConfigSha256": "6ff07cadbb82eb62169b05041c7fbbde1409508a753eb4de07fa7514bf27f7d5",
+      "budgetBinding": {
+        "maxDepth": 0,
+        "loadedMaxDepth": null,
+        "maxDepthSource": "agent.spec.budget.maxDepth",
+        "method": "programmatic-after-applyAgent"
+      },
+      "model": "deepseek/deepseek-flash",
+      "sdkNominalRates": {
+        "input": 0.3,
+        "output": 1.2,
+        "cacheRead": 0.006,
+        "cacheWrite": 0
+      },
+      "api": "openai-completions",
+      "engine": "rlm",
+      "modelCalls": 0,
+      "actualCompletedAt": "2026-10-06T15:14:46.363Z"
+    },
+    {
+      "id": "g8-brain-existing-offload-rlm-r2",
+      "actualExitCode": 0,
+      "profileSha256": "ccb2c11e1a99989e53d526c3f480d23e41b49cf3d685b20ad37f8ce5a0ebd042",
+      "effectiveConfigSha256": "9b5e5fa4e590b31ebebded380109cd4da2182f72ac61d5778c197d5ca5d3f970",
+      "budgetBinding": {
+        "maxDepth": 0,
+        "loadedMaxDepth": null,
+        "maxDepthSource": "agent.spec.budget.maxDepth",
+        "method": "programmatic-after-applyAgent"
+      },
+      "model": "deepseek/deepseek-flash",
+      "sdkNominalRates": {
+        "input": 0.3,
+        "output": 1.2,
+        "cacheRead": 0.006,
+        "cacheWrite": 0
+      },
+      "api": "openai-completions",
+      "engine": "rlm",
+      "modelCalls": 0,
+      "actualCompletedAt": "2026-10-06T15:14:54.121Z"
+    },
+    {
+      "id": "g8-brain-existing-offload-rlm-r3",
+      "actualExitCode": 0,
+      "profileSha256": "3c498f830d619809c01d61ab149a261b6de89e2af78e4161e556bcb1c22ae40c",
+      "effectiveConfigSha256": "0d8f1c5d23c6db8229fd3115a15a9ddca68c7fc5fb6e46782d36c0d772dfaffb",
+      "budgetBinding": {
+        "maxDepth": 0,
+        "loadedMaxDepth": null,
+        "maxDepthSource": "agent.spec.budget.maxDepth",
+        "method": "programmatic-after-applyAgent"
+      },
+      "model": "deepseek/deepseek-flash",
+      "sdkNominalRates": {
+        "input": 0.3,
+        "output": 1.2,
+        "cacheRead": 0.006,
+        "cacheWrite": 0
+      },
+      "api": "openai-completions",
+      "engine": "rlm",
+      "modelCalls": 0,
+      "actualCompletedAt": "2026-10-06T15:15:01.660Z"
+    },
+    {
+      "id": "g8-brain-existing-offload-pi-r1",
+      "actualExitCode": 0,
+      "profileSha256": "7ead730ea9c8067134fbffb26069e6cafcdbdb5463a763e23b12240b7c4b930f",
+      "effectiveConfigSha256": "048c0ecd6a87c26feeb44fcb1de2d4ed9bb7b2e84cae22d96fca7cd2e15838a8",
+      "budgetBinding": {
+        "maxDepth": 0,
+        "loadedMaxDepth": null,
+        "maxDepthSource": "agent.spec.budget.maxDepth",
+        "method": "programmatic-after-applyAgent"
+      },
+      "model": "deepseek/deepseek-flash",
+      "sdkNominalRates": {
+        "input": 0.3,
+        "output": 1.2,
+        "cacheRead": 0.006,
+        "cacheWrite": 0
+      },
+      "api": "openai-completions",
+      "engine": "pi",
+      "modelCalls": 0,
+      "actualCompletedAt": "2026-10-06T15:15:09.418Z"
+    },
+    {
+      "id": "g8-brain-existing-offload-pi-r2",
+      "actualExitCode": 0,
+      "profileSha256": "b95e721a19e4d4f2abebd447176e0f03d63f6e916764eb8f29cec04f30fa4ed3",
+      "effectiveConfigSha256": "c30bbf7f7b633fdaa3ac9a9419c8a1576dbb25b84dcd974b2232bff71ed43fbf",
+      "budgetBinding": {
+        "maxDepth": 0,
+        "loadedMaxDepth": null,
+        "maxDepthSource": "agent.spec.budget.maxDepth",
+        "method": "programmatic-after-applyAgent"
+      },
+      "model": "deepseek/deepseek-flash",
+      "sdkNominalRates": {
+        "input": 0.3,
+        "output": 1.2,
+        "cacheRead": 0.006,
+        "cacheWrite": 0
+      },
+      "api": "openai-completions",
+      "engine": "pi",
+      "modelCalls": 0,
+      "actualCompletedAt": "2026-10-06T15:15:17.781Z"
+    },
+    {
+      "id": "g8-brain-existing-offload-pi-r3",
+      "actualExitCode": 0,
+      "profileSha256": "a97e5d2d6159abdf8325c565cadb3069e58fdf92f73c0a612efc8126c4405716",
+      "effectiveConfigSha256": "2144ebad4c67a72b6fc8a3d2679bfadbbb275061bd98ee17dbd8c5b3aef22241",
+      "budgetBinding": {
+        "maxDepth": 0,
+        "loadedMaxDepth": null,
+        "maxDepthSource": "agent.spec.budget.maxDepth",
+        "method": "programmatic-after-applyAgent"
+      },
+      "model": "deepseek/deepseek-flash",
+      "sdkNominalRates": {
+        "input": 0.3,
+        "output": 1.2,
+        "cacheRead": 0.006,
+        "cacheWrite": 0
+      },
+      "api": "openai-completions",
+      "engine": "pi",
+      "modelCalls": 0,
+      "actualCompletedAt": "2026-10-06T15:15:25.467Z"
+    },
+    {
+      "id": "g8-brain-existing-offload-off-r1",
+      "actualExitCode": 0,
+      "profileSha256": "a6ccba600f659e0b6780da78b4fdda73e2c30977059e0a3b5c6e9b4bfe7ab44d",
+      "effectiveConfigSha256": "6e7d99c0c01b453f41c9e3dd4fed3151865d95087914c634ff67d4c5996fee85",
+      "budgetBinding": {
+        "maxDepth": 0,
+        "loadedMaxDepth": null,
+        "maxDepthSource": "agent.spec.budget.maxDepth",
+        "method": "programmatic-after-applyAgent"
+      },
+      "model": "deepseek/deepseek-flash",
+      "sdkNominalRates": {
+        "input": 0.3,
+        "output": 1.2,
+        "cacheRead": 0.006,
+        "cacheWrite": 0
+      },
+      "api": "openai-completions",
+      "engine": "rlm",
+      "modelCalls": 0,
+      "actualCompletedAt": "2026-10-06T15:15:33.413Z"
+    },
+    {
+      "id": "g8-brain-existing-offload-off-r2",
+      "actualExitCode": 0,
+      "profileSha256": "678fe1a7fda5b612e54bb92fc971a5e246fb55382f8e1c63b8ec8c5af26ea9cc",
+      "effectiveConfigSha256": "8726f7bcc4de30b80d89b21c906379b6282b0f055b2c248e19743b9cdb7359f0",
+      "budgetBinding": {
+        "maxDepth": 0,
+        "loadedMaxDepth": null,
+        "maxDepthSource": "agent.spec.budget.maxDepth",
+        "method": "programmatic-after-applyAgent"
+      },
+      "model": "deepseek/deepseek-flash",
+      "sdkNominalRates": {
+        "input": 0.3,
+        "output": 1.2,
+        "cacheRead": 0.006,
+        "cacheWrite": 0
+      },
+      "api": "openai-completions",
+      "engine": "rlm",
+      "modelCalls": 0,
+      "actualCompletedAt": "2026-10-06T15:15:41.141Z"
+    },
+    {
+      "id": "g8-brain-existing-offload-off-r3",
+      "actualExitCode": 0,
+      "profileSha256": "1b6bdb1108f2962fc73c963f46ab89bd3ab807a8840788b5f836322c9e3245fa",
+      "effectiveConfigSha256": "ce7a5ae344196b8e1031963031b5d84045c5b0448a909dd64b9aa47efd7e9040",
+      "budgetBinding": {
+        "maxDepth": 0,
+        "loadedMaxDepth": null,
+        "maxDepthSource": "agent.spec.budget.maxDepth",
+        "method": "programmatic-after-applyAgent"
+      },
+      "model": "deepseek/deepseek-flash",
+      "sdkNominalRates": {
+        "input": 0.3,
+        "output": 1.2,
+        "cacheRead": 0.006,
+        "cacheWrite": 0
+      },
+      "api": "openai-completions",
+      "engine": "rlm",
+      "modelCalls": 0,
+      "actualCompletedAt": "2026-10-06T15:15:49.160Z"
+    },
+    {
+      "id": "g8-native-smoke",
+      "actualExitCode": 0,
+      "profileSha256": "e2ef0a4aed8a20531b698cb41dceb9314d647ac40e2ae8c611e1a6a18d4ff095",
+      "effectiveConfigSha256": "17ffcd95116fff17b36c4342bf858141c5f7120a37e6eddeebf3c7f4698ac5f5",
+      "budgetBinding": {
+        "maxDepth": 0,
+        "loadedMaxDepth": null,
+        "maxDepthSource": "agent.spec.budget.maxDepth",
+        "method": "programmatic-after-applyAgent"
+      },
+      "model": "deepseek/deepseek-flash",
+      "sdkNominalRates": {
+        "input": 0.3,
+        "output": 1.2,
+        "cacheRead": 0.006,
+        "cacheWrite": 0
+      },
+      "api": "openai-completions",
+      "engine": "rlm",
+      "modelCalls": 0,
+      "actualCompletedAt": "2026-10-06T15:15:57.938Z"
+    }
+  ],
+  "currentPreparedEngineResourcesSha256": "93eb0a0652d20bc5c1bb253e0aa0f77a407a3e7c0d063e65ae186dc67c303c3a",
+  "engineThirtySixRowsExactlyPreserved": true,
+  "modelCalls": 0,
+  "nativeDispatches": 0
+}

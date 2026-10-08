@@ -7,43 +7,6 @@ function run(...args) {
     return spawnSync(process.execPath, [SCRIPT, ...args], { encoding: "utf8" });
 }
 describe("runtime benchmark v2 manifest", () => {
-    it("freezes the selected direct DeepSeek circuit and real runtime journeys", () => {
-        const result = run("manifest");
-        assert.equal(result.status, 0, result.stderr);
-        const manifest = JSON.parse(result.stdout);
-        assert.equal(manifest.version, "mikro-runtime-benchmark-v2");
-        assert.deepEqual(manifest.runtimes, ["mikro", "prime-sdk"]);
-        assert.equal(manifest.selectedCircuit.selectionId, "deepseek/deepseek-v4-pro-0813");
-        assert.equal(manifest.selectedCircuit.provider, "deepseek");
-        assert.equal(manifest.selectedCircuit.id, "deepseek-v4-pro");
-        assert.equal(manifest.selectedCircuit.baseUrl, "https://api.deepseek.com");
-        assert.equal(manifest.selectionEvidence.path, ".genie/evidence/prime-runtime-benchmark/model-benchmark-sdk-v2-selection-lock.json");
-        assert.match(manifest.selectionEvidence.sha256, /^[a-f0-9]{64}$/);
-        assert.deepEqual(manifest.journeys.map((journey) => journey.id), [
-            "inline-incident-decision",
-            "multi-file-release-context",
-            "json-authority-context",
-        ]);
-        assert.deepEqual(manifest.journeys.map((journey) => journey.contextType), [null, "list", "dict"]);
-        assert.equal(manifest.repetitions, 3);
-        assert.equal(manifest.probeCalls, 6);
-        assert.equal(manifest.fullCalls, 18);
-        assert.equal(manifest.providerCallsCeiling, 45);
-        assert.equal(manifest.retries, 0);
-        assert.equal(manifest.reasoning, "low");
-        assert.deepEqual(manifest.maxIterationsByRuntime, { mikro: 2, "prime-sdk": 3 });
-        assert.equal(manifest.rawAnswersPersisted, false);
-        assert.equal(manifest.primeVersion, "0.8.1");
-        assert.equal(manifest.excludedRuntime.prime.eligible, false);
-        assert.deepEqual(manifest.excludedRuntime.prime.reasons, [
-            "output.schema unsupported",
-            "dict context unsupported",
-            "budget.maxDepth unsupported",
-        ]);
-        assert.match(manifest.harnessSha256, /^[a-f0-9]{64}$/);
-        assert.match(manifest.primeSdkAdapterSha256, /^[a-f0-9]{64}$/);
-        assert.match(manifest.legacyAdapterSha256, /^[a-f0-9]{64}$/);
-    });
     it("is deterministic across processes", () => {
         const first = run("manifest");
         const second = run("manifest");

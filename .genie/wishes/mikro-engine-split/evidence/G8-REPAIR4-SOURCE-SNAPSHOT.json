@@ -1,0 +1,83 @@
+{
+  "schemaVersion": 1,
+  "phase": "G8 owner-approved physical fixture hash correctness repair4/B4; quality1/cap1 unchanged",
+  "sealedAt": "2026-10-06T14:41:03.509304Z",
+  "files": [
+    {
+      "path": "scripts/mikro/engine-experiment.ts",
+      "sha256": "52981046176a05aa953d5db43ce7ef14cff910e7b8b7aba1bf93be31199e91d9",
+      "bytes": 58520
+    },
+    {
+      "path": "scripts/mikro/engine-experiment-runtime.mjs",
+      "sha256": "61962829324816413b745f4bcf1d2f36274066b2c5497d0aa547c155f91fe828",
+      "bytes": 20310
+    },
+    {
+      "path": "scripts/mikro/engine-experiment.test.ts",
+      "sha256": "c28e78bb1fd187fe7dd1b0c66e7e8443cb94217c4ada7d842a523237f7e049c6",
+      "bytes": 13123
+    },
+    {
+      "path": ".genie/wishes/mikro-engine-split/experiments/native-workflow-observer.mjs",
+      "sha256": "4915bb3e7d85d7bfb4429b25a098529c6f9008823cf38d2ab961a3c9fc19c5bc",
+      "bytes": 52054
+    },
+    {
+      "path": ".genie/wishes/mikro-engine-split/experiments/native-session-accounting.mjs",
+      "sha256": "2e7f64e64624865a90f0a3c6635ad8fa6d899e1e88e8d0a4f50c2ef3dcdf6002",
+      "bytes": 20885
+    }
+  ],
+  "ownerDecision": "G8-FIXTURE-HASH-OWNER-DECISION.json",
+  "observedChecks": {
+    "focusedTests": {
+      "pass": 12,
+      "fail": 0,
+      "expects": 85,
+      "job": "bg_48",
+      "exitCode": 0
+    },
+    "explicitStrictScriptTypecheck": {
+      "exitCode": 0,
+      "command": [
+        "bunx",
+        "tsc",
+        "--noEmit",
+        "--strict",
+        "--module",
+        "esnext",
+        "--moduleResolution",
+        "bundler",
+        "--target",
+        "esnext",
+        "--types",
+        "bun",
+        "--skipLibCheck",
+        "--allowJs",
+        "--allowImportingTsExtensions",
+        "scripts/mikro/engine-experiment.ts",
+        "scripts/mikro/engine-experiment.test.ts"
+      ],
+      "includedNewRunner": true
+    },
+    "node26ThreeMjsSyntax": {
+      "exitCode": 0,
+      "job": "bg_46"
+    },
+    "actualFourCompletePhysicalParents": "G8-PHYSICAL-FIXTURE-HASH-PROOF.json",
+    "actualAllThirtySixPublicProfileChecks": "G8-FINAL-PROFILE-CHECKS.json",
+    "initialStrictCommandError": "First local check omitted --allowJs and produced TS7016 for existing runtime.mjs, no source change; corrected check explicitly includes inferred JavaScript boundary.",
+    "formatter": "Root Biome check ignored entire mikro directory; isolated identical house-style formatter processed2files/fixed1; final focused/strict checks after formatting."
+  },
+  "scoredEngineOutcomes": 0,
+  "genuineNativeWorkflowOutcomes": 1,
+  "nativeOutcomeCompleteAccounting": false,
+  "nativeOutcomeReceiptPath": "/home/genie/.local/share/mikro-engine-split/experiments-g8/native-runs/g8-native-smoke-pnpm/receipt.json",
+  "experimentalPullRequests": 0,
+  "independentVerdicts": "pending source hash repair only; native2 accounting/sandbox blockers separate",
+  "correctnessRepairCycles": 4,
+  "correctnessRepairBudget": 4,
+  "qualityRepairCycles": 1,
+  "qualityRepairCap": 1
+}

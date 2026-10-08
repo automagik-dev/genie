@@ -9,6 +9,7 @@ import {
 } from "./custom-providers.js";
 import { loadSettings } from "./settings.js";
 import { parseValidateMd, type ValidateSchema } from "./sdk/validate.js";
+import { parseJuiceProject, type JuiceProjectConfig } from "./juice.js";
 
 // ─── Interfaces ──────────────────────────────────────────
 
@@ -165,6 +166,8 @@ export interface MikroConfig {
    * yaml wins per id). Also mirrored on `model.providers`.
    */
   providers: CustomProviderConfig[];
+  /** Explicit reference-only Juice project; absent disables all Juice management/viewer operations. */
+  juice?: JuiceProjectConfig;
   /** Config source: "yaml" | "defaults" */
   configSource: "yaml" | "defaults";
   /**
@@ -374,6 +377,7 @@ interface RawYamlConfig {
   /** Top level, not under `gemini:` — see `MikroConfig.temperature`. */
   temperature?: number | null;
   providers?: unknown;
+  juice?: unknown;
 }
 
 // ─── File Helpers ────────────────────────────────────────
@@ -516,12 +520,29 @@ function parseYamlConfig(
     globalProviders,
     parseCustomProviders(cfg.providers, "mikro.yaml")
   );
+  // The project binding supplies auth only to an explicitly declared Juice catalog.
+  const juice = parseJuiceProject(cfg.juice);
+  if (juice) {
+    const index = providers.findIndex((entry) => entry.id === "juice");
+    const provider = providers[index];
+    if (provider) {
+      if (provider.baseUrl !== `${juice.origin}/v1` || provider.apiKeyEnv.length
+        || (provider.apiKeyFile && provider.apiKeyFile !== juice.keyFile)
+        || Object.keys(provider.headers).length || provider.models.some((entry) => Object.keys(entry.headers ?? {}).length)) {
+        throw new Error("Invalid Juice provider: endpoint and private project credential must match juice configuration; headers are not supported.");
+      }
+      providers[index] = { ...provider, apiKeyFile: juice.keyFile };
+    }
+  }
 
   // Parse model
   const model: ModelConfig = {
     provider: cfg.model?.provider ?? DEFAULT_MODEL.provider,
     model: cfg.model?.model ?? DEFAULT_MODEL.model,
   };
+  if (model.provider === "juice" && (!juice || !providers.some((provider) => provider.id === "juice"))) {
+    throw new Error("Juice model requires explicit juice project and advertised models under providers.juice.");
+  }
   if (cfg.model?.["sub-call-model"]) {
     model.subCallModel = cfg.model["sub-call-model"];
   }
@@ -728,6 +749,7 @@ function parseYamlConfig(
     prompt,
     temperature: rawTemperature,
     providers,
+    ...(juice ? { juice } : {}),
     configSource: "yaml",
   };
 }

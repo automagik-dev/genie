@@ -1,0 +1,46 @@
+{
+  "schemaVersion": 1,
+  "createdAt": "2026-10-08T02:22:28.680171+00:00",
+  "actualCommand": "env TMPDIR=/var/tmp /home/genie/.hermes/node/bin/node --preserve-symlinks --test --test-name-pattern='real Legacy terminal accounting at the MCP receiving boundary' <private>/final-local-smokes/repair4-before-regressions-avocmv69/dist/tests/backend-contract.test.js",
+  "actualExitCode": 1,
+  "actualSeconds": 4.49,
+  "summary": {
+    "tests": 7,
+    "suites": 1,
+    "pass": 1,
+    "fail": 6,
+    "cancelled": 0,
+    "skipped": 0,
+    "todo": 0,
+    "durationMs": 4031.09836
+  },
+  "newPermanentCompiledTestSha256": "04630908868835d1630882c1da19cd8d03771158030c036b8c8d011422fd1930",
+  "preservedPreFixModules": [
+    {
+      "path": "mikro/dist/src/rlm.js",
+      "sha256": "36235cd4e48c3fcdfaacd5714c602bd3165e22484122b5346a20319b27bccf25"
+    },
+    {
+      "path": "mikro/dist/src/mcp/backends/legacy.js",
+      "sha256": "7651e75a2ef0cb8eeac1314b7087bfe523fbb2b56a59227cd35823653c5a4a96"
+    },
+    {
+      "path": "mikro/dist/src/mcp/server.js",
+      "sha256": "866812b56ed4313ad2f8be6ba0062fcf8620e13f30943086d6916568be0539b9"
+    }
+  ],
+  "baselineIsOriginalSealedPaidRuntime": "G9-RECEIPT3-READABLE-PAID-RUNTIME.json",
+  "originalRuntimeOrSourceReset": false,
+  "isolation": "Private package/test copy; src/python symlinks to preserved B3 bytes and preserve-symlinks with current unchanged pinned dependency set. No archive modification.",
+  "intendedFailures": [
+    "cumulative prior+failed input tokens13 !=24",
+    "known cancellation old complete11/7 footer, no partial coverage",
+    "pre-aborted old zero complete footer instead of no receipt",
+    "dispatched unreported cancellation old zero complete footer instead of no receipt",
+    "output-schema invalid false !=true failed classification",
+    "VALIDATE-schema invalid false !=true failed classification"
+  ],
+  "positiveControl": "schema-conforming real final passed unchanged",
+  "afterEvidence": "G3-REPAIR4-OWNING-GATE.json; actual52pass0fail including these sevencases",
+  "externalModelOrJevCalls": 0
+}

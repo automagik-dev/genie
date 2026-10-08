@@ -1,0 +1,39 @@
+{
+  "version": 1,
+  "timestamp": "2026-10-05T04:04:22.158Z",
+  "sha": "0fe62de3e2292fe1cc3eeb7f80068c0ee17918c7",
+  "correctness": {
+    "agent": "G1BoundaryRereview",
+    "verdict": "SHIP",
+    "findings": []
+  },
+  "quality": {
+    "agent": "G1QualityRereview",
+    "verdict": "SHIP",
+    "findings": []
+  },
+  "publicationOnlyDelta": [
+    ".genie/wishes/mikro-engine-split/WISH.md",
+    ".genie/wishes/mikro-engine-split/evidence/G1-REPAIR-VERIFICATION.json",
+    ".genie/wishes/mikro-engine-split/inputs/HANDOFF.md"
+  ],
+  "privacyProbe": "Old private state detected; sanitized copy clear",
+  "privateOriginalAndSignedDesign": "Matching retained hashes",
+  "withdrawnSnapshotNotAncestor": "Git merge-base --is-ancestor exit1",
+  "currentWishLint": "110 files, zero broken links, template validator green",
+  "runtimeEvidence": "Prior complete green runtime gates reused; code/configuration/tests/payload inputs byte-identical",
+  "budget": {
+    "repair": 1,
+    "max": 2,
+    "qualityLoop": 2,
+    "qualityCap": 2,
+    "ownerOverride": "Sanitize and re-review; publication-only",
+    "effortEscalations": 0,
+    "maxEffortEscalations": 2
+  },
+  "limits": [
+    "G1 only; WISH remains IN_PROGRESS",
+    "No remote CI observed; no merge/release/promotion permission",
+    "Inherited explicit GIT_* operator choices outside bounded guard"
+  ]
+}

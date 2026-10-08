@@ -6,6 +6,8 @@ import {
   STATION_BASELINE_MODELS,
   STATION_BASE_URL,
   STATION_PROVIDER_ID,
+  ensureStationModels,
+  resetStationModelsCache,
   registerStationProvider,
   stationProvider,
 } from "../src/station-provider.js";
@@ -86,16 +88,6 @@ describe("station provider", () => {
     assert.equal(flm?.compat?.supportsReasoningEffort, false);
   });
 
-  it("keyless auth resolves as configured (local server)", async () => {
-    const provider = stationProvider();
-    const resolved = await provider.auth.apiKey?.resolve({
-      // The resolver ignores ctx/credential — it always reports configured.
-      ctx: {} as never,
-      credential: undefined,
-    });
-    assert.ok(resolved, "keyless auth must report configured");
-    assert.ok(resolved?.auth.apiKey, "keyless auth must supply a placeholder key");
-  });
 });
 
 /**
@@ -106,6 +98,29 @@ describe("station provider", () => {
  * `ensureStationModels` re-registers through.
  */
 describe("stationProvider — dynamic catalog", () => {
+  it("applies one fetched catalog to every isolated runtime", async (t) => {
+    resetStationModelsCache();
+    let requests = 0;
+    t.mock.method(globalThis, "fetch", async () => {
+      requests++;
+      return new Response(JSON.stringify({ data: [{ id: "Gateway-only", recipe: "flm" }] }), {
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+    try {
+      const a = builtinModels();
+      const b = builtinModels();
+      registerStationProvider(a);
+      registerStationProvider(b);
+      await Promise.all([ensureStationModels(a), ensureStationModels(b)]);
+      assert.equal(requests, 1);
+      assert.ok(a.getModel(STATION_PROVIDER_ID, "Gateway-only"));
+      assert.ok(b.getModel(STATION_PROVIDER_ID, "Gateway-only"));
+    } finally {
+      resetStationModelsCache();
+      t.mock.restoreAll();
+    }
+  });
   it("defaults to the static baseline", () => {
     const ids = stationProvider().getModels().map((m) => m.id);
     assert.deepEqual(

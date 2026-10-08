@@ -1,0 +1,652 @@
+{
+  "schemaVersion": 1,
+  "createdAt": "2026-10-07T07:37:34.069323+00:00",
+  "scope": "Actual same18 native own measured comparisons, with truthful incomplete costs/business failures and perrepetition uncertainty; no engine/workflow adoption or billedcost winner.",
+  "cohortProof": "G8-RECEIPT3-NATIVE-18-COMPLETE.json",
+  "nativeInputSha256": "1ab619049f6fa609cec61d0471dceb4ca61ad6fe57e7f2d3652a632c10f114e9",
+  "groups": [
+    {
+      "objectiveId": "genie-existing",
+      "variant": "offload-rlm",
+      "runs": 3,
+      "accountingComplete": 3,
+      "businessOk": 0,
+      "refused": 1,
+      "missed": 2,
+      "prOpen": 0,
+      "actualDurationMs": {
+        "p50": 1537992.36553,
+        "p90": 1892240.639665,
+        "minimum": 280357.06558999995,
+        "maximum": 1892240.639665
+      },
+      "nativeTokensTotal": 15175582,
+      "nativeToolsTotal": 310,
+      "canonicalAttempts": 5,
+      "sdkCalls": 5,
+      "repairRoundStatuses": [
+        [],
+        [
+          "unable"
+        ],
+        [
+          "unable"
+        ]
+      ],
+      "knownSDKQuoteSubtotalAcrossCompleteRunsUsd": 0.144659496,
+      "nativeDollarBill": null,
+      "gatewayInvoice": null,
+      "repRows": [
+        {
+          "repetition": 1,
+          "runId": "9e3c62ef-833d-420f-8cd9-010aba3e6076",
+          "state": "refused",
+          "accountingComplete": true,
+          "durationMs": 280357.06558999995,
+          "nativeTokens": 823400,
+          "nativeTools": 26,
+          "sdkNominalCostUsd": 0.030468551999999996,
+          "canonicalAttempts": 1,
+          "sdkCalls": 1
+        },
+        {
+          "repetition": 2,
+          "runId": "ab923666-d531-4d25-883f-077f70752fb7",
+          "state": "missed",
+          "accountingComplete": true,
+          "durationMs": 1537992.36553,
+          "nativeTokens": 8411110,
+          "nativeTools": 148,
+          "sdkNominalCostUsd": 0.069077568,
+          "canonicalAttempts": 2,
+          "sdkCalls": 2
+        },
+        {
+          "repetition": 3,
+          "runId": "acb38aa8-55e5-4561-abf5-7fccc264b270",
+          "state": "missed",
+          "accountingComplete": true,
+          "durationMs": 1892240.639665,
+          "nativeTokens": 5941072,
+          "nativeTools": 136,
+          "sdkNominalCostUsd": 0.045113376000000004,
+          "canonicalAttempts": 2,
+          "sdkCalls": 2
+        }
+      ]
+    },
+    {
+      "objectiveId": "genie-existing",
+      "variant": "offload-pi",
+      "runs": 3,
+      "accountingComplete": 1,
+      "businessOk": 0,
+      "refused": 1,
+      "missed": 2,
+      "prOpen": 0,
+      "actualDurationMs": {
+        "p50": 2969251.587293,
+        "p90": 3031336.8217189997,
+        "minimum": 349073.713952,
+        "maximum": 3031336.8217189997
+      },
+      "nativeTokensTotal": 27204086,
+      "nativeToolsTotal": 487,
+      "canonicalAttempts": 11,
+      "sdkCalls": 6,
+      "repairRoundStatuses": [
+        [
+          "fixed",
+          "unable"
+        ],
+        [],
+        [
+          "fixed",
+          "unable"
+        ]
+      ],
+      "knownSDKQuoteSubtotalAcrossCompleteRunsUsd": 0.030308688,
+      "nativeDollarBill": null,
+      "gatewayInvoice": null,
+      "repRows": [
+        {
+          "repetition": 1,
+          "runId": "726dd6d6-3dc4-4e93-a56a-425e4527aa81",
+          "state": "missed",
+          "accountingComplete": false,
+          "durationMs": 3031336.8217189997,
+          "nativeTokens": 14283520,
+          "nativeTools": 250,
+          "sdkNominalCostUsd": null,
+          "canonicalAttempts": 4,
+          "sdkCalls": 2
+        },
+        {
+          "repetition": 2,
+          "runId": "c906e145-ab8b-4bd5-8b9c-bd2da8a98cc9",
+          "state": "refused",
+          "accountingComplete": true,
+          "durationMs": 349073.713952,
+          "nativeTokens": 515862,
+          "nativeTools": 28,
+          "sdkNominalCostUsd": 0.030308688,
+          "canonicalAttempts": 1,
+          "sdkCalls": 1
+        },
+        {
+          "repetition": 3,
+          "runId": "72c021f0-d128-41b6-8a6f-a6abe75d166d",
+          "state": "missed",
+          "accountingComplete": false,
+          "durationMs": 2969251.587293,
+          "nativeTokens": 12404704,
+          "nativeTools": 209,
+          "sdkNominalCostUsd": null,
+          "canonicalAttempts": 6,
+          "sdkCalls": 3
+        }
+      ]
+    },
+    {
+      "objectiveId": "genie-existing",
+      "variant": "offload-off",
+      "runs": 3,
+      "accountingComplete": 3,
+      "businessOk": 0,
+      "refused": 0,
+      "missed": 3,
+      "prOpen": 0,
+      "actualDurationMs": {
+        "p50": 1397069.827533,
+        "p90": 1405599.047477,
+        "minimum": 1236407.985404,
+        "maximum": 1405599.047477
+      },
+      "nativeTokensTotal": 21609131,
+      "nativeToolsTotal": 440,
+      "canonicalAttempts": 0,
+      "sdkCalls": 0,
+      "repairRoundStatuses": [
+        [
+          "unable"
+        ],
+        [
+          "unable"
+        ],
+        [
+          "unable"
+        ]
+      ],
+      "knownSDKQuoteSubtotalAcrossCompleteRunsUsd": 0,
+      "nativeDollarBill": null,
+      "gatewayInvoice": null,
+      "repRows": [
+        {
+          "repetition": 1,
+          "runId": "8c85a065-2deb-42ab-965d-e8409c3b44b6",
+          "state": "missed",
+          "accountingComplete": true,
+          "durationMs": 1397069.827533,
+          "nativeTokens": 7185581,
+          "nativeTools": 132,
+          "sdkNominalCostUsd": null,
+          "canonicalAttempts": 0,
+          "sdkCalls": 0
+        },
+        {
+          "repetition": 2,
+          "runId": "a25af07d-149f-495a-9306-fc9f4202a546",
+          "state": "missed",
+          "accountingComplete": true,
+          "durationMs": 1405599.047477,
+          "nativeTokens": 8259337,
+          "nativeTools": 162,
+          "sdkNominalCostUsd": null,
+          "canonicalAttempts": 0,
+          "sdkCalls": 0
+        },
+        {
+          "repetition": 3,
+          "runId": "6d912b01-4ea7-44fe-bf0c-ea7622a9cef5",
+          "state": "missed",
+          "accountingComplete": true,
+          "durationMs": 1236407.985404,
+          "nativeTokens": 6164213,
+          "nativeTools": 146,
+          "sdkNominalCostUsd": null,
+          "canonicalAttempts": 0,
+          "sdkCalls": 0
+        }
+      ]
+    },
+    {
+      "objectiveId": "brain-existing",
+      "variant": "offload-rlm",
+      "runs": 3,
+      "accountingComplete": 2,
+      "businessOk": 0,
+      "refused": 2,
+      "missed": 0,
+      "prOpen": 1,
+      "actualDurationMs": {
+        "p50": 336840.56808700005,
+        "p90": 618418.458412,
+        "minimum": 211904.386453,
+        "maximum": 618418.458412
+      },
+      "nativeTokensTotal": 3417105,
+      "nativeToolsTotal": 161,
+      "canonicalAttempts": 5,
+      "sdkCalls": 5,
+      "repairRoundStatuses": [
+        [],
+        [],
+        []
+      ],
+      "knownSDKQuoteSubtotalAcrossCompleteRunsUsd": 0.074626836,
+      "nativeDollarBill": null,
+      "gatewayInvoice": null,
+      "repRows": [
+        {
+          "repetition": 1,
+          "runId": "5a10383b-13e1-4d16-b162-57f7e1d01397",
+          "state": "pr-open",
+          "accountingComplete": true,
+          "durationMs": 618418.458412,
+          "nativeTokens": 2364164,
+          "nativeTools": 105,
+          "sdkNominalCostUsd": 0.04545444,
+          "canonicalAttempts": 2,
+          "sdkCalls": 2
+        },
+        {
+          "repetition": 2,
+          "runId": "9b3e5be0-5653-443e-99b1-428b7c14093b",
+          "state": "refused",
+          "accountingComplete": true,
+          "durationMs": 211904.386453,
+          "nativeTokens": 316236,
+          "nativeTools": 21,
+          "sdkNominalCostUsd": 0.029172395999999996,
+          "canonicalAttempts": 1,
+          "sdkCalls": 1
+        },
+        {
+          "repetition": 3,
+          "runId": "689220c8-befd-407f-80a5-72d118f85387",
+          "state": "refused",
+          "accountingComplete": false,
+          "durationMs": 336840.56808700005,
+          "nativeTokens": 736705,
+          "nativeTools": 35,
+          "sdkNominalCostUsd": null,
+          "canonicalAttempts": 2,
+          "sdkCalls": 2
+        }
+      ]
+    },
+    {
+      "objectiveId": "brain-existing",
+      "variant": "offload-pi",
+      "runs": 3,
+      "accountingComplete": 3,
+      "businessOk": 0,
+      "refused": 3,
+      "missed": 0,
+      "prOpen": 0,
+      "actualDurationMs": {
+        "p50": 252952.49051100004,
+        "p90": 263612.407474,
+        "minimum": 219086.632609,
+        "maximum": 263612.407474
+      },
+      "nativeTokensTotal": 2290179,
+      "nativeToolsTotal": 84,
+      "canonicalAttempts": 4,
+      "sdkCalls": 4,
+      "repairRoundStatuses": [
+        [],
+        [],
+        []
+      ],
+      "knownSDKQuoteSubtotalAcrossCompleteRunsUsd": 0.11531619599999998,
+      "nativeDollarBill": null,
+      "gatewayInvoice": null,
+      "repRows": [
+        {
+          "repetition": 1,
+          "runId": "0049576b-9a8c-4aec-86ce-3293bb726894",
+          "state": "refused",
+          "accountingComplete": true,
+          "durationMs": 263612.407474,
+          "nativeTokens": 520639,
+          "nativeTools": 30,
+          "sdkNominalCostUsd": 0.04528378799999999,
+          "canonicalAttempts": 2,
+          "sdkCalls": 2
+        },
+        {
+          "repetition": 2,
+          "runId": "3bb6e647-b178-49fd-824b-4b460bbf49ed",
+          "state": "refused",
+          "accountingComplete": true,
+          "durationMs": 252952.49051100004,
+          "nativeTokens": 959599,
+          "nativeTools": 28,
+          "sdkNominalCostUsd": 0.025974107999999996,
+          "canonicalAttempts": 1,
+          "sdkCalls": 1
+        },
+        {
+          "repetition": 3,
+          "runId": "1bc32d89-46f6-446e-abd3-192964493943",
+          "state": "refused",
+          "accountingComplete": true,
+          "durationMs": 219086.632609,
+          "nativeTokens": 809941,
+          "nativeTools": 26,
+          "sdkNominalCostUsd": 0.044058299999999995,
+          "canonicalAttempts": 1,
+          "sdkCalls": 1
+        }
+      ]
+    },
+    {
+      "objectiveId": "brain-existing",
+      "variant": "offload-off",
+      "runs": 3,
+      "accountingComplete": 3,
+      "businessOk": 0,
+      "refused": 2,
+      "missed": 0,
+      "prOpen": 1,
+      "actualDurationMs": {
+        "p50": 234164.13628799998,
+        "p90": 443462.312804,
+        "minimum": 150489.603744,
+        "maximum": 443462.312804
+      },
+      "nativeTokensTotal": 4799952,
+      "nativeToolsTotal": 200,
+      "canonicalAttempts": 0,
+      "sdkCalls": 0,
+      "repairRoundStatuses": [
+        [],
+        [],
+        []
+      ],
+      "knownSDKQuoteSubtotalAcrossCompleteRunsUsd": 0,
+      "nativeDollarBill": null,
+      "gatewayInvoice": null,
+      "repRows": [
+        {
+          "repetition": 1,
+          "runId": "421bbc8c-362f-40fe-bc21-50aaca028903",
+          "state": "refused",
+          "accountingComplete": true,
+          "durationMs": 150489.603744,
+          "nativeTokens": 500677,
+          "nativeTools": 31,
+          "sdkNominalCostUsd": null,
+          "canonicalAttempts": 0,
+          "sdkCalls": 0
+        },
+        {
+          "repetition": 2,
+          "runId": "3c016cb4-9a38-4c32-97d0-631a671e2dea",
+          "state": "pr-open",
+          "accountingComplete": true,
+          "durationMs": 443462.312804,
+          "nativeTokens": 2996254,
+          "nativeTools": 113,
+          "sdkNominalCostUsd": null,
+          "canonicalAttempts": 0,
+          "sdkCalls": 0
+        },
+        {
+          "repetition": 3,
+          "runId": "321a8450-896c-4b79-9be1-09fead613299",
+          "state": "refused",
+          "accountingComplete": true,
+          "durationMs": 234164.13628799998,
+          "nativeTokens": 1303021,
+          "nativeTools": 56,
+          "sdkNominalCostUsd": null,
+          "canonicalAttempts": 0,
+          "sdkCalls": 0
+        }
+      ]
+    }
+  ],
+  "canonicalAttempts": 25,
+  "sdkCalls": 20,
+  "actualSDKObservedAttempts": [
+    {
+      "id": "a72fe4c6-c612-4aca-9dda-84102ccf8969",
+      "cellId": "g8-genie-existing-offload-rlm-r1",
+      "usageComplete": true,
+      "knownObservedSdkNominalUsd": 0.030468551999999996,
+      "rootIterations": 16,
+      "reportedModelCalls": null,
+      "errorType": null,
+      "error": null
+    },
+    {
+      "id": "1abf5140-af25-4f1f-82f9-01ddffe03908",
+      "cellId": "g8-genie-existing-offload-rlm-r2",
+      "usageComplete": true,
+      "knownObservedSdkNominalUsd": 0.035410572,
+      "rootIterations": 12,
+      "reportedModelCalls": null,
+      "errorType": null,
+      "error": null
+    },
+    {
+      "id": "bc61e5b1-2f01-4826-97bb-a5544f72b8d3",
+      "cellId": "g8-genie-existing-offload-rlm-r2",
+      "usageComplete": true,
+      "knownObservedSdkNominalUsd": 0.033666996,
+      "rootIterations": 16,
+      "reportedModelCalls": null,
+      "errorType": null,
+      "error": null
+    },
+    {
+      "id": "4847912c-d23d-4675-aca2-72d6461cc64c",
+      "cellId": "g8-genie-existing-offload-rlm-r3",
+      "usageComplete": true,
+      "knownObservedSdkNominalUsd": 0.011670048,
+      "rootIterations": 9,
+      "reportedModelCalls": null,
+      "errorType": null,
+      "error": null
+    },
+    {
+      "id": "e2d3efc1-6013-4c89-a500-ac1a70e3b7e0",
+      "cellId": "g8-genie-existing-offload-rlm-r3",
+      "usageComplete": true,
+      "knownObservedSdkNominalUsd": 0.033443328,
+      "rootIterations": 16,
+      "reportedModelCalls": null,
+      "errorType": null,
+      "error": null
+    },
+    {
+      "id": "7dffe580-50c2-4f86-98fd-148902de39f1",
+      "cellId": "g8-genie-existing-offload-pi-r1",
+      "usageComplete": true,
+      "knownObservedSdkNominalUsd": 0.022724555999999996,
+      "rootIterations": 10,
+      "reportedModelCalls": 10,
+      "errorType": null,
+      "error": null
+    },
+    {
+      "id": "c8fd8aa9-5bcd-4469-8c40-2900e3793edc",
+      "cellId": "g8-genie-existing-offload-pi-r1",
+      "usageComplete": true,
+      "knownObservedSdkNominalUsd": 0.010955436,
+      "rootIterations": 9,
+      "reportedModelCalls": 9,
+      "errorType": null,
+      "error": null
+    },
+    {
+      "id": "69d71ea2-dd0c-4513-b04a-d910bdd489d5",
+      "cellId": "g8-genie-existing-offload-pi-r2",
+      "usageComplete": true,
+      "knownObservedSdkNominalUsd": 0.030308688,
+      "rootIterations": 14,
+      "reportedModelCalls": 14,
+      "errorType": null,
+      "error": null
+    },
+    {
+      "id": "1ff779ab-11c1-4884-8fa6-0207568d76ec",
+      "cellId": "g8-genie-existing-offload-pi-r3",
+      "usageComplete": true,
+      "knownObservedSdkNominalUsd": 0.013785924,
+      "rootIterations": 14,
+      "reportedModelCalls": 14,
+      "errorType": null,
+      "error": null
+    },
+    {
+      "id": "83fc7b38-7be5-4b0f-aa33-ae07c6801ee0",
+      "cellId": "g8-genie-existing-offload-pi-r3",
+      "usageComplete": true,
+      "knownObservedSdkNominalUsd": 0.015315263999999999,
+      "rootIterations": 8,
+      "reportedModelCalls": 8,
+      "errorType": null,
+      "error": null
+    },
+    {
+      "id": "d5b1666e-ad47-4dfe-b954-8f871caa4a59",
+      "cellId": "g8-genie-existing-offload-pi-r3",
+      "usageComplete": true,
+      "knownObservedSdkNominalUsd": 0.026932835999999998,
+      "rootIterations": 10,
+      "reportedModelCalls": 10,
+      "errorType": null,
+      "error": null
+    },
+    {
+      "id": "48cd09ca-a08d-4e11-8765-790a13902716",
+      "cellId": "g8-brain-existing-offload-rlm-r1",
+      "usageComplete": true,
+      "knownObservedSdkNominalUsd": 0.024891275999999997,
+      "rootIterations": 8,
+      "reportedModelCalls": null,
+      "errorType": null,
+      "error": null
+    },
+    {
+      "id": "e8a80b00-993e-496b-aaf5-cbf4bbf9d247",
+      "cellId": "g8-brain-existing-offload-rlm-r1",
+      "usageComplete": true,
+      "knownObservedSdkNominalUsd": 0.020563164,
+      "rootIterations": 16,
+      "reportedModelCalls": null,
+      "errorType": null,
+      "error": null
+    },
+    {
+      "id": "4b638640-0389-4905-87eb-278bbdd8d571",
+      "cellId": "g8-brain-existing-offload-rlm-r2",
+      "usageComplete": true,
+      "knownObservedSdkNominalUsd": 0.029172395999999996,
+      "rootIterations": 14,
+      "reportedModelCalls": null,
+      "errorType": null,
+      "error": null
+    },
+    {
+      "id": "101d0e9a-d0b6-4b3a-a985-0b8a796e8119",
+      "cellId": "g8-brain-existing-offload-rlm-r3",
+      "usageComplete": false,
+      "knownObservedSdkNominalUsd": 0.038691564000000005,
+      "rootIterations": 16,
+      "reportedModelCalls": 16,
+      "errorType": null,
+      "error": null
+    },
+    {
+      "id": "49b0da77-b88f-4d3b-80cf-644bdb032818",
+      "cellId": "g8-brain-existing-offload-rlm-r3",
+      "usageComplete": false,
+      "knownObservedSdkNominalUsd": 0.018450515999999997,
+      "rootIterations": 16,
+      "reportedModelCalls": 16,
+      "errorType": null,
+      "error": null
+    },
+    {
+      "id": "1ae7b27a-00fa-4517-a2ab-a11af432af24",
+      "cellId": "g8-brain-existing-offload-pi-r1",
+      "usageComplete": true,
+      "knownObservedSdkNominalUsd": 0.022196807999999995,
+      "rootIterations": 12,
+      "reportedModelCalls": 12,
+      "errorType": null,
+      "error": null
+    },
+    {
+      "id": "49938f7e-f8cc-4661-afa7-83bba1c3f0ab",
+      "cellId": "g8-brain-existing-offload-pi-r1",
+      "usageComplete": true,
+      "knownObservedSdkNominalUsd": 0.02308698,
+      "rootIterations": 13,
+      "reportedModelCalls": 13,
+      "errorType": null,
+      "error": null
+    },
+    {
+      "id": "2870cbd0-81ca-4b35-80df-534e649b670a",
+      "cellId": "g8-brain-existing-offload-pi-r2",
+      "usageComplete": true,
+      "knownObservedSdkNominalUsd": 0.025974107999999996,
+      "rootIterations": 11,
+      "reportedModelCalls": 11,
+      "errorType": null,
+      "error": null
+    },
+    {
+      "id": "24726e53-dac3-4156-9682-3e4449c78d6c",
+      "cellId": "g8-brain-existing-offload-pi-r3",
+      "usageComplete": true,
+      "knownObservedSdkNominalUsd": 0.044058299999999995,
+      "rootIterations": 15,
+      "reportedModelCalls": 15,
+      "errorType": null,
+      "error": null
+    }
+  ],
+  "observedSdkNominalKnownSubtotalUsd": 0.5117673119999999,
+  "SDKQuoteCoverage": {
+    "completeObservedSDKCalls": 18,
+    "actualSDKCalls": 20,
+    "canonicalAttempts": 25,
+    "initializationTimeoutCallerRowsWithoutSDK": 5
+  },
+  "fullSDKTotalUsd": null,
+  "nativeBillUsd": null,
+  "gatewayInvoiceUsd": null,
+  "keeperDoubleAdded": false,
+  "businessCounts": {
+    "missed": 7,
+    "pr-open": 2,
+    "refused": 9
+  },
+  "businessOkTrue": 0,
+  "noSHIPFromRuntimeCompleted": true,
+  "comparisonComplete": false,
+  "selection": "Keep explicit RLMdefault and opt-inPi; global verifiedengineparity false and complete nativeaccounting/adoption/nonregression not established.",
+  "confounds": [
+    "Three repetitions, serial fixedorder; no broad confidence-backed general speed/cost ranking.",
+    "Genieactualgates failed underfrozencontained TMPDIR/NO_COLOR/privateumask environment; repairer attribution is recorded as assessment, not claimed independentlyproven baseline equivalence.",
+    "Genuine admission refusals/history/duplicate-work checks remain outcomes, not Sourcebugs or removedrows.",
+    "TwoactualPR-open braincases have no businessoktrue or inferredgreenCI.",
+    "SDKquotes are observednominal estimates, not provider/nativeinvoices; partial/fullunknown costs retained."
+  ]
+}

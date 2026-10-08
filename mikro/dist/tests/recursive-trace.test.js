@@ -1,5 +1,10 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { promisify } from "node:util";
 import { createUsage, mergeUsage, usageDelta, parseRlmChildOutput, buildRlmChildArgs, buildChildEnv, classifyRlmChildResult, resolveChildModelRef, stderrTail } from "../src/llm.js";
 import { buildStats } from "../src/output.js";
 import { LangfuseTraceRecorder } from "../src/langfuse.js";
@@ -257,5 +262,185 @@ describe("stderrTail", () => {
         const out = stderrTail("abcdefghij", 4);
         assert.equal(out, "…ghij");
     });
+});
+describe("recursive subprocess cancellation", () => {
+    for (const mode of ["already-aborted", "queued-batch", "settled-batch"]) {
+        const behavior = mode === "settled-batch"
+            ? "accounts every settled child exactly once on successful batches"
+            : `keeps settled receipts without dispatching ${mode} children after their generation is retired`;
+        it(behavior, async () => {
+            const dir = await mkdtemp(join(tmpdir(), "mikro-recursion-cancel-"));
+            const entry = join(dir, "recursive-child.mjs");
+            // rlmQuery uses its parent's entry point for recursive subprocesses.
+            // Keep that entry point in a separate host, never mutate test-runner argv.
+            await writeFile(entry, `
+import { createServer } from "node:http";
+import { randomUUID } from "node:crypto";
+import { getEventListeners } from "node:events";
+import { createUsage, handleLLMRequest, llmCompleteSimple, rlmQuery, usageDelta } from ${JSON.stringify(new URL("../src/llm.js", import.meta.url).href)};
+import { parseCustomProviders } from ${JSON.stringify(new URL("../src/custom-providers.js", import.meta.url).href)};
+import { buildStats } from ${JSON.stringify(new URL("../src/output.js", import.meta.url).href)};
+import { BudgetTracker } from ${JSON.stringify(new URL("../src/budget.js", import.meta.url).href)};
+
+function model(port) {
+  return { provider: "isolated", model: "control", providers: parseCustomProviders({ isolated: {
+    "base-url": "http://127.0.0.1:" + port + "/v1", "api-key-env": "MIKRO_RECURSION_FIXTURE_KEY",
+    models: { control: { cost: { input: 1, output: 2 } } },
+  } }, "local recursion fixture") };
+}
+function reply(response) {
+  response.writeHead(200, { "Content-Type": "text/event-stream" });
+  response.end("data: " + JSON.stringify({
+    object: "chat.completion.chunk", model: "control",
+    choices: [{ index: 0, delta: { role: "assistant", content: "local child receipt" }, finish_reason: "stop" }],
+    usage: { prompt_tokens: 11, completion_tokens: 7, total_tokens: 18, completion_tokens_details: { reasoning_tokens: 2 } },
+  }) + "\\n\\ndata: [DONE]\\n\\n");
+}
+if (process.argv[2]?.startsWith("child-")) {
+  // Exercise the real SDK transport and recursive stdout receipt, not an
+  // onChildEnd mock that supplies the accounting the owner should perform.
+  const response = await llmCompleteSimple(process.argv[2], model(process.env.MIKRO_RECURSION_FIXTURE_PORT),
+    undefined, { maxRetries: 0 });
+  console.log(JSON.stringify({ answer: response.text, usage: response.usage, stats: { run_id: randomUUID() } }));
+} else {
+  const mode = process.argv[2];
+  const controller = new AbortController();
+  const reason = new Error("fixture generation retired");
+  const dispatches = [];
+  const starts = [];
+  const ends = [];
+  const parked = [];
+  const firstBatch = Promise.withResolvers();
+  const usage = createUsage();
+  const childUsage = createUsage();
+  const budget = new BudgetTracker({ maxCost: null, maxTokens: 18, maxDepth: null });
+  // Failure-only watchdog for detached subprocesses that fake timers in the
+  // test runner cannot reach. Readiness/cancellation await HTTP and settlement.
+  const deadline = mode !== "already-aborted" ? setTimeout(() => {
+    controller.abort(reason);
+    if (mode === "queued-batch") firstBatch.reject(new Error("fixture first batch never reached the local server"));
+  }, 20_000) : undefined;
+  const server = createServer(async (request, response) => {
+    let body = "";
+    for await (const chunk of request) body += chunk;
+    const prompt = JSON.parse(body).messages.at(-1).content;
+    dispatches.push(prompt);
+    if (mode === "queued-batch") {
+      parked.push({ prompt, response });
+      if (parked.length === 4) firstBatch.resolve();
+    } else {
+      reply(response);
+    }
+  });
+  const listening = Promise.withResolvers();
+  server.listen(0, "127.0.0.1", listening.resolve);
+  await listening.promise;
+  process.env.MIKRO_RECURSION_FIXTURE_PORT = String(server.address().port);
+  process.env.MIKRO_RECURSION_FIXTURE_KEY = "local-fixture-only";
+  const config = { configDir: import.meta.dirname, model: model(server.address().port) };
+  const options = {
+    onChildStart: ({ prompt, correlationId }) => { starts.push({ prompt, correlationId }); },
+    onChildEnd: (data) => {
+      ends.push(data);
+      if (mode === "queued-batch" && data.result.usage) controller.abort(reason);
+    },
+  };
+  if (mode === "already-aborted") controller.abort(reason);
+  const prompts = [
+    ...Array.from({ length: 4 }, (_, i) => "child-first-" + i),
+    ...Array.from({ length: 4 }, (_, i) => "child-queued-" + i),
+  ];
+  const pending = (mode === "already-aborted"
+    ? rlmQuery("child-pre-aborted", import.meta.dirname, controller.signal, options)
+    : handleLLMRequest({ request_type: "rlm_query_batched", prompts }, config, usage,
+        controller.signal, undefined, undefined, childUsage, options)
+  // Mirror the RLM consumer's finally(recordBudgetUsage): failures still
+  // update its budget using the cumulative totals owned by handleLLMRequest.
+  ).finally(() => budget.record(usage.inputTokens, usage.outputTokens, usage.totalCost))
+    .then(() => "resolved", (error) => error === reason ? reason.message : String(error));
+  try {
+    if (mode === "queued-batch") {
+      await firstBatch.promise;
+      reply(parked.find(({ prompt }) => prompt === "child-first-0").response);
+    }
+    const settlement = await pending;
+    const stats = buildStats({
+      answer: settlement, references: [], iterations: 0, model: "isolated/control", usage,
+      usageBreakdown: { root: usageDelta(usage, childUsage), child: childUsage, total: usage },
+    }, { time_ms: 0, budget_hit: budget.getState().budgetHit });
+    console.log(JSON.stringify({
+      settlement,
+      starts: starts.map(({ prompt }) => prompt).sort(),
+      dispatches: dispatches.sort(),
+      completedChildren: ends.length,
+      failedChildren: ends.filter(({ isError }) => isError === true).length,
+      paidChildren: ends.filter(({ result }) => result.usage !== undefined).length,
+      paidIdentities: ends.filter(({ result }) => result.usage !== undefined).every(({ result }) => typeof result.runId === "string"),
+      unknownKilledChildren: ends.filter(({ result, isError }) => isError && result.usage === undefined && result.runId === undefined).length,
+      matchedCompletions: ends.every(({ correlationId }) => starts.some((start) => start.correlationId === correlationId)),
+      remainingAbortListeners: getEventListeners(controller.signal, "abort").length,
+      usage, childUsage, stats, budget: budget.getState(),
+    }));
+  } finally {
+    clearTimeout(deadline);
+    controller.abort(reason);
+    await pending;
+    for (const { response } of parked) response.destroy();
+    server.closeAllConnections();
+    const closed = Promise.withResolvers();
+    server.close(closed.resolve);
+    await closed.promise;
+  }
+}
+`);
+            try {
+                const { stdout } = await promisify(execFile)(process.execPath, [entry, mode], { timeout: 35_000 });
+                const observed = JSON.parse(stdout);
+                const started = mode === "already-aborted" ? []
+                    : Array.from({ length: 4 }, (_, i) => `child-first-${i}`);
+                if (mode === "settled-batch") {
+                    started.push(...Array.from({ length: 4 }, (_, i) => `child-queued-${i}`));
+                }
+                const paid = mode === "settled-batch" ? 8 : mode === "queued-batch" ? 1 : 0;
+                const killed = mode === "queued-batch" ? 3 : 0;
+                assert.equal(observed.settlement, mode === "settled-batch" ? "resolved" : "fixture generation retired");
+                assert.deepEqual(observed.starts, started);
+                assert.deepEqual(observed.dispatches, started);
+                assert.equal(observed.completedChildren, started.length);
+                assert.equal(observed.failedChildren, killed);
+                assert.equal(observed.paidChildren, paid);
+                assert.equal(observed.paidIdentities, true);
+                assert.equal(observed.unknownKilledChildren, killed);
+                assert.equal(observed.matchedCompletions, true);
+                assert.equal(observed.remainingAbortListeners, 0);
+                const { totalCost, ...tokens } = observed.usage;
+                assert.deepEqual(tokens, {
+                    inputTokens: 11 * paid, outputTokens: 7 * paid, cacheReadTokens: 0, cacheWriteTokens: 0,
+                    llmCalls: paid, reasoningTokens: 2 * paid,
+                });
+                assert.ok(Math.abs(totalCost - 0.000025 * paid) < 1e-12);
+                assert.deepEqual(observed.childUsage, observed.usage);
+                assert.equal(observed.stats.total_tokens, 18 * paid);
+                assert.equal(observed.stats.total_cost, totalCost);
+                assert.deepEqual(observed.stats.usage_split.root, {
+                    input_tokens: 0, output_tokens: 0, total_tokens: 0, total_cost: 0, llm_calls: 0,
+                });
+                for (const split of ["child", "total"]) {
+                    assert.deepEqual(observed.stats.usage_split[split], {
+                        input_tokens: 11 * paid, output_tokens: 7 * paid, total_tokens: 18 * paid,
+                        total_cost: totalCost, llm_calls: paid,
+                    });
+                }
+                assert.deepEqual(observed.budget, {
+                    totalCost, totalInputTokens: 11 * paid, totalOutputTokens: 7 * paid,
+                    currentDepth: 0, budgetHit: paid ? "max-tokens" : null,
+                });
+                assert.equal(observed.stats.budget_hit, paid ? "max-tokens" : null);
+            }
+            finally {
+                await rm(dir, { recursive: true, force: true });
+            }
+        });
+    }
 });
 //# sourceMappingURL=recursive-trace.test.js.map

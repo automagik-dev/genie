@@ -54,6 +54,8 @@ import type {
 import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completions.lazy";
 import { anthropicMessagesApi } from "@earendil-works/pi-ai/api/anthropic-messages.lazy";
 import { openAIResponsesApi } from "@earendil-works/pi-ai/api/openai-responses.lazy";
+import { isAbsolute } from "node:path";
+import { readPrivateKeyFile } from "./juice.js";
 
 // ─── Types ───────────────────────────────────────────────
 
@@ -76,8 +78,8 @@ export interface CustomModelConfig {
   maxTokens: number;
   reasoning: boolean;
   input: ("text" | "image")[];
-  /** USD per million tokens. */
-  cost: { input: number; output: number; cacheRead: number; cacheWrite: number };
+  /** Declared USD per million tokens; absent input/output rates mean unknown, not free. */
+  cost?: { input?: number; output?: number; cacheRead: number; cacheWrite: number };
   /** Optional per-model header overrides (merged over provider headers). */
   headers?: Record<string, string>;
 }
@@ -90,6 +92,8 @@ export interface CustomProviderConfig {
   baseUrl: string;
   /** Env vars carrying the key, in precedence order. */
   apiKeyEnv: string[];
+  /** Absolute private key-file reference; resolved by public SDK auth on every invocation. */
+  apiKeyFile?: string;
   headers: Record<string, string>;
   models: CustomModelConfig[];
 }
@@ -186,13 +190,13 @@ function parseModel(
   }
 
   const costRaw = pick(raw, "cost");
-  let cost = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+  let cost: CustomModelConfig["cost"];
   if (costRaw !== undefined && costRaw !== null) {
     if (!isRecord(costRaw)) fail(source, `${path}.cost`, "must be a mapping (input/output/cache-read/cache-write).");
     const costPath = `${path}.cost`;
     cost = {
-      input: readNumber(costRaw, "input", source, costPath) ?? 0,
-      output: readNumber(costRaw, "output", source, costPath) ?? 0,
+      input: readNumber(costRaw, "input", source, costPath),
+      output: readNumber(costRaw, "output", source, costPath),
       cacheRead: readNumber(costRaw, "cache-read", source, costPath) ?? 0,
       cacheWrite: readNumber(costRaw, "cache-write", source, costPath) ?? 0,
     };
@@ -284,12 +288,19 @@ export function parseCustomProviders(raw: unknown, source: string): CustomProvid
       fail(source, `${id}.api`, `"${apiRaw}" is not supported. Must be one of: ${CUSTOM_PROVIDER_APIS.join(", ")}.`);
     }
 
+    const apiKeyFile = readString(entry, "api-key-file", source, id);
+    const apiKeyEnv = readApiKeyEnv(entry, source, id);
+    if (apiKeyFile && (!isAbsolute(apiKeyFile) || apiKeyEnv.length)) {
+      fail(source, `${id}.api-key-file`, "must be absolute and cannot be combined with api-key-env.");
+    }
+    if (pick(entry, "api-key") !== undefined) fail(source, `${id}.api-key`, "secret values are not supported; use a credential reference.");
     out.push({
       id,
       name: readString(entry, "name", source, id) ?? id,
       api: apiRaw as CustomProviderApi,
       baseUrl: baseUrl.replace(/\/+$/, ""),
-      apiKeyEnv: readApiKeyEnv(entry, source, id),
+      apiKeyEnv,
+      ...(apiKeyFile ? { apiKeyFile } : {}),
       headers: readHeaders(entry, source, id),
       models: parseModels(entry, source, id),
     });
@@ -335,7 +346,12 @@ export function toPiModel(provider: CustomProviderConfig, model: CustomModelConf
     baseUrl: provider.baseUrl,
     reasoning: model.reasoning,
     input: [...model.input],
-    cost: { ...model.cost },
+    // The SDK requires numeric rates. Keep declaration provenance on CustomModelConfig;
+    // Pi must reject absent input/output declarations before authorizing inference.
+    cost: {
+      input: model.cost?.input ?? 0, output: model.cost?.output ?? 0,
+      cacheRead: model.cost?.cacheRead ?? 0, cacheWrite: model.cost?.cacheWrite ?? 0,
+    },
     contextWindow: model.contextWindow,
     maxTokens: Math.min(model.maxTokens, model.contextWindow),
   };
@@ -351,12 +367,19 @@ export function buildCustomProvider(config: CustomProviderConfig): Provider {
   const envVars = config.apiKeyEnv.length
     ? config.apiKeyEnv
     : [`${config.id.toUpperCase().replace(/[^A-Z0-9]/g, "_")}_API_KEY`];
+  const apiKeyFile = config.apiKeyFile;
   return createProvider({
     id: config.id,
     name: config.name,
     baseUrl: config.baseUrl,
     headers: config.headers,
-    auth: { apiKey: envApiKeyAuth(`${config.id} API key`, envVars) },
+    auth: { apiKey: apiKeyFile ? {
+      name: `${config.id} private project key`,
+      resolve: async ({ signal }) => ({
+        auth: { apiKey: await readPrivateKeyFile(apiKeyFile, signal) },
+        source: "private key-file reference",
+      }),
+    } : envApiKeyAuth(`${config.id} API key`, envVars) },
     models: config.models.map((m) => toPiModel(config, m)),
     api: streamsFor(config.api),
   });
@@ -409,6 +432,7 @@ export function findCustomProvider(
 
 /** Which of a provider's key env vars is set, if any. */
 export function customProviderKeySource(config: CustomProviderConfig): string | undefined {
+  if (config.apiKeyFile) return "private key-file reference";
   return config.apiKeyEnv.find((name) => Boolean(process.env[name]?.trim()));
 }
 

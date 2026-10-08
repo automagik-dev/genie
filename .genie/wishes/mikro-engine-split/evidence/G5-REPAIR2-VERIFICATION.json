@@ -1,0 +1,61 @@
+{
+  "schema": 1,
+  "recordedAt": "2026-10-05T17:24:54.097267+00:00",
+  "reviewSeal": "G5-REPAIR2-REVIEW-SNAPSHOT.json",
+  "reviewSealSha256": "120906948184fdeb843b79290f75692a0d3e6284cb1eeb5791dc561143c91150",
+  "correctness": {
+    "reviewer": "G5CorrectnessResume",
+    "verdict": "SHIP",
+    "scope": "bounded code slice only",
+    "findings": [],
+    "ranChecks": false,
+    "recomputedHashes": false
+  },
+  "quality": {
+    "reviewer": "G5QualityResumeReview",
+    "verdict": "SHIP",
+    "scope": "bounded code slice only",
+    "findings": [],
+    "ranChecks": false
+  },
+  "rootGate": {
+    "command": "env -u NO_COLOR TMPDIR=/var/tmp flock /var/tmp/genie-full-check.lock bun run check",
+    "completionNotificationReceived": true,
+    "artifact": "artifact://110",
+    "passed": 3203,
+    "skipped": 2,
+    "failed": 0,
+    "testFiles": 155,
+    "expectCalls": 19120,
+    "testSeconds": 517.24,
+    "wallSeconds": 540.32,
+    "exitCodeObserved": null,
+    "exitCodeLimitation": "Completed background handle bg_7 was no longer addressable via proc://bg_7 when queried. Final integrated gates will capture exit directly.",
+    "inheritedWarnings": [
+      "doctor.ts cognitive complexity26",
+      "four Knip configuration hints"
+    ]
+  },
+  "focused": {
+    "artifact": "artifact://98",
+    "passed": 226,
+    "failed": 0,
+    "files": 8,
+    "exitCode": 0
+  },
+  "redRegression": {
+    "artifact": "artifact://95",
+    "passed": 0,
+    "failed": 3,
+    "exitCode": 1,
+    "command": "env -u NO_COLOR TMPDIR=/var/tmp bun test scripts/mikro/bench-cli.test.ts scripts/wish-workflow-behavior.test.ts --test-name-pattern 'NEW accuracy controls|off retains the native stages'"
+  },
+  "smokeCredit": "Local bench acceptance boundary and saved-workflow-body to actual Genie report CLI with test receipts; zero external inference. Not genuine workflow or scored experiment evidence.",
+  "groupComplete": false,
+  "pending": [
+    "Dependency-ready compiled MCP engine dispatch",
+    "Generic repository-config Flash query without model override",
+    "Genuine saved workflows and accounting",
+    "Final integrated directly captured gates"
+  ]
+}

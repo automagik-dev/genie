@@ -26,11 +26,14 @@
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "^0.26.0",
-    "@earendil-works/pi-ai": "0.80.10",
+    "@earendil-works/pi-agent-core": "1.0.2",
+    "@earendil-works/pi-ai": "1.0.2",
+    "@earendil-works/pi-coding-agent": "1.0.2",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "js-yaml": "^4.3.2",
     "pg": "^8.20.0",
-    "pgserve": "^1.1.10"
+    "pgserve": "^1.1.10",
+    "typebox": "1.3.27"
   },
   "devDependencies": {
     "@commitlint/cli": "^19.0.0",

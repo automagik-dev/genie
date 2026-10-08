@@ -1,0 +1,54 @@
+{
+  "schemaVersion": 1,
+  "job": "bg_83",
+  "actualSuccessfulCompletion": true,
+  "actualSeconds": 8.33,
+  "command": [
+    "/home/genie/.hermes/node/bin/node",
+    "/home/genie/.local/share/mikro-engine-split/experiments-g8/verify-native-context-roots.mjs",
+    "/home/genie/.local/share/mikro-engine-split/experiments-g8/prepared-native-receipt3-resources.json"
+  ],
+  "proofPath": "/home/genie/.local/share/mikro-engine-split/experiments-g8/native-context-guard-proof-yFzRk9/proof.json",
+  "proofSha256": "fad2af958af1abfb5af2bc2434e03d7f09a79a21d4c06fa14405bb17df8f5185",
+  "proof": {
+    "schemaVersion": 1,
+    "kind": "actual-MCP-facts-guard-precedence-no-inference",
+    "profilePath": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-profiles/g3-receipt3/native/g8-native-smoke/profile.json",
+    "proofRoot": "/home/genie/.local/share/mikro-engine-split/experiments-g8/native-context-guard-proof-yFzRk9",
+    "contextRoots": [
+      "/home/genie/.local/share/mikro-engine-split/experiments-g8/native-receipt3/g8-native-smoke/.g8-runtime/caller/.mikro/runs",
+      "/home/genie/.local/share/mikro-engine-split/experiments-g8/native-receipt3/g8-native-smoke/.g8-runtime/genie/mikro/runs"
+    ],
+    "context": "/home/genie/.local/share/mikro-engine-split/experiments-g8/native-receipt3/g8-native-smoke/.g8-runtime/genie/mikro/runs/unscored-context-guard-9fd65f52-a2c3-4361-a1fa-065c0e8e894f.json",
+    "outsideContext": "/home/genie/.local/share/mikro-engine-split/experiments-g8/native-context-guard-proof-yFzRk9/outside-context.json",
+    "receiptDir": "/home/genie/.local/share/mikro-engine-split/experiments-g8/native-receipt3/g8-native-smoke/.g8-runtime/sdk-receipts-receipt3/unscored-context-guard-6e8abf46-b593-49ee-839f-2234d438117f",
+    "modelCalls": 0,
+    "realNativeWorkflowLaunched": false,
+    "allowedContextResult": {
+      "content": [
+        {
+          "type": "text",
+          "text": "unknown or busy session"
+        }
+      ],
+      "isError": true
+    },
+    "outsideContextResult": {
+      "content": [
+        {
+          "type": "text",
+          "text": "context is not within frozen external facts roots"
+        }
+      ],
+      "isError": true
+    },
+    "receiptFiles": [],
+    "success": true,
+    "stderr": ""
+  },
+  "source": "import { readFile, mkdir, mkdtemp, writeFile, readdir } from 'node:fs/promises';\nimport { createRequire } from 'node:module';\nimport { pathToFileURL } from 'node:url';\nimport { join } from 'node:path';\nimport { randomUUID } from 'node:crypto';\nconst base = '/home/genie/.local/share/mikro-engine-split/experiments-g8';\nconst resources = JSON.parse(await readFile(process.argv[2], 'utf8'));\nconst binding = resources.native.find(row => row.id === 'g8-native-smoke');\nconst profile = JSON.parse(await readFile(binding.profilePath, 'utf8'));\nconst proofRoot = await mkdtemp(join(base, 'native-context-guard-proof-'));\nconst cwd = binding.callerAgentsDir.split('/.g8-runtime/')[0];\nconst callerRoot = join(cwd, '.g8-runtime/genie/mikro/runs');\nawait mkdir(callerRoot, { recursive: true, mode: 0o700 });\nconst context = join(callerRoot, `unscored-context-guard-${randomUUID()}.json`);\nawait writeFile(context, '[]\\n', { flag: 'wx', mode: 0o600 });\nconst outsideContext = join(proofRoot, 'outside-context.json'); await writeFile(outsideContext, '[]\\n', { flag: 'wx', mode: 0o600 });\nconst receiptDir = join(profile.receiptRoot, `unscored-context-guard-${randomUUID()}`);\nconst require = createRequire(join(profile.artifactRoot, 'package.json'));\nconst { Client } = await import(pathToFileURL(require.resolve('@modelcontextprotocol/sdk/client/index.js')).href);\nconst { StdioClientTransport } = await import(pathToFileURL(require.resolve('@modelcontextprotocol/sdk/client/stdio.js')).href);\nconst transport = new StdioClientTransport({ command: '/home/genie/.hermes/node/bin/node', args: ['/home/genie/orca/workspaces/genie/mikro-engine-split/scripts/mikro/engine-experiment-runtime.mjs', '--profile', binding.profilePath, 'mcp'], cwd, env: { PATH: profile.runtimePath, HOME: profile.homeRoot, TMPDIR: '/tmp', MIKRO_EXPERIMENT_RECEIPT_DIR: receiptDir }, stderr: 'pipe' });\nconst client = new Client({ name: 'native-facts-security-proof', version: '1' }, { capabilities: {} });\nlet stderr = ''; transport.stderr?.on('data', bytes => { stderr += bytes.toString(); });\nconst proof = { schemaVersion: 1, kind: 'actual-MCP-facts-guard-precedence-no-inference', profilePath: binding.profilePath, proofRoot, contextRoots: profile.contextRoots, context, outsideContext, receiptDir, modelCalls: 0, realNativeWorkflowLaunched: false };\ntry {\n  await client.connect(transport);\n  const tools = await client.listTools();\n  const tool = tools.tools.find(item => item.name.includes('wish') && item.name.includes('context'));\n  if (!tool) throw new Error(`actual wish-context tool missing: ${tools.tools.map(item => item.name).join(',')}`);\n  const session_id = randomUUID();\n  proof.allowedContextResult = await client.callTool({ name: tool.name, arguments: { prompt: 'Unscored context-path guard proof; never dispatch a backend', context, session_id } });\n  proof.outsideContextResult = await client.callTool({ name: tool.name, arguments: { prompt: 'Unscored context-path guard proof; never dispatch a backend', context: outsideContext, session_id } });\n  const text = result => result.content.filter(item => item.type === 'text').map(item => item.text).join('\\n');\n  if (text(proof.allowedContextResult) !== 'unknown or busy session') throw new Error(`declared actual facts root rejected before session guard: ${text(proof.allowedContextResult)}`);\n  if (text(proof.outsideContextResult) !== 'context is not within frozen external facts roots') throw new Error('outside context guard failed');\n  proof.receiptFiles = await readdir(receiptDir);\n  if (proof.receiptFiles.some(name => name.endsWith('.started.json') || name.endsWith('.result.json'))) throw new Error('unexpected backend lifecycle dispatch');\n  proof.success = true;\n} catch (error) { proof.success = false; proof.failure = { name: error.name, message: error.message, code: error.code ?? null }; }\nfinally {\n  await client.close(); await transport.close();\n  proof.stderr = stderr;\n  await writeFile(join(proofRoot, 'proof.json'), `${JSON.stringify(proof, null, 2)}\\n`, { flag: 'wx', mode: 0o600 });\n  console.log(JSON.stringify({ proofPath: join(proofRoot, 'proof.json'), success: proof.success, modelCalls: 0, failure: proof.failure ?? null }));\n}\nif (!proof.success) process.exitCode = 2;\n",
+  "sourceSha256": "e432767e4745760fdf0ee10692460fcbde5b79ee27702b1a67298a79b35f62e8",
+  "modelCalls": 0,
+  "backendStartedOrResultFiles": 0,
+  "genuineWorkflowCredit": false
+}

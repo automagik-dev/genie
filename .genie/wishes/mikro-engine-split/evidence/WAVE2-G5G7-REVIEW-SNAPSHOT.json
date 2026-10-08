@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "timestamp": "2026-10-05T04:20:19.602Z",
+  "baseSHA": "0fe62de3e2292fe1cc3eeb7f80068c0ee17918c7",
+  "groups": {
+    "G5": {
+      "scripts/mikro/call.ts": "7a2c61dc030d75d3c245a306906975132135648b31e59a8927c5a8651cba3a6f",
+      "scripts/mikro/call.test.ts": "fb6dd9c16d510d75c68c4edbd6c7f471cd492beecff527093f66f430e488ac4d",
+      "scripts/mikro/bench-options.ts": "b442500a6cb0d1d3d89978eb6294f13bc56c0b4cc48465a6f56444ba29128689",
+      "scripts/mikro/bench.ts": "f8e7e08b86f881d83824bccc676c5e496848b1eba5729cf154a130d2a23222a4",
+      "scripts/mikro/bench-cli.test.ts": "fbe356519a2c4aee918755cf00dddd79aa83d57669b60eded236075aa994dfe1",
+      "scripts/mikro/fixtures-from-commits.ts": "315de016627704f0e9e6b0173f6d1f6940ac2fb41d94ea1c24d12cdf67d2aed9",
+      "scripts/mikro/fixtures-from-commits.test.ts": "e8045b99d9648cee5fae6d5906d280d20682bd689e1adc7f0e9c56000468b9f1",
+      "scripts/mikro/score.ts": "a8555831f3ceb41968ee9d194731d9cd91f78e7c033e0a04a960ce19fd519a2b",
+      "scripts/mikro/README.md": "25706170aed9e30c261f50ebc9a4a8332531fcaf865492e01c7daf5f03313e06",
+      ".claude/workflows/wish.js": "34d31e03c17a63d059b777b7ce9c9842429ebabcb24fe50ed47bbde6e1f81674",
+      "scripts/wish-workflow-behavior.test.ts": "1eae9dd5c6b2e74c297fb56c5a1fb6ec9d5773267ca9257f7b731ccde89919a0",
+      ".mikro/mikro.yaml": "dc515e23bd625d344c097fa1a3f7619f5b1f2a9259aeabbf1acac3e710debf67",
+      ".mikro/agents/issue-triage/agent.yaml": "cad8208374dc741fece986a808bf831a3b28cc798cf948e7a48228e760251172",
+      ".mikro/agents/mikro-coach/agent.yaml": "a0a9170be5169c1fd764c22408106ccd2ba5c9207b017c4a65706249f0fa29f0",
+      ".mikro/agents/review-prep/agent.yaml": "3549c7b4cc91080cc44f2c0d20b3c4fb385c9384b70635bd358573ef6d1d0fe1",
+      ".mikro/agents/wish-context/agent.yaml": "b9dea1db6b9d446efb6cd86162990f151b67b916d5aee3271c787be9322130ea"
+    },
+    "G7": {
+      "mikro/src/jev.ts": "41a8f958be6d0a1be37352e78db87378833b189a8fa319a84735801a0e070ea2",
+      "mikro/tests/jev.test.ts": "19ab3d13b1522e1ccc3ac76c5f590edfd98277c8902ba1804267f212a9427bb8"
+    }
+  }
+}

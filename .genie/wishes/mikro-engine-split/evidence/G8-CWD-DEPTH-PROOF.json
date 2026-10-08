@@ -1,0 +1,31 @@
+{
+  "kind": "unscored-real-local-sdk-python-cwd-after",
+  "node": "v26.7.0",
+  "afterRuntimeSha256": "61962829324816413b745f4bcf1d2f36274066b2c5497d0aa547c155f91fe828",
+  "sameActualEndpointAndEffectiveConfig": true,
+  "actualPythonSawLauncherParent": false,
+  "actualPythonSawRequestedTarget": true,
+  "localSdkRequests": 2,
+  "externalInferenceCalls": 0,
+  "actualMcpResult": {
+    "result": {
+      "content": [
+        {
+          "type": "text",
+          "text": "\"\"CWD_PROOF_COMPLETE\"\"\n\n---\nmikro \u00b7 agent=wish-context \u00b7 deepseek/deepseek-flash \u00b7 2 iterations \u00b7 22 in / 14 out \u00b7 $0.0000 \u00b7 0.3s \u00b7 session sess_a89585e18b2ae65b"
+        }
+      ],
+      "structuredContent": {
+        "answer": "\"\"CWD_PROOF_COMPLETE\"\"\n\n---\nmikro \u00b7 agent=wish-context \u00b7 deepseek/deepseek-flash \u00b7 2 iterations \u00b7 22 in / 14 out \u00b7 $0.0000 \u00b7 0.3s \u00b7 session sess_a89585e18b2ae65b",
+        "session_id": "sess_a89585e18b2ae65b"
+      },
+      "isError": false
+    },
+    "jsonrpc": "2.0",
+    "id": 2
+  },
+  "actualProcessExitCode": 0,
+  "scoredOrNativeWorkflowCredit": false,
+  "beforeArtifact": "artifact://331",
+  "beforeRuntimeSha256": "bf0b1d1060514b5fe1493d0235e057eda9a82b37bd67f5a8bfb1deba6a87b07c"
+}

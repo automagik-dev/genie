@@ -86,7 +86,7 @@
  *   prime parent stream carries only its own turns' usage.
  */
 import type { Microagent } from "../agents.js";
-import type { BackendRequest, MicroagentResult, RuntimeBackend } from "../backend.js";
+import { type BackendRequest, type MicroagentResult, type RuntimeBackend } from "../backend.js";
 /** The exact prime-agent release both subprocess and SDK integrations target. */
 export declare const EXPECTED_PRIME_VERSION = "0.8.1";
 /** rlmLoop's default wall-clock cap, mirrored so the deadline default matches legacy. */
@@ -101,6 +101,7 @@ export interface PrimeRunLimits {
     readonly maxTokens: number | null;
     /** Turn ceiling from the spec's iteration cap (null = unlimited). */
     readonly maxTurns: number | null;
+    readonly signal?: AbortSignal;
 }
 /** What the spawn engine hands back — the raw material of one turn. */
 export interface PrimeRunResult {

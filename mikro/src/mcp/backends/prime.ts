@@ -94,7 +94,7 @@ import type { MikroConfig } from "../../config.js";
 import type { LoadedContext } from "../../context.js";
 import { TIMEOUT_ANSWER } from "../../rlm.js";
 import type { Microagent } from "../agents.js";
-import type { BackendRequest, MicroagentResult, RuntimeBackend } from "../backend.js";
+import { BackendRunError, type BackendRequest, type MicroagentResult, type RuntimeBackend } from "../backend.js";
 
 /** The exact prime-agent release both subprocess and SDK integrations target. */
 export const EXPECTED_PRIME_VERSION = "0.8.1";
@@ -112,6 +112,7 @@ export interface PrimeRunLimits {
   readonly maxTokens: number | null;
   /** Turn ceiling from the spec's iteration cap (null = unlimited). */
   readonly maxTurns: number | null;
+  readonly signal?: AbortSignal;
 }
 
 /** What the spawn engine hands back — the raw material of one turn. */
@@ -247,8 +248,8 @@ export function buildPrimeChildEnv(
   return child;
 }
 
-/** Kill reasons the backend owns — each maps to a designed, non-throwing abort. */
-type KillReason = "deadline" | "max-cost" | "max-tokens" | "max-turns";
+/** Deadline/budget stops return normally; host cancellation remains a failed call. */
+type KillReason = "deadline" | "max-cost" | "max-tokens" | "max-turns" | "cancelled";
 
 const num = (value: unknown): number =>
   typeof value === "number" && Number.isFinite(value) ? value : 0;
@@ -286,6 +287,7 @@ function spawnPrimeRun(
   environment: NodeJS.ProcessEnv
 ): Promise<PrimeRunResult> {
   return new Promise<PrimeRunResult>((resolve, reject) => {
+    if (limits.signal?.aborted) throw new BackendRunError("Prime run cancelled before subprocess startup");
     const binaryPath = argv[0]!;
     const child = spawn(binaryPath, argv.slice(1), {
       // Own process group: the budget kill takes the tree, descendants included.
@@ -304,8 +306,9 @@ function spawnPrimeRun(
     let malformedLines = 0;
     let stderrTail = "";
     const usage = { inputTokens: 0, outputTokens: 0, totalCost: 0 };
+    let observedUsage: typeof usage | undefined;
 
-    const killResult = (reason: KillReason): PrimeRunResult => {
+    const killResult = (reason: Exclude<KillReason, "cancelled">): PrimeRunResult => {
       switch (reason) {
         case "deadline":
           // Legacy's timeout preserves whatever budgetHit had accumulated
@@ -349,6 +352,7 @@ function spawnPrimeRun(
       settled = true;
       if (deadlineTimer) clearTimeout(deadlineTimer);
       if (failsafeTimer) clearTimeout(failsafeTimer);
+      limits.signal?.removeEventListener("abort", cancel);
       resolve(result);
     };
     const fail = (err: Error): void => {
@@ -356,15 +360,23 @@ function spawnPrimeRun(
       settled = true;
       if (deadlineTimer) clearTimeout(deadlineTimer);
       if (failsafeTimer) clearTimeout(failsafeTimer);
+      limits.signal?.removeEventListener("abort", cancel);
       reject(err);
     };
+    const settleKilled = (reason: KillReason): void => {
+      if (reason === "cancelled") fail(new BackendRunError("Prime run cancelled", observedUsage ? {
+        iterations: turns, usage: observedUsage, usageComplete: false,
+      } : undefined));
+      else settle(killResult(reason));
+    };
+    const cancel = (): void => breach("cancelled");
     const breach = (reason: KillReason): void => {
       if (killed) return; // first breach wins
       killed = reason;
       killTree();
       // SIGKILL cannot be ignored, but the close handler is the only
       // resolver — never leave a run hanging on a lost close event.
-      failsafeTimer = setTimeout(() => settle(killResult(reason)), 2_000);
+      failsafeTimer = setTimeout(() => settleKilled(reason), 2_000);
     };
 
     deadlineTimer = setTimeout(() => breach("deadline"), limits.deadlineMs);
@@ -396,6 +408,16 @@ function spawnPrimeRun(
               usage.inputTokens += num(u.input);
               usage.outputTokens += num(u.output);
               usage.totalCost += num(u.cost?.total);
+              const { input, output } = u;
+              const cost = u.cost?.total;
+              if (typeof input === "number" && Number.isFinite(input) &&
+                  typeof output === "number" && Number.isFinite(output) &&
+                  typeof cost === "number" && Number.isFinite(cost)) {
+                observedUsage ??= { inputTokens: 0, outputTokens: 0, totalCost: 0 };
+                observedUsage.inputTokens += input;
+                observedUsage.outputTokens += output;
+                observedUsage.totalCost += cost;
+              }
             }
             if (limits.maxCost !== null && usage.totalCost >= limits.maxCost) {
               breach("max-cost");
@@ -455,7 +477,7 @@ function spawnPrimeRun(
     child.on("close", (code, signal) => {
       if (settled) return;
       if (killed) {
-        settle(killResult(killed));
+        settleKilled(killed);
         return;
       }
       if (!agentEnded) {
@@ -500,6 +522,8 @@ function spawnPrimeRun(
         usage: { ...usage },
       });
     });
+    limits.signal?.addEventListener("abort", cancel, { once: true });
+    if (limits.signal?.aborted) cancel();
   });
 }
 
@@ -524,7 +548,7 @@ function assertPinnedVersion(binaryPath: string, expected: string): void {
     failWith(
       `prime backend: cannot run "${binaryPath}": ${err instanceof Error ? err.message : String(err)}. ` +
         `The prime backend executes microagent turns through the installed prime-agent binary; ` +
-        `install prime-agent ${expected} and restart mikro mcp, or switch the agent back to \`backend: mikro\`.`
+        `install prime-agent ${expected} and restart mikro mcp, or switch the agent back to \`engine: rlm\`.`
     );
     return;
   }
@@ -533,7 +557,7 @@ function assertPinnedVersion(binaryPath: string, expected: string): void {
     failWith(
       `prime backend: cannot run "${binaryPath}": ${probe.error.message}. ` +
         `The prime backend executes microagent turns through the installed prime-agent binary; ` +
-        `install prime-agent ${expected} and restart mikro mcp, or switch the agent back to \`backend: mikro\`.`
+        `install prime-agent ${expected} and restart mikro mcp, or switch the agent back to \`engine: rlm\`.`
     );
     return;
   }
@@ -545,7 +569,7 @@ function assertPinnedVersion(binaryPath: string, expected: string): void {
       `prime backend: "${binaryPath}" is not the pinned prime-agent ${expected}: ` +
         `\`prime-agent --version\` reported ${reported ? `"${reported}"` : "nothing"}. ` +
         `mikro pins this backend to an exact binary version — upgrades are deliberate events. ` +
-        `Run \`prime-agent update\` to move the pin as a recorded decision, or switch the agent back to \`backend: mikro\`.`
+        `Run \`prime-agent update\` to move the pin as a recorded decision, or switch the agent back to \`engine: rlm\`.`
     );
   }
 }
@@ -581,7 +605,7 @@ function mapPrimeModel(
           `which the Mikro Prime adapter for prime-agent 0.8.1 cannot address — it supports ` +
           `\`google\`, \`openrouter\`, \`deepseek\`, \`prime-inference\`, \`openai-codex\`, \`zai\`, and the configured \`khal\` provider. ` +
           `Re-pin the agent to one of those providers, ` +
-          `or switch the agent back to \`backend: mikro\`.`
+          `or switch the agent back to \`engine: rlm\`.`
       );
   }
 }
@@ -592,7 +616,7 @@ function assertSupportedConfig(config: MikroConfig, agentName: string | undefine
   const reject = (field: string, why: string): never => {
     throw new Error(
       `prime backend: ${who} declares ${field}, which the prime leg cannot honor (${why}). ` +
-        `Remove it from the agent/config or switch the agent back to \`backend: mikro\`.`
+        `Remove it from the agent/config or switch the agent back to \`engine: rlm\`.`
     );
   };
 
@@ -653,7 +677,7 @@ function resolveContextFiles(
   if (!contextRoot) {
     throw new Error(
       "prime backend: context was loaded without a root path and cannot be mapped to prime @file arguments. " +
-        "Pass the context through a filesystem path, or switch the agent back to `backend: mikro`."
+        "Pass the context through a filesystem path, or switch the agent back to `engine: rlm`."
     );
   }
   const toFileArg = (absolutePath: string): string => {
@@ -661,7 +685,7 @@ function resolveContextFiles(
       throw new Error(
         `prime backend: context file "${absolutePath}" does not exist — a missing @file argument ` +
           `makes prime-agent exit(1) at startup. Re-create the file or re-load the context, ` +
-          `or switch the agent back to \`backend: mikro\`.`
+          `or switch the agent back to \`engine: rlm\`.`
       );
     }
     return `@${absolutePath}`;
@@ -673,7 +697,7 @@ function resolveContextFiles(
   }
   throw new Error(
     `prime backend: context type "${(context as LoadedContext).type}" cannot be mapped to prime @file arguments. ` +
-      `Pass a file or directory as the context, or switch the agent back to \`backend: mikro\`.`
+      `Pass a file or directory as the context, or switch the agent back to \`engine: rlm\`.`
   );
 }
 
@@ -761,11 +785,13 @@ export class PrimeBackend implements RuntimeBackend {
     request: BackendRequest,
     emit: (message: string) => void
   ): Promise<MicroagentResult> {
+    if (request.signal?.aborted) throw new BackendRunError("Prime run cancelled before subprocess startup");
     const limits: PrimeRunLimits = {
       deadlineMs: primeDeadlineMs(),
       maxCost: request.config.budget?.maxCost ?? null,
       maxTokens: request.config.budget?.maxTokens ?? null,
       maxTurns: request.maxIterations !== undefined ? request.maxIterations : null,
+      signal: request.signal,
     };
 
     const result = await this.engine(buildArgv(this.binaryPath, agent, request), emit, limits);

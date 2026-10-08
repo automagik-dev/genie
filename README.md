@@ -174,6 +174,15 @@ Genie v6.261003.1 has 17 CLI commands. Nothing runs in the background: every com
 
 [Mikro](mikro/README.md) lives in `mikro/` with its original Git history, npm lockfile, Node build and independent CI. Its runtime and dependencies are not part of the Genie binary or release payload. Root Bun, Biome and Knip discovery exclude that package; its full npm checks run separately.
 
+The standalone runtime requires Node 22.19 or newer and pins the Pi SDK family to 1.0.2.
+`genie mikro call <agent> --engine rlm|pi` selects an engine explicitly; otherwise the
+agent's `engine` wins, then `rlm`. RLM remains the default. Pi uses an isolated native
+session with read, grep, glob, hermetic git and `emit_done`, not the RLM Python tool pack
+or an ambient Pi installation. Both paths retain the caller's schema and citation checks.
+Missing or partial provider usage is unknown: an observed subtotal is not a complete bill.
+See the [agent schema](mikro/docs/agent-yaml-schema.md) and
+[standalone upgrade boundary](UPGRADING.md#standalone-mikro-source-runtime).
+
 Repository checks use Bun 1.3.11 or newer, matching CI: subtree test pruning relies on `test.pathIgnorePatterns`. This development prerequisite does not change Genie's existing CLI runtime floor.
 
 ```bash

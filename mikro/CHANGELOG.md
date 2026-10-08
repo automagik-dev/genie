@@ -23,6 +23,54 @@ release is the git commit on `main`. See `docs/release-contract.md`.
 ## [Unreleased]
 
 ### Added
+- **Explicit engines and isolated Pi tools.** `engine: rlm | pi | prime |
+  prime-sdk` replaces `backend`; explicit call selection outranks the agent,
+  then defaults to RLM. Pi uses an isolated SDK session with scoped
+  read/grep/glob, hermetic read-only git, and validated `emit_done`. The first
+  accepted final ends after its tool batch, without an extra model turn.
+
+- **Bounded RLM finalization and timeout recovery.** Bare FINAL identifiers
+  resolve existing variables without expression evaluation. The last root
+  turn finalizes within the declared cap and both output schemas apply.
+  A typed REPL timeout kills and waits for the old child, restores original
+  context/tools, reports lost variables, and never replays the timed-out code.
+  Explicit stop/new-start ownership cancels stale recovery. Settled recursive
+  receipts survive batch cancellation and count once; unreported children stay
+  unknown.
+  Cap exhaustion without a final and terminal root completion failure throw
+  public `RLMRunError` carrying actual root turns and cumulative observed root/IPC
+  usage, including reported failed packets exactly once. MCP retains the
+  unrounded subtotal through its existing partial-failure footer; cancellation
+  preserves its timeout answer with unknown full totals and no fabricated zero
+  receipt. Schema-invalid finals retain their answer/usage and fail the MCP tool
+  response. None of these transitions adds a completion.
+
+- **Explicit private Juice projects and manual CLI extraction.**
+  `juice provision|catalog|usage|analyze` uses private project key references,
+  additive management updates, exact advertised models, and viewer-only
+  aggregates with provenance and logout. `jev` requires an explicit endpoint,
+  model, credential reference, and caller-approved sanitized input. No
+  ordinary-run instrumentation calls or automatic cloud fallback.
+
+
+- **Manual JEV source selection.** The explicit `extractWithJev` module makes
+  one configured request with typed Choice/abstention and optional Noul/Score.
+  Selected spans and local provenance remain unchanged; fallback provenance
+  matches the exact wire state, including serialization hooks and getters.
+  Ordinary agent runs do not call JEV.
+
+- **Truthful Pi 1.0.2 completion failures.** The exact SDK dependency family
+  uses isolated model/auth runtimes. Typed error, abort, and length stops retain
+  observed provider usage, including raw Codex terminal packets and usage
+  received before observer cancellation. Unknown usage is not a fabricated
+  zero. Native cancellation emits one cumulative failure receipt, not a
+  successful final answer. Transport retries default to three; explicit zero
+  is respected. Diagnostics redact normalized configured header credentials.
+  Partial MCP failure subtotals are unrounded `observed_usage` JSON with unknown
+  totals, never the complete-run footer. Prime cancellation retains observed
+  receipts and releases owned resources. Pi rejects missing input/output price
+  declarations before inference and denies standalone Juice credential paths.
+  Manual CLI input checks decoded JSON credentials; `-h` performs no auth access.
 
 - **Declared tool schemas and truthful default-backend dispatch.** Agents can
   add `tools/<name>.schema.json` beside `.mjs`, `.js`, or `.py` plugins; both
@@ -30,15 +78,12 @@ release is the git commit on `main`. See `docs/release-contract.md`.
   The default backend now uses a REPL `tool_request` / `tool_response` bridge,
   while MCP discovery marks agents **UNAVAILABLE** for missing tools, reserved
   REPL names, and `.mikro/TOOLS.md` collisions. Every microagent description
-  also reports its `Backend:` and declared `Tools:`.
+  also reports its effective `Engine:` and declared `Tools:`.
 
 - **Sampling temperature is now settable, from three surfaces.** A single
-  nullable `temperature` flows into the root loop's two model calls — the
-  per-iteration completion and the forced final answer — so a run that needs to
-  pin sampling drift can. It is absent by default, and absent means *no
-  `temperature` key on the wire at all*, not "the provider's documented
-  default": an un-pinned run sends byte-for-byte the options object it sent
-  before this existed.
+  nullable `temperature` flows into each root model turn, including finalization
+  within the iteration cap. It is absent by default, so an unpinned run sends
+  no `temperature` key rather than inventing a provider default.
   - **`temperature: <0–2>` in `mikro.yaml`, at the top level.** Not under
     `gemini:`. `gemini.thinking-level` is the standing evidence of what that
     nesting costs — pi/ai maps `reasoning` on every api family it supports, and

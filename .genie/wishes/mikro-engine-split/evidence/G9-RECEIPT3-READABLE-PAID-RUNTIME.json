@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "createdAt": "2026-10-07T07:44:48.111887+00:00",
+  "job": "bg_100",
+  "actualSuccessfulCompletion": true,
+  "actualSeconds": 0.78,
+  "sourceArchive": {
+    "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/paid-runtime-archives/fixed-runtime-after-all-paid-receipt3.tar",
+    "kind": "file",
+    "sha256": "81d04e6af47382347bd04c1aea4100a88037e4843e75efcef10185ce46762c1d",
+    "bytes": 641187840,
+    "mode": "0o400"
+  },
+  "readablePrivateRoot": "/home/genie/.local/share/mikro-engine-split/experiments-g8/paid-runtime-source-receipt3",
+  "parentMode": "0o700",
+  "reason": "Archive-member reader refused641187840bytes due256MiB in-memory limit; exacttrusted named source/compiled/caller/experiment members extracted with tar binary toprivate700 root, without altering originals/currentSDK/deps.",
+  "selectedMembers": [
+    "mikro/src",
+    "mikro/dist",
+    "mikro/python",
+    "mikro/package.json",
+    "mikro/package-lock.json",
+    "mikro/tsconfig.json",
+    "mikro/bin",
+    "scripts/mikro",
+    ".genie/wishes/mikro-engine-split/experiments",
+    "dist/genie.js"
+  ],
+  "compiledPaidRlmSha256": "36235cd4e48c3fcdfaacd5714c602bd3165e22484122b5346a20319b27bccf25",
+  "compiledPaidLegacySha256": "7651e75a2ef0cb8eeac1314b7087bfe523fbb2b56a59227cd35823653c5a4a96",
+  "compiledPaidGenieCliSha256": "6e25ce61c74e660e47c963c628cdc2265d5b122c47fb1fa9746aa3f2b4ff5bf9",
+  "matchesEarlierActualG3CompiledIdentity": true,
+  "completeDependencyTreeReextractedOrNewRuntimeExecutionClaim": false,
+  "originalArchiveAndPaidArtifactsUnchanged": true
+}

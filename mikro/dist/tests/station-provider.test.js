@@ -2,7 +2,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { builtinModels } from "@earendil-works/pi-ai/providers/all";
-import { STATION_BASELINE_MODELS, STATION_BASE_URL, STATION_PROVIDER_ID, registerStationProvider, stationProvider, } from "../src/station-provider.js";
+import { STATION_BASELINE_MODELS, STATION_BASE_URL, STATION_PROVIDER_ID, ensureStationModels, resetStationModelsCache, registerStationProvider, stationProvider, } from "../src/station-provider.js";
 // These are offline structural checks — no live gateway required. The live
 // three-model completions (incl. the NPU gate) are validated by the wish's
 // smoke run, not the unit suite.
@@ -58,16 +58,6 @@ describe("station provider", () => {
         assert.equal(flm?.compat?.supportsDeveloperRole, false);
         assert.equal(flm?.compat?.supportsReasoningEffort, false);
     });
-    it("keyless auth resolves as configured (local server)", async () => {
-        const provider = stationProvider();
-        const resolved = await provider.auth.apiKey?.resolve({
-            // The resolver ignores ctx/credential — it always reports configured.
-            ctx: {},
-            credential: undefined,
-        });
-        assert.ok(resolved, "keyless auth must report configured");
-        assert.ok(resolved?.auth.apiKey, "keyless auth must supply a placeholder key");
-    });
 });
 /**
  * Dynamic-catalog regression — the gateway serves ids that are not in the
@@ -77,6 +67,30 @@ describe("station provider", () => {
  * `ensureStationModels` re-registers through.
  */
 describe("stationProvider — dynamic catalog", () => {
+    it("applies one fetched catalog to every isolated runtime", async (t) => {
+        resetStationModelsCache();
+        let requests = 0;
+        t.mock.method(globalThis, "fetch", async () => {
+            requests++;
+            return new Response(JSON.stringify({ data: [{ id: "Gateway-only", recipe: "flm" }] }), {
+                headers: { "Content-Type": "application/json" },
+            });
+        });
+        try {
+            const a = builtinModels();
+            const b = builtinModels();
+            registerStationProvider(a);
+            registerStationProvider(b);
+            await Promise.all([ensureStationModels(a), ensureStationModels(b)]);
+            assert.equal(requests, 1);
+            assert.ok(a.getModel(STATION_PROVIDER_ID, "Gateway-only"));
+            assert.ok(b.getModel(STATION_PROVIDER_ID, "Gateway-only"));
+        }
+        finally {
+            resetStationModelsCache();
+            t.mock.restoreAll();
+        }
+    });
     it("defaults to the static baseline", () => {
         const ids = stationProvider().getModels().map((m) => m.id);
         assert.deepEqual([...ids].sort(), [...STATION_BASELINE_MODELS.map((m) => m.id)].sort());

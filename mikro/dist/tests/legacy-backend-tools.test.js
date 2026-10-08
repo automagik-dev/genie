@@ -267,11 +267,10 @@ describe("LegacyMikroBackend declared tools", () => {
             originalEmit(event);
         };
         const runAbort = new AbortController();
-        runAbort.abort();
         let receivedSignal;
         const resolver = bridgeToolResolver(async (_tool, args, signal) => {
             receivedSignal = signal;
-            if (args.fail)
+            if (args !== null && typeof args === "object" && "fail" in args && args.fail)
                 throw new Error("synthetic tool failure");
             return args;
         }, emitter, {
@@ -292,8 +291,8 @@ describe("LegacyMikroBackend declared tools", () => {
                 return result;
             });
             assert.equal(success.error, undefined, success.stderr);
-            assert.equal(receivedSignal, runAbort.signal);
-            assert.equal(receivedSignal?.aborted, true);
+            assert.ok(receivedSignal);
+            assert.equal(receivedSignal.aborted, false);
             executeSettled = false;
             const failure = await repl.execute("echo(fail=True)").then((result) => {
                 executeSettled = true;
@@ -301,6 +300,8 @@ describe("LegacyMikroBackend declared tools", () => {
             });
             assert.match(failure.error ?? failure.stderr, /RuntimeError/);
             assert.match(failure.error ?? failure.stderr, /synthetic tool failure/);
+            runAbort.abort();
+            assert.equal(receivedSignal?.aborted, true, "the dispatched tool signal follows run cancellation");
             assert.deepEqual(emitted.map((event) => event.type), ["ToolCallBefore", "ToolCallAfter", "ToolCallBefore", "ToolCallAfter"]);
             for (const event of emitted) {
                 assert.equal("sessionId" in event ? event.sessionId : undefined, "session-bridge");

@@ -1,0 +1,75 @@
+{
+  "schemaVersion": 1,
+  "phase": "Owner-approved bounded native observer repair5/B5; quality1/cap1 unchanged",
+  "sealedAt": "2026-10-06T15:15:26.258800Z",
+  "files": [
+    {
+      "path": "scripts/mikro/engine-experiment.ts",
+      "sha256": "52981046176a05aa953d5db43ce7ef14cff910e7b8b7aba1bf93be31199e91d9",
+      "bytes": 58520
+    },
+    {
+      "path": "scripts/mikro/engine-experiment-runtime.mjs",
+      "sha256": "61962829324816413b745f4bcf1d2f36274066b2c5497d0aa547c155f91fe828",
+      "bytes": 20310
+    },
+    {
+      "path": "scripts/mikro/engine-experiment.test.ts",
+      "sha256": "c28e78bb1fd187fe7dd1b0c66e7e8443cb94217c4ada7d842a523237f7e049c6",
+      "bytes": 13123
+    },
+    {
+      "path": ".genie/wishes/mikro-engine-split/experiments/native-workflow-observer.mjs",
+      "sha256": "4912503a4031bf0ec4390ae8256b75d5711335843ceb914e69911ef1fecb4fb9",
+      "bytes": 53347
+    },
+    {
+      "path": ".genie/wishes/mikro-engine-split/experiments/native-session-accounting.mjs",
+      "sha256": "2e7f64e64624865a90f0a3c6635ad8fa6d899e1e88e8d0a4f50c2ef3dcdf6002",
+      "bytes": 20885
+    }
+  ],
+  "changedOnly": ".genie/wishes/mikro-engine-split/experiments/native-workflow-observer.mjs",
+  "ownerDecision": "G8-NATIVE-REPAIR5-OWNER-DECISION.json",
+  "observedChecks": {
+    "focusedRunner": {
+      "pass": 12,
+      "fail": 0,
+      "expects": 85,
+      "job": "bg_56",
+      "actualExitCode": 0
+    },
+    "explicitStrictRunnerTypecheck": {
+      "actualExitCode": 0,
+      "job": "bg_56",
+      "includesRuntimeJs": true
+    },
+    "node26ThreeMjsSyntax": {
+      "actualExitCode": 0,
+      "job": "bg_56"
+    },
+    "actualConsumedEnvironmentAndNativeSdkSandbox": "G8-CONTAINED-NATIVE-SDK-PROOF.json",
+    "rootHeaderBeforeAfterPublicSdk": "G8-NATIVE-ROOT-DEPTH-PROOF.json",
+    "exactRootHeaderProbeSource": "G8-NATIVE-ROOT-DEPTH-PROBE.json",
+    "allNineteenFreshCompleteClones": "G8-CONTAINED-NATIVE-CLONE-PROOF.json",
+    "nativeReboundProfileChecks": "running bg_54; no result credited yet",
+    "engineThirtySixRowsExactlyPreserved": true
+  },
+  "correctnessRepairCycles": 5,
+  "correctnessRepairBudget": 5,
+  "qualityRepairCycles": 1,
+  "qualityRepairCap": 1,
+  "independentVerdicts": "pending",
+  "scoredEngineCells": 0,
+  "scoredNativeCells": 0,
+  "experimentalPRs": 0,
+  "previousFailedNativeReceipt": "G8-NATIVE-SANDBOX-FAILURE.json; preserved, incomplete accounting, not promoted",
+  "preparedContainedEngineResources": {
+    "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/prepared-contained-engine-resources.json",
+    "sha256": "93eb0a0652d20bc5c1bb253e0aa0f77a407a3e7c0d063e65ae186dc67c303c3a"
+  },
+  "preparedContainedNativeWorkflow": {
+    "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/prepared-native-contained-workflow.json",
+    "sha256": "6d8761498303ef2c82b312df99b1f030f626f3f3b05ab44ee070ef23c7d1940d"
+  }
+}

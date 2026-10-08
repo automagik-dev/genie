@@ -57,16 +57,17 @@ describe("parseCustomProviders", () => {
             deepseek: {
                 baseUrl: "https://api.deepseek.com/v1/",
                 apiKeyEnv: ["DEEPSEEK_API_KEY", "DS_KEY"],
-                models: ["deepseek-chat", { id: "deepseek-reasoner", reasoning: true, maxTokens: 32000 }],
+                models: ["deepseek-chat", { id: "deepseek-reasoner", reasoning: true, maxTokens: 32000 }, {
+                        id: "declared-free", cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+                    }],
             },
         }, "settings.json");
         assert.equal(p.id, "deepseek");
         assert.equal(p.baseUrl, "https://api.deepseek.com/v1", "trailing slash trimmed");
         assert.deepEqual(p.apiKeyEnv, ["DEEPSEEK_API_KEY", "DS_KEY"]);
-        assert.deepEqual(p.models.map((m) => [m.id, m.reasoning, m.maxTokens]), [
-            ["deepseek-chat", false, 16384],
-            ["deepseek-reasoner", true, 32000],
-        ]);
+        assert.equal(p.models[0].cost, undefined, "an omitted cost declaration stays unknown");
+        assert.equal(p.models[1].cost, undefined);
+        assert.deepEqual(p.models[2].cost, { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, "explicit zero is free");
     });
     it("returns an empty list when the block is absent", () => {
         assert.deepEqual(parseCustomProviders(undefined, "mikro.yaml"), []);
@@ -267,7 +268,7 @@ describe("loadConfig providers block", () => {
         assert.match(bad.unavailable, /Unknown model "GLM-9" for provider "wafer"/);
         assert.match(bad.unavailable, /models: GLM-5\.3-Flash/);
         assert.match(bad.unavailable, /Fix the agent's model: pin or declare the provider in config, then retry\.$/);
-        const [other] = await validateAgentModels(dir, [{ ...agent("x/y"), spec: { ...agent("x/y").spec, backend: "prime" } }]);
+        const [other] = await validateAgentModels(dir, [{ ...agent("x/y"), spec: { ...agent("x/y").spec, engine: "prime" } }]);
         assert.equal(other.unavailable, undefined, "non-pi-ai backends are not validated");
     });
 });

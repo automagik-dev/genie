@@ -1,0 +1,16 @@
+{
+  "kind": "unscored-public-schema-authorization-before-after",
+  "beforeUnauthorized": {
+    "accepted": true
+  },
+  "afterUnauthorized": {
+    "accepted": false,
+    "error": "unscored smoke must use isolated-local origin; owner authorized only eighteen scored GitHub PRs"
+  },
+  "afterLegitimate": {
+    "accepted": true
+  },
+  "githubCalls": 0,
+  "workflowCalls": 0,
+  "nativeCredit": false
+}

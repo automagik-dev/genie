@@ -1,0 +1,73 @@
+{
+  "schemaVersion": 1,
+  "createdAt": "2026-10-07T07:48:41.572883+00:00",
+  "actualSuccessfulCompletion": true,
+  "actualSeconds": 3.41,
+  "command": "/home/genie/.hermes/node/bin/node /home/genie/.local/share/mikro-engine-split/experiments-g8/final-local-smokes/diagnose-rlm-cap-receipt3.mjs --verify-preserved",
+  "scriptSha256": "7fcaefab346f7159c13effbf3384c64cab91902e7b5f233a90fa457f0c432006",
+  "scriptFullSourcePreservedIn": "G3-CAP-RECEIPT-AFTER-PROOF.json.source; identical SHA7fcaefab346f7159c13effbf3384c64cab91902e7b5f233a90fa457f0c432006",
+  "actualProof": {
+    "schemaVersion": 1,
+    "kind": "actual-compiled-RLM-and-MCP-failure-receipt-after-smoke",
+    "externalModelCalls": 0,
+    "realPython": true,
+    "realCompiledLoop": true,
+    "sourceOrArtifactModified": false,
+    "requests": 3,
+    "observedPacketUsage": {
+      "inputTokens": 11,
+      "outputTokens": 7,
+      "totalTokens": 18,
+      "fixtureCatalogCostUsd": 2.5e-05,
+      "costKind": "local-fixture-not-paid-inference"
+    },
+    "failure": {
+      "name": "RLMFinalizationError",
+      "message": "RLM maxIterations exhausted without a complete final answer (1 model turns)",
+      "receipt": null,
+      "usage": {
+        "inputTokens": 11,
+        "outputTokens": 7,
+        "cacheReadTokens": 0,
+        "cacheWriteTokens": 0,
+        "totalCost": 2.4999999999999998e-05,
+        "llmCalls": 1,
+        "reasoningTokens": 0
+      },
+      "iterations": 1,
+      "budgetHit": null,
+      "usageComplete": false
+    },
+    "reproduced": false,
+    "knownSubtotalPreserved": true,
+    "actualLegacyMcpFailure": {
+      "answer": "mikro receipt-fixture failed: RLM maxIterations exhausted without a complete final answer (1 model turns)",
+      "text": "mikro receipt-fixture failed: RLM maxIterations exhausted without a complete final answer (1 model turns)\n\n---\nmikro \u00b7 receipt-fixture \u00b7 receipt-fixture/control \u00b7 usage coverage: partial; unreported totals unknown \u00b7 0.1s \u00b7 session isolated-session\nobserved_usage: {\"coverage\":\"partial\",\"iterations\":1,\"subtotal\":{\"inputTokens\":22,\"outputTokens\":14,\"totalCost\":0.000049999999999999996},\"totals\":null}",
+      "failed": true
+    },
+    "actualZeroCallFailure": {
+      "answer": "mikro receipt-fixture failed: RLM max-tokens exhausted without a complete final answer (0 model turns)",
+      "text": "mikro receipt-fixture failed: RLM max-tokens exhausted without a complete final answer (0 model turns)",
+      "failed": true
+    },
+    "observedFailureFooter": {
+      "coverage": "partial",
+      "iterations": 1,
+      "subtotal": {
+        "inputTokens": 22,
+        "outputTokens": 14,
+        "totalCost": 4.9999999999999996e-05
+      },
+      "totals": null
+    },
+    "compiled": {
+      "path": "/home/genie/orca/workspaces/genie/mikro-engine-split/mikro/dist/src/rlm.js",
+      "sha256": "36235cd4e48c3fcdfaacd5714c602bd3165e22484122b5346a20319b27bccf25"
+    },
+    "proofRoot": "/home/genie/.local/share/mikro-engine-split/experiments-g8/rlm-cap-receipt-proof-4nGQVO"
+  },
+  "compiledLegacySha256": "7651e75a2ef0cb8eeac1314b7087bfe523fbb2b56a59227cd35823653c5a4a96",
+  "compiledGenieCliSha256": "6e25ce61c74e660e47c963c628cdc2265d5b122c47fb1fa9746aa3f2b4ff5bf9",
+  "scope": "Final rebuilt compiled direct RLM+realPython, actualLegacy/runTurn/partial-footer and no-call cap paths exercised afterwholeSDKdeps/build/test; three localHTTP packets only, no paidinference or productionstate mutation.",
+  "nativeGatewayBillClaim": false
+}

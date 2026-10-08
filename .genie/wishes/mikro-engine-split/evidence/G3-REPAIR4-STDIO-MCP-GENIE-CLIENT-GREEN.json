@@ -1,0 +1,252 @@
+{
+  "schemaVersion": 1,
+  "createdAt": "2026-10-08T02:24:58.648049+00:00",
+  "actualExitCode": 0,
+  "actualSeconds": 2.61,
+  "actualCommand": "bun <private>/final-local-smokes/verify-stdio-schema-repair4.ts",
+  "explicitExitMarker": "G3_REPAIR4_STDIO_GENIE_CLIENT_EXIT=0",
+  "rawOutputArtifact": "artifact://852",
+  "proof": {
+    "schemaVersion": 1,
+    "kind": "actual-compiled-stdio-MCP-and-real-Genie-McpClient-schema-error-resume-parser-smoke",
+    "externalModelCalls": 0,
+    "realPython": true,
+    "localRequests": 3,
+    "packets": [
+      {
+        "index": 1,
+        "request": {
+          "model": "control",
+          "messages": [
+            {
+              "role": "system",
+              "content": "## REPL & Final Answer Protocol\n\nTo run Python in the REPL environment, wrap the code in triple backticks with the `repl` language identifier. For example:\n```repl\nchunk = context[:10000]\nanswer = llm_query(f\"What is the magic number in the context? Here is the chunk: {chunk}\")\nprint(answer)\n```\n\nIMPORTANT: When the iterative process is done, you MUST deliver your final answer inside a FINAL function \u2014 not as ordinary prose, and not inside a code block. You have two options:\n1. `FINAL(your final answer here)` returns the answer directly.\n2. `FINAL_VAR(variable_name)` returns a variable you already built in the REPL as your final output.\n\nWARNING \u2014 COMMON MISTAKE: `FINAL_VAR` retrieves an EXISTING variable. Create and assign that variable in a ```repl``` block FIRST, then call `FINAL_VAR` in a SEPARATE later step.\n\nOn iteration 0 you have not touched the REPL or seen your context yet, so investigate first \u2014 do not answer with FINAL straight away."
+            },
+            {
+              "role": "user",
+              "content": "No context was provided for this query. You can still use the REPL to reason and compute.\n\nQuery: local output-invalid schema fixture\n\nThis is the last model turn within maxIterations. Provide your complete final answer NOW from the available context and observations. Use FINAL(<answer>) or FINAL_VAR(<existing variable>). Do not start more analysis or model/tool calls."
+            }
+          ],
+          "stream": true,
+          "stream_options": {
+            "include_usage": true
+          },
+          "store": false,
+          "max_completion_tokens": 16384
+        },
+        "usage": {
+          "prompt_tokens": 11,
+          "completion_tokens": 7,
+          "total_tokens": 18
+        },
+        "answer": "FINAL({\"wrong\":true})"
+      },
+      {
+        "index": 2,
+        "request": {
+          "model": "control",
+          "messages": [
+            {
+              "role": "system",
+              "content": "## REPL & Final Answer Protocol\n\nTo run Python in the REPL environment, wrap the code in triple backticks with the `repl` language identifier. For example:\n```repl\nchunk = context[:10000]\nanswer = llm_query(f\"What is the magic number in the context? Here is the chunk: {chunk}\")\nprint(answer)\n```\n\nIMPORTANT: When the iterative process is done, you MUST deliver your final answer inside a FINAL function \u2014 not as ordinary prose, and not inside a code block. You have two options:\n1. `FINAL(your final answer here)` returns the answer directly.\n2. `FINAL_VAR(variable_name)` returns a variable you already built in the REPL as your final output.\n\nWARNING \u2014 COMMON MISTAKE: `FINAL_VAR` retrieves an EXISTING variable. Create and assign that variable in a ```repl``` block FIRST, then call `FINAL_VAR` in a SEPARATE later step.\n\nOn iteration 0 you have not touched the REPL or seen your context yet, so investigate first \u2014 do not answer with FINAL straight away."
+            },
+            {
+              "role": "user",
+              "content": "No context was provided for this query. You can still use the REPL to reason and compute.\n\nQuery: This is a continuing conversation. Earlier turns in this session (for context \u2014 do not repeat them unless the new request asks you to):\n\n--- Turn 1 ---\nUser: local output-invalid schema fixture\nAssistant: {\"wrong\":true}\n\nNow respond to this new request, drawing on the conversation above when relevant:\nlocal valid-resume schema fixture\n\nThis is the last model turn within maxIterations. Provide your complete final answer NOW from the available context and observations. Use FINAL(<answer>) or FINAL_VAR(<existing variable>). Do not start more analysis or model/tool calls."
+            }
+          ],
+          "stream": true,
+          "stream_options": {
+            "include_usage": true
+          },
+          "store": false,
+          "max_completion_tokens": 16384
+        },
+        "usage": {
+          "prompt_tokens": 11,
+          "completion_tokens": 7,
+          "total_tokens": 18
+        },
+        "answer": "FINAL({\"wanted\":true})"
+      },
+      {
+        "index": 3,
+        "request": {
+          "model": "control",
+          "messages": [
+            {
+              "role": "system",
+              "content": "## REPL & Final Answer Protocol\n\nTo run Python in the REPL environment, wrap the code in triple backticks with the `repl` language identifier. For example:\n```repl\nchunk = context[:10000]\nanswer = llm_query(f\"What is the magic number in the context? Here is the chunk: {chunk}\")\nprint(answer)\n```\n\nIMPORTANT: When the iterative process is done, you MUST deliver your final answer inside a FINAL function \u2014 not as ordinary prose, and not inside a code block. You have two options:\n1. `FINAL(your final answer here)` returns the answer directly.\n2. `FINAL_VAR(variable_name)` returns a variable you already built in the REPL as your final output.\n\nWARNING \u2014 COMMON MISTAKE: `FINAL_VAR` retrieves an EXISTING variable. Create and assign that variable in a ```repl``` block FIRST, then call `FINAL_VAR` in a SEPARATE later step.\n\nOn iteration 0 you have not touched the REPL or seen your context yet, so investigate first \u2014 do not answer with FINAL straight away.\n\n## Output Schema\n\nYour FINAL answer MUST be a single JSON value matching this schema:\n\n```json\n{\"type\":\"object\",\"required\":[\"wanted\"],\"properties\":{\"wanted\":{\"type\":\"boolean\"}},\"additionalProperties\":false}\n```\n\nDeliver it in exactly one of these two forms \u2014 nothing else is read back:\n\n1. `FINAL(<compact single-line JSON>)` \u2014 the whole payload on ONE line, e.g. `FINAL({\"verdict\": \"pass\", \"notes\": []})`. The FINAL parser is line-based, so a pretty-printed payload is lost.\n2. `FINAL_VAR(name)`, where `name` is a REPL variable holding a JSON **string** built with `json.dumps(...)` \u2014 e.g. `payload = json.dumps({\"verdict\": \"pass\"})` inside a ```repl``` block, then `FINAL_VAR(payload)` in a separate later step.\n\nNever hand `FINAL_VAR` a bare Python dict: its `str()` repr uses single quotes and is not valid JSON. Do not wrap the payload in a markdown code fence, and do not put prose around it."
+            },
+            {
+              "role": "user",
+              "content": "No context was provided for this query. You can still use the REPL to reason and compute.\n\nQuery: local validate-invalid schema fixture\n\nThis is the last model turn within maxIterations. Provide your complete final answer NOW from the available context and observations. Use FINAL(<answer>) or FINAL_VAR(<existing variable>). Do not start more analysis or model/tool calls."
+            }
+          ],
+          "stream": true,
+          "stream_options": {
+            "include_usage": true
+          },
+          "store": false,
+          "max_completion_tokens": 16384
+        },
+        "usage": {
+          "prompt_tokens": 11,
+          "completion_tokens": 7,
+          "total_tokens": 18
+        },
+        "answer": "FINAL({\"wrong\":true})"
+      }
+    ],
+    "outcomes": [
+      {
+        "name": "output-invalid",
+        "result": {
+          "isError": true,
+          "content": [
+            {
+              "type": "text",
+              "text": "{\"wrong\":true}\n\n---\nmikro \u00b7 agent=receipt-proof \u00b7 receipt-fixture/control \u00b7 1 iteration \u00b7 11 in / 7 out \u00b7 $0.0000 \u00b7 0.3s \u00b7 validation_failed: true \u00b7 session sess_22ce4ad1d8fce4d0"
+            }
+          ],
+          "structuredContent": {
+            "answer": "{\"wrong\":true}\n\n---\nmikro \u00b7 agent=receipt-proof \u00b7 receipt-fixture/control \u00b7 1 iteration \u00b7 11 in / 7 out \u00b7 $0.0000 \u00b7 0.3s \u00b7 validation_failed: true \u00b7 session sess_22ce4ad1d8fce4d0",
+            "session_id": "sess_22ce4ad1d8fce4d0"
+          }
+        },
+        "completeFooter": {
+          "label": "agent=receipt-proof",
+          "model": "receipt-fixture/control",
+          "iterations": 1,
+          "tokensIn": 11,
+          "tokensOut": 7,
+          "cost": 0,
+          "seconds": 0.3,
+          "budgetHit": null,
+          "validationFailed": true,
+          "sessionId": "sess_22ce4ad1d8fce4d0"
+        },
+        "packets": 1
+      },
+      {
+        "name": "valid-resume",
+        "result": {
+          "isError": false,
+          "content": [
+            {
+              "type": "text",
+              "text": "{\"wanted\":true}\n\n---\nmikro \u00b7 agent=receipt-proof \u00b7 receipt-fixture/control \u00b7 1 iteration \u00b7 11 in / 7 out \u00b7 $0.0000 \u00b7 0.1s \u00b7 session sess_22ce4ad1d8fce4d0"
+            }
+          ],
+          "structuredContent": {
+            "answer": "{\"wanted\":true}\n\n---\nmikro \u00b7 agent=receipt-proof \u00b7 receipt-fixture/control \u00b7 1 iteration \u00b7 11 in / 7 out \u00b7 $0.0000 \u00b7 0.1s \u00b7 session sess_22ce4ad1d8fce4d0",
+            "session_id": "sess_22ce4ad1d8fce4d0"
+          }
+        },
+        "completeFooter": {
+          "label": "agent=receipt-proof",
+          "model": "receipt-fixture/control",
+          "iterations": 1,
+          "tokensIn": 11,
+          "tokensOut": 7,
+          "cost": 0,
+          "seconds": 0.1,
+          "budgetHit": null,
+          "validationFailed": false,
+          "sessionId": "sess_22ce4ad1d8fce4d0"
+        },
+        "packets": 1
+      },
+      {
+        "name": "validate-invalid",
+        "result": {
+          "isError": true,
+          "content": [
+            {
+              "type": "text",
+              "text": "{\"wrong\":true}\n\n---\nmikro \u00b7 agent=receipt-proof \u00b7 receipt-fixture/control \u00b7 1 iteration \u00b7 11 in / 7 out \u00b7 $0.0000 \u00b7 0.1s \u00b7 validation_failed: true \u00b7 session sess_8cb1b43c14bb0ac8"
+            }
+          ],
+          "structuredContent": {
+            "answer": "{\"wrong\":true}\n\n---\nmikro \u00b7 agent=receipt-proof \u00b7 receipt-fixture/control \u00b7 1 iteration \u00b7 11 in / 7 out \u00b7 $0.0000 \u00b7 0.1s \u00b7 validation_failed: true \u00b7 session sess_8cb1b43c14bb0ac8",
+            "session_id": "sess_8cb1b43c14bb0ac8"
+          }
+        },
+        "completeFooter": {
+          "label": "agent=receipt-proof",
+          "model": "receipt-fixture/control",
+          "iterations": 1,
+          "tokensIn": 11,
+          "tokensOut": 7,
+          "cost": 0,
+          "seconds": 0.1,
+          "budgetHit": null,
+          "validationFailed": true,
+          "sessionId": "sess_8cb1b43c14bb0ac8"
+        },
+        "packets": 1
+      }
+    ],
+    "partialParserResults": [
+      {
+        "name": "reported-root-failure",
+        "parsedCompleteFooter": null,
+        "observed": {
+          "coverage": "partial",
+          "iterations": 2,
+          "subtotal": {
+            "inputTokens": 24,
+            "outputTokens": 12,
+            "totalCost": 4.7999999999999994e-05
+          },
+          "totals": null
+        }
+      },
+      {
+        "name": "cancel-unreported",
+        "parsedCompleteFooter": null,
+        "observed": {
+          "coverage": "partial",
+          "iterations": 2,
+          "subtotal": {
+            "inputTokens": 11,
+            "outputTokens": 7,
+            "totalCost": 2.4999999999999998e-05
+          },
+          "totals": null
+        }
+      }
+    ],
+    "compiled": [
+      {
+        "path": "mikro/dist/src/rlm.js",
+        "sha256": "1c2fa7eb94f52531005df25e400ebd6c5dafd4e3284585f74c2fc093d68194b4"
+      },
+      {
+        "path": "mikro/dist/src/mcp/backends/legacy.js",
+        "sha256": "148c25c732a3630965a133855ad42a706eecb78798d3b5653c321681c007e2a9"
+      },
+      {
+        "path": "mikro/dist/src/mcp/server.js",
+        "sha256": "595f44703aabe57147a1f1823abd4da57dcadc8f2a9be40b56e9623f39975108"
+      },
+      {
+        "path": "scripts/mikro/call.ts",
+        "sha256": "577d4832e513194762dc92fe8e861e7ebfbf0803b0625367dc9de501a5838cdf"
+      }
+    ],
+    "proofRoot": "/home/genie/.local/share/mikro-engine-split/experiments-g8/repair4-stdio-proof-wAmsSQ",
+    "completeComparisonOrInvoiceClaim": false
+  },
+  "source": "import assert from 'node:assert/strict';\nimport { createServer } from 'node:http';\nimport { mkdtemp, mkdir, writeFile, readFile, symlink } from 'node:fs/promises';\nimport { join } from 'node:path';\nimport { createHash } from 'node:crypto';\nimport { McpClient, parseFooter, type Footer } from '/home/genie/orca/workspaces/genie/mikro-engine-split/scripts/mikro/call.ts';\nimport { z } from '/home/genie/orca/workspaces/genie/mikro-engine-split/node_modules/zod/index.js';\nconst toolResultSchema = z.object({\n  isError: z.boolean().optional(),\n  content: z.array(z.object({ type: z.literal('text'), text: z.string() })).nonempty(),\n  structuredContent: z.object({ answer: z.string(), session_id: z.string() }),\n}).passthrough();\ntype ToolResult = z.infer<typeof toolResultSchema>;\nconst toolListSchema = z.object({ tools: z.array(z.object({ name: z.string() })) });\nconst terminalProofSchema = z.object({\n  cases: z.array(z.object({\n    name: z.string(),\n    outcome: z.object({ text: z.string() }),\n    partialObservation: z.object({\n      coverage: z.literal('partial'), iterations: z.number(),\n      subtotal: z.object({ inputTokens: z.number(), outputTokens: z.number(), totalCost: z.number() }),\n      totals: z.null(),\n    }).nullable(),\n  })),\n});\nconst integration = '/home/genie/orca/workspaces/genie/mikro-engine-split';\nconst proofRoot = await mkdtemp('/home/genie/.local/share/mikro-engine-split/experiments-g8/repair4-stdio-proof-');\nconst packets: Array<{ index: number; request: unknown; usage: unknown; answer: string }> = [];\nlet mode = 'invalid';\nconst server = createServer(async (request, response) => {\n  let body = '';\n  for await (const chunk of request) body += chunk;\n  const answer = mode === 'valid' ? 'FINAL({\"wanted\":true})' : 'FINAL({\"wrong\":true})';\n  const usage = { prompt_tokens: 11, completion_tokens: 7, total_tokens: 18 };\n  packets.push({ index: packets.length + 1, request: JSON.parse(body), usage, answer });\n  response.writeHead(200, { 'Content-Type': 'text/event-stream' });\n  response.end(`data: ${JSON.stringify({ id: 'local-stdio-repair4', object: 'chat.completion.chunk', model: 'control', choices: [{ index: 0, delta: { role: 'assistant', content: answer }, finish_reason: 'stop' }], usage })}\\n\\ndata: [DONE]\\n\\n`);\n});\nawait new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));\nconst address = server.address();\nassert(address && typeof address !== 'string');\nconst home = join(proofRoot, 'home');\nconst bin = join(proofRoot, 'bin');\nconst project = join(proofRoot, 'project');\nconst agentDir = join(project, '.mikro', 'agents', 'receipt-proof');\nawait Promise.all([mkdir(home, { recursive: true }), mkdir(bin), mkdir(agentDir, { recursive: true })]);\nawait symlink(join(integration, 'mikro/dist/src/cli.js'), join(bin, 'mikro'));\nconst schema = { type: 'object', required: ['wanted'], properties: { wanted: { type: 'boolean' } }, additionalProperties: false };\nconst keyFile = join(proofRoot, 'fixture-api-key');\nawait writeFile(keyFile, 'fixture-only-not-a-credential', { mode: 0o600, flag: 'wx' });\nconst output: { schema: Record<string, unknown> | null } = { schema };\nconst config = { model: { provider: 'receipt-fixture', model: 'control' }, providers: { 'receipt-fixture': { 'base-url': `http://127.0.0.1:${address.port}/v1`, 'api-key-file': keyFile, models: { control: { cost: { input: 1, output: 2 } } } } }, output, budget: { maxDepth: 0 }, storage: { enabled: 'never' }, cache: { enabled: false } };\nconst configPath = join(project, '.mikro', 'mikro.yaml');\nawait writeFile(configPath, JSON.stringify(config), { mode: 0o600 });\nawait writeFile(join(agentDir, 'agent.yaml'), 'schema_version: 1\\nshape: single-step\\nengine: rlm\\nmodel: receipt-fixture/control\\nbudget:\\n  max_iterations: 1\\n', { mode: 0o600 });\nconst client = new McpClient(project, { PATH: `${bin}:/home/genie/.hermes/node/bin:/usr/local/bin:/usr/bin:/bin`, HOME: home, TMPDIR: proofRoot, GENIE_HOME: join(home, '.genie'), MIKRO_AGENTS_DIR: join(project, '.mikro', 'agents') });\nconst outcomes: Array<{ name: string; result: ToolResult; completeFooter: Footer; packets: number }> = [];\ntry {\n  await client.request('initialize', { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'genie-real-client-repair4-smoke', version: 'local' } }, 30000);\n  client.notify('notifications/initialized');\n  const listed = toolListSchema.parse(await client.request('tools/list', {}, 30000));\n  assert(listed.tools.some(tool => tool.name === 'mikro_receipt-proof'));\n  const invoke = async (name: string, session?: string) => {\n    const before = packets.length;\n    const result = toolResultSchema.parse(await client.request('tools/call', { name: 'mikro_receipt-proof', arguments: { prompt: `local ${name} schema fixture`, engine: 'rlm', ...(session ? { session_id: session } : {}) } }, 30000));\n    assert.equal(result.content[0].text, result.structuredContent.answer);\n    assert.equal(typeof result.structuredContent.session_id, 'string');\n    assert.equal(packets.length - before, 1, 'one declared turn, no extra final completion');\n    const completeFooter = parseFooter(result.content[0].text);\n    assert(completeFooter);\n    assert.equal(completeFooter.tokensIn, 11);\n    assert.equal(completeFooter.tokensOut, 7);\n    outcomes.push({ name, result, completeFooter, packets: packets.length - before });\n    return result;\n  };\n  const invalid = await invoke('output-invalid');\n  assert.equal(invalid.isError, true);\n  assert(invalid.structuredContent.answer.startsWith('{\"wrong\":true}'));\n  assert.equal(outcomes[0].completeFooter?.validationFailed, true);\n  mode = 'valid';\n  const corrected = await invoke('valid-resume', invalid.structuredContent.session_id);\n  assert.notEqual(corrected.isError, true);\n  assert(corrected.structuredContent.answer.startsWith('{\"wanted\":true}'));\n  assert.equal(corrected.structuredContent.session_id, invalid.structuredContent.session_id);\n  assert(JSON.stringify(packets[1].request).includes('wrong'), 'failed answer remains in actual resumed history');\n  config.output.schema = null;\n  await writeFile(configPath, JSON.stringify(config), { mode: 0o600 });\n  await writeFile(join(agentDir, 'VALIDATE.md'), `\\`\\`\\`json\\n${JSON.stringify(schema)}\\n\\`\\`\\`\\n`, { mode: 0o600 });\n  mode = 'invalid';\n  const validateInvalid = await invoke('validate-invalid');\n  assert.equal(validateInvalid.isError, true);\n  assert(validateInvalid.structuredContent.answer.startsWith('{\"wrong\":true}'));\n  assert.equal(outcomes[2].completeFooter?.validationFailed, true);\n} finally {\n  client.close();\n  await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));\n}\nconst terminal = terminalProofSchema.parse(JSON.parse(await readFile('/home/genie/.local/share/mikro-engine-split/experiments-g8/g9-terminal-accounting-proof-yMn9hY/proof.json', 'utf8')));\nconst partialParserResults = terminal.cases.filter(row => row.partialObservation).map(row => ({ name: row.name, parsedCompleteFooter: parseFooter(row.outcome.text), observed: row.partialObservation }));\nassert.equal(partialParserResults.length, 2);\nfor (const result of partialParserResults) assert.equal(result.parsedCompleteFooter, null, 'unchanged Genie parser refuses partial observations as complete bills');\nconst compiledPaths = ['mikro/dist/src/rlm.js', 'mikro/dist/src/mcp/backends/legacy.js', 'mikro/dist/src/mcp/server.js', 'scripts/mikro/call.ts'];\nconst compiled = await Promise.all(compiledPaths.map(async path => ({ path, sha256: createHash('sha256').update(await readFile(join(integration, path))).digest('hex') })));\nconst proof = { schemaVersion: 1, kind: 'actual-compiled-stdio-MCP-and-real-Genie-McpClient-schema-error-resume-parser-smoke', externalModelCalls: 0, realPython: true, localRequests: packets.length, packets, outcomes, partialParserResults, compiled, proofRoot, completeComparisonOrInvoiceClaim: false };\nconst proofPath = join(proofRoot, 'proof.json');\nawait writeFile(proofPath, JSON.stringify(proof, null, 2) + '\\n', { mode: 0o600, flag: 'wx' });\nconsole.log(JSON.stringify({ proofPath, localRequests: packets.length, outcomes: outcomes.map(({ name, result, completeFooter }) => ({ name, isError: result.isError ?? false, validationFailed: completeFooter?.validationFailed, sessionId: result.structuredContent.session_id })), partialParserResults, externalModelCalls: 0 }));\n",
+  "sourceSha256": "fb4613529a870824c978a80cba9a57b34d78d276d39ba503c9e967fb3161713c",
+  "attempts": "4/B4",
+  "quality": "1/cap1 unchanged",
+  "externalModelOrJevCalls": 0,
+  "actualCoverage": "Compiled Node stdio MCP via real Genie McpClient; one turn each; output/pack-VALIDATE invalid isError; successful same-session resume retains failed answer history; unchanged Genie parser rejects both partial failure texts as complete bills",
+  "notClaimed": "Whole genie call workflow, external model rerun, invoice or completed paired comparison",
+  "priorPrivateHarnessFailuresRetained": [
+    "G3-REPAIR4-STDIO-HARNESS-CLEANUP-FAILURE.json",
+    "G3-REPAIR4-STDIO-VALIDATE-FIXTURE-FAILURE.json"
+  ]
+}

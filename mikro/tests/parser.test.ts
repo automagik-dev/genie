@@ -44,6 +44,25 @@ describe("detectFinal", () => {
     assert.deepEqual(signal, { type: "final_var", value: "my_result" });
   });
 
+  it("distinguishes safe variable lookup from literal answers without evaluating expressions", () => {
+    for (const [text, type, value] of [
+      ["FINAL(saved)", "final_var", "saved"],
+      ["FINAL(結果)", "final_var", "結果"],
+      ["FINAL(ｓａｖｅｄ)", "final_var", "saved"],
+      ['FINAL("saved")', "final", "saved"],
+      ["FINAL('saved')", "final", "saved"],
+      ["FINAL(saved.upper())", "final", "saved.upper()"],
+      ["FINAL(1 + 1)", "final", "1 + 1"],
+      ['FINAL(__import__("os").system("echo unsafe"))', "final", '__import__("os").system("echo unsafe")'],
+    ] as const) {
+      assert.deepEqual(detectFinal(text, []), { type, value }, text);
+    }
+    for (const text of ["FINAL(...)", "FINAL(Ellipsis)", "FINAL()", 'FINAL_VAR("x"); injected()', "FINAL_VAR(x + y)"]) {
+      const signal = detectFinal(text, []);
+      assert.ok(signal === null || signal.type === "invalid", text);
+    }
+  });
+
   it("returns null when no final signal", () => {
     const text = "Still working on it, more iterations needed.";
     const signal = detectFinal(text, []);
@@ -69,5 +88,7 @@ describe("detectFinal", () => {
     const signal = detectFinal(text, blocks);
     assert.equal(signal?.type, "final");
     assert.equal(signal?.value, "This one counts");
+    const otherFence = "```python\nFINAL('not a signal')\n```";
+    assert.equal(detectFinal(otherFence, extractCodeBlocks(otherFence)), null);
   });
 });

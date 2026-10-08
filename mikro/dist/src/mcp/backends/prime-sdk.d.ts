@@ -4,7 +4,7 @@
  * (`createAgentSession`), instead of spawning its CLI once per turn.
  *
  * Default-off and additive: nothing selects this backend unless an agent
- * spec says `backend: prime-sdk`. `src/mcp/backends/prime.ts` is untouched.
+ * spec says `engine: prime-sdk`. `src/mcp/backends/prime.ts` is untouched.
  *
  * ## Why a second prime backend
  * `PrimeBackend` shells out to `prime-agent --mode json -p` per turn, which
@@ -123,7 +123,7 @@
 import type { MikroConfig } from "../../config.js";
 import type { LoadedContext } from "../../context.js";
 import type { Microagent } from "../agents.js";
-import type { BackendRequest, MicroagentResult, RuntimeBackend } from "../backend.js";
+import { type BackendRequest, type MicroagentResult, type RuntimeBackend } from "../backend.js";
 /** The shared prime-agent release whose SDK surface this module targets. */
 export declare const EXPECTED_PRIME_SDK_VERSION = "0.8.1";
 /** The tool through which a run reports its final answer. */
@@ -257,6 +257,7 @@ export interface PrimeSdkRunLimits {
     readonly maxCost: number | null;
     readonly maxTokens: number | null;
     readonly maxTurns: number | null;
+    readonly signal?: AbortSignal;
 }
 /** The raw material of one run. Mirrors `PrimeRunResult`. */
 export interface PrimeSdkRunResult {

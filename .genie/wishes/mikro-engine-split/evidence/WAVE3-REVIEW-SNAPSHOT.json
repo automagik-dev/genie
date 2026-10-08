@@ -1,0 +1,117 @@
+{
+  "schema": 1,
+  "sealedAt": "2026-10-05T19:29:51.064569+00:00",
+  "integrationHead": "0fe62de3e2292fe1cc3eeb7f80068c0ee17918c7",
+  "groups": {
+    "G3": {
+      "mikro/src/parser.ts": "aeba7674edff7b56062d9148c44c98cf2472ec2c84e9069f043e92567e34d806",
+      "mikro/src/repl.ts": "2c49e5ff762494f52bf0c59bcad1e4ef905c2b20deccc52aa4fc6eed431b96b4",
+      "mikro/src/rlm.ts": "41c140cd9365d51e0c3f6db8a453447026dcd4162476750e0325a358a6a5c694",
+      "mikro/src/index.ts": "36d8ba6c5f67e2edd6046782d0103db91bbb20cf6a70f3da0c2ff64050ddc11d",
+      "mikro/tests/parser.test.ts": "efbd241ce103d0756034e913ad217411734f195dd69a496bfa9cf09a4c6c4e34",
+      "mikro/tests/repl-tool-bridge.test.ts": "54925bd3820ed72357d8cb84c1fd6a5ecf7e60ef5f579739c691665ff963db51",
+      "mikro/tests/validate-loop.test.ts": "0ba6acb06f00c9a432aca72306cd80d9abb8be01d385290235228f7c76157ee9"
+    },
+    "G4": {
+      "mikro/src/sdk/agent-spec.ts": "6c14c0e672865cb56d91c5f475a947db88d49b766d8fa49b374c73c309df7aae",
+      "mikro/src/sdk/index.ts": "3fddebfd39558541691efbdd225998a4dde69e72507a5f02aced64f8e88b9866",
+      "mikro/src/mcp/backend.ts": "8970b0ac238fe39e49207f8454b2e67205d4fbb08510c950558368bbd07109c9",
+      "mikro/src/mcp/server.ts": "84c0183382dd7762e1c5cac30729363962609d4dd4b488462235cc5f7d4bea1d",
+      "mikro/src/mcp/backends/legacy.ts": "45d24ae82f456059ea707438861b8c7ca1a297325a21de55d20cda55b11e00d3",
+      "mikro/src/mcp/backends/prime.ts": "a2e13faf2b6c0055caa1776f868e5cc5a67f22183798201f0de4217db4f933f0",
+      "mikro/src/mcp/backends/prime-sdk.ts": "e92094acc13a673bbdf504a6e1a31ba50df23b49f2a454052598af75e8e018b1",
+      "mikro/src/mcp/backends/pi.ts": "c5494a0dcd525b2cbc84b608bc560a0d523a1af28c71a9f98ba6fbaaf2b1b536",
+      "mikro/src/mcp/backends/pi-tools.ts": "f82c886309efd669a0e23a3621ba7fbd4b6d8b75315b7d1bdbae254fe62139b8",
+      "mikro/tests/backend-contract.test.ts": "3c92c94682af418dbf60ed361b6a3eddeae66552be2e9a33eacccccc30189665",
+      "mikro/tests/mcp-agents.test.ts": "c45d6c0a96b32a006136c7c9bfcadc70648e74c288570a10b1cb5505c5b15b49",
+      "mikro/tests/legacy-backend-tools.test.ts": "fed25388e75dc502eb926cd9ad1e86e987703392722e662e651ded9873868e4c",
+      "mikro/tests/prime-backend.test.ts": "6d515928cb30562e5ace6f32055e243ac1b836c9a67b0f4a5bb195e86e477094",
+      "mikro/tests/prime-sdk-backend.test.ts": "d10e3d4e64b8acfc70e3e09f0a81c29acdfaedeb8129e492fe536768a3b23252",
+      "mikro/tests/pi-backend.test.ts": "359b189d5818534c438ae9fb7ef6b71d59b12d02ab0cab5dd39b97e573c29b47",
+      "mikro/tests/prime-runtime-benchmark.test.ts": "5eee84723f98637c554f8d225d498fcff28f3c3cbe06c66ad784c04cc2b3a4a7",
+      "mikro/tests/runtime-benchmark-v2.test.ts": "f6ad55296535600ed98a3dbf9e02cbbda1f4f749b1ed49c8877cec3c801cd759",
+      "mikro/scripts/benchmark-models-sdk-v2.mjs": "5370db4522a57cb27cd9c375b53f2d87cfa4281cceddd014b53da8aac7123375",
+      "mikro/scripts/benchmark-prime-runtimes.mjs": "c0f0cdfccd9e41c33577d6ac185b12f22fdb9a78f09d7f6d1b120602b1a6a885",
+      "mikro/scripts/benchmark-runtimes-v2.mjs": "3c8d84e25dcbb211d7a5d6a81942309b14e62d59d10539f2b66427e49d107ac6",
+      "mikro/docs/agent-yaml-schema.md": "1dfdfe1f19d87f0d79b2214f723709f83ee917eb756f78ccd9ab7f07fa563516"
+    },
+    "G6": {
+      "mikro/src/juice.ts": "9b26960e410ad02f1fb0dd3dde0ce2e9d7e55a5ac711b1c17a838c8d59703fbc",
+      "mikro/src/cli.ts": "60d88115139c6454de62e712358f12104cdb0d0689df334e00ba8f73a5091a82",
+      "mikro/src/config.ts": "6e7246349a4c949f35df48facbb5d269d3337f8f74eae905384a8d1bda783b0d",
+      "mikro/src/custom-providers.ts": "8d598dd162846cf98b64bf4e7846df0e3be086dc98c296836963288800fbc193",
+      "mikro/src/llm.ts": "04ed87ad5a3a7b72fe916908a3ca5246c41a2af0b36b299ec7fd404a608e45e4",
+      "mikro/src/schema.ts": "0fc892c0bee51c1906cebc3d79cb5a499c8e56a36dd1091a1dd7c560c4906ea5",
+      "mikro/tests/juice.test.ts": "183f102fd13bf03b64c8c1b744f09c311f88cc3927e9839ec9ae27445931c9d1",
+      "mikro/tests/custom-providers.test.ts": "dc9705207f257a6597f5200ca8e8b24c0e0e423526dfd8e1de9fae024290b1d3",
+      "mikro/docs/juice.md": "cde0e269b2bcb60b6f3cd81cafeee53d632fa05cb87aebf7fe885231b775bfd6"
+    },
+    "packageAndDocs": {
+      "mikro/package.json": "3d02536770479260d3e4b5cb125047f5cbb05e03f29248a0154e67488f708c1e",
+      "mikro/package-lock.json": "f6fea70cf2e05d9e53c85a027aeeb7dd8aa447440f998bfb13bd6772b1c169ce",
+      "mikro/docs/sdk-overview.md": "8fbbc8548e336b40d7c63186c62341059678a2e39486657a604d636ae7c76d1b",
+      "mikro/CHANGELOG.md": "6fb2144e52dc70cb7580516e265f5503baec42a3c1f4e61503934cd3a547bcf0"
+    }
+  },
+  "budget": {
+    "correctnessRepairsUsed": 0,
+    "correctnessCap": 2,
+    "qualityLoopsUsed": 0,
+    "qualityCap": 1,
+    "effortEscalations": 0,
+    "scope": "First independent source reviews; coordinator initial authoring/compile/test integration has no prior wave3 review verdict."
+  },
+  "evidence": {
+    "freshNpmCi": "Succeeded; exact Pi family1.0.2 and direct typebox1.3.27. MIKRO_SKIP_PREPARE skips duplicate best-effort build, not hooks.",
+    "firstAggregate": {
+      "artifact": "artifact://136",
+      "passed": 1206,
+      "failed": 6,
+      "exitCode": 1,
+      "notes": "Do not copy raw failure output into publication: environment-prototype assertion rendered process environment; newly resolved credentials were not inherited by gate."
+    },
+    "focusedAfterDiagnosedRepairs": {
+      "passed": 75,
+      "failed": 0,
+      "exitCode": 0,
+      "scope": "Real SDK HTTP, scoped filesystem/git, compiled MCP, Juice/auth/CLI and RLM behavior; subsequent changes remove11 prompt snapshot tests and add/fix Pi zero-budget entry guards."
+    },
+    "zeroBudgetRegressionBefore": {
+      "passed": 0,
+      "failed": 2,
+      "exitCode": 1,
+      "observation": "Each exhausted cost/token request incorrectly made one loopback model request before rejecting."
+    },
+    "pythonSmoke": {
+      "typedPublicTimeout": true,
+      "timeoutMs": 100,
+      "markerWrites": 1,
+      "replayed": false,
+      "contextAndToolsRestored": true,
+      "userVariablesLost": true,
+      "nextTurnSucceeded": true,
+      "finalBareLookupSignal": true,
+      "quotedFinalLiteral": true,
+      "externalInferenceCalls": 0
+    },
+    "compiledCliSchema": {
+      "exitCode": 0,
+      "manualFlagsAdvertised": true,
+      "inferenceCalls": 0
+    },
+    "genieBuild": {
+      "exitCode": 0,
+      "modules": 251,
+      "entry": "dist/genie.js"
+    }
+  },
+  "pending": [
+    "Current post-zero-budget focused/full child gates",
+    "Directly captured normalized root gate",
+    "Live Flash MCP/Genie caller",
+    "Actual private Juice provision/catalog/project calls/viewer/logout",
+    "Owner-sanctioned one-call public JEV CLI",
+    "Frozen controls/candidates and genuine18 native workflows"
+  ],
+  "completionClaim": false
+}

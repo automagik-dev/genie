@@ -1,0 +1,1492 @@
+{
+  "schemaVersion": 1,
+  "scope": "Actual second unscored saved-wish native dispatch, not a scored result or complete accounting",
+  "recordedAt": "2026-10-06T14:42:27.218474Z",
+  "actualCommand": [
+    "/home/genie/.hermes/node/bin/node",
+    ".genie/wishes/mikro-engine-split/experiments/native-workflow-observer.mjs",
+    "--manifest",
+    "/home/genie/.local/share/mikro-engine-split/experiments-g8/frozen-inputs/native-manifest-pnpm.json",
+    "--smoke"
+  ],
+  "actualJob": "bg_43",
+  "actualExitCode": 2,
+  "actualWallSeconds": 895.58,
+  "actualManifestSha256": "e20a0c9ede2c57b43591e4da484ee3ad2389f18343340e13b056947b8dadb358",
+  "originalReceipt": {
+    "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/native-runs/g8-native-smoke-pnpm/receipt.json",
+    "sha256": "9b72c37c89265797158151b0c49d24713ef2eb5d24d0ad3a4cbda594e407037d"
+  },
+  "actualRunId": "d6ea9f32-072a-4810-89d4-15cfedc6c61a",
+  "actualParentSessionId": "7417ef4c-ddd8-4fcd-ad56-45cf208c6d26",
+  "acceptedAgentCount": 6,
+  "publishedAgentCount": 6,
+  "actualOutcome": "completed",
+  "actualSavedState": "missed",
+  "actualSavedStageReached": "Repair",
+  "actualSavedBlockedReason": "The repair loop ended after 0 of 2 round(s) \u2014 the fixer returned nothing, or reported it could not close the problems inside the declared file set with a red gate. The branch and the commit stand; nothing was pushed, and nothing was removed.",
+  "complete": false,
+  "actualBlockers": [
+    "7417ef4c-ddd8-4fcd-ad56-45cf208c6d26: observation header differs from durable header",
+    "enabled offload accounting unavailable; no proven command/caller/SDK lifecycle (wish numeric zero is not evidence)",
+    "report offload projection requires complete reconciled accounting"
+  ],
+  "actualNativeSessions": [
+    {
+      "sessionId": "7417ef4c-ddd8-4fcd-ad56-45cf208c6d26",
+      "header": {
+        "version": 4,
+        "id": "7417ef4c-ddd8-4fcd-ad56-45cf208c6d26",
+        "createdAt": 1791260691389,
+        "cwd": "/home/genie/.local/share/mikro-engine-split/experiments-g8/native-repositories/g8-native-smoke",
+        "isSeeded": false,
+        "delegationDepth": 0
+      },
+      "inheritedEventCount": 0,
+      "durableEventCount": 9,
+      "durableEventsSha256": "e2a3e55d3f5e25b734d3ae1a0428cb0e8e3668d66dec8a8b76fe09034b248f1d",
+      "ownEventCount": 9,
+      "accounting": {
+        "totals": {
+          "totalTokens": 0,
+          "uncachedInputTokens": 0,
+          "outputTokens": 0,
+          "cacheReadTokens": null,
+          "cacheWriteTokens": null,
+          "reasoningTokens": null
+        },
+        "servedRoutes": [],
+        "toolCalls": 0,
+        "turns": [],
+        "attempts": [],
+        "retries": []
+      },
+      "blockers": [
+        "observation header differs from durable header"
+      ]
+    },
+    {
+      "sessionId": "b7daed69-0b68-4208-9ea4-7d3be88baf77",
+      "header": {
+        "version": 4,
+        "id": "b7daed69-0b68-4208-9ea4-7d3be88baf77",
+        "createdAt": 1791260691953,
+        "cwd": "/home/genie/.local/share/mikro-engine-split/experiments-g8/native-repositories/g8-native-smoke",
+        "parentSession": "7417ef4c-ddd8-4fcd-ad56-45cf208c6d26",
+        "isSeeded": false,
+        "origin": "subagent",
+        "delegationDepth": 1
+      },
+      "inheritedEventCount": 0,
+      "durableEventCount": 122,
+      "durableEventsSha256": "bf199fc585fc15622992b853fd2773cf5a4e758b55674f7df625f8692ad894fd",
+      "ownEventCount": 122,
+      "accounting": {
+        "totals": {
+          "totalTokens": 621841,
+          "uncachedInputTokens": 48773,
+          "outputTokens": 24332,
+          "cacheReadTokens": 548736,
+          "cacheWriteTokens": 0,
+          "reasoningTokens": null
+        },
+        "servedRoutes": [
+          {
+            "provider": "deepseek-official",
+            "model": "deepseek-flash"
+          }
+        ],
+        "toolCalls": 26,
+        "turns": [
+          {
+            "turn": 1,
+            "startSeq": 3,
+            "endSeq": 121,
+            "reason": {
+              "kind": "completed"
+            },
+            "usage": {
+              "uncachedInputTokens": 48773,
+              "outputTokens": 24332,
+              "totalTokens": 621841,
+              "cacheReadTokens": 548736,
+              "cacheWriteTokens": 0,
+              "routes": [
+                {
+                  "provider": "deepseek-official",
+                  "model": "deepseek-flash"
+                }
+              ]
+            }
+          }
+        ],
+        "attempts": [
+          {
+            "seq": 15,
+            "type": "assistant/message",
+            "turn": 1,
+            "step": 1
+          },
+          {
+            "seq": 21,
+            "type": "assistant/message",
+            "turn": 1,
+            "step": 2
+          },
+          {
+            "seq": 29,
+            "type": "assistant/message",
+            "turn": 1,
+            "step": 3
+          },
+          {
+            "seq": 35,
+            "type": "assistant/message",
+            "turn": 1,
+            "step": 4
+          },
+          {
+            "seq": 43,
+            "type": "assistant/message",
+            "turn": 1,
+            "step": 5
+          },
+          {
+            "seq": 49,
+            "type": "assistant/message",
+            "turn": 1,
+            "step": 6
+          },
+          {
+            "seq": 57,
+            "type": "assistant/message",
+            "turn": 1,
+            "step": 7
+          },
+          {
+            "seq": 69,
+            "type": "assistant/message",
+            "turn": 1,
+            "step": 8
+          },
+          {
+            "seq": 81,
+            "type": "assistant/message",
+            "turn": 1,
+            "step": 9
+          },
+          {
+            "seq": 89,
+            "type": "assistant/message",
+            "turn": 1,
+            "step": 10
+          },
+          {
+            "seq": 95,
+            "type": "assistant/message",
+            "turn": 1,
+            "step": 11
+          },
+          {
+            "seq": 101,
+            "type": "assistant/message",
+            "turn": 1,
+            "step": 12
+          },
+          {
+            "seq": 109,
+            "type": "assistant/message",
+            "turn": 1,
+            "step": 13
+          },
+          {
+            "seq": 117,
+            "type": "assistant/message",
+            "turn": 1,
+            "step": 14
+          }
+        ],
+        "retries": []
+      },
+      "blockers": []
+    },
+    {
+      "sessionId": "793e32c4-160e-4205-b9ee-ab7db2a514c3",
+      "header": {
+        "version": 4,
+        "id": "793e32c4-160e-4205-b9ee-ab7db2a514c3",
+        "createdAt": 1791260835064,
+        "cwd": "/home/genie/.local/share/mikro-engine-split/experiments-g8/native-repositories/g8-native-smoke",
+        "parentSession": "7417ef4c-ddd8-4fcd-ad56-45cf208c6d26",
+        "isSeeded": false,
+        "origin": "subagent",
+        "delegationDepth": 1
+      },
+      "inheritedEventCount": 0,
+      "durableEventCount": 20,
+      "durableEventsSha256": "1e6b03566a3ad049f5064fcff4032f5f50f293ae5ad5846b125b6b1bf821c877",
+      "ownEventCount": 20,
+      "accounting": {
+        "totals": {
+          "totalTokens": 31615,
+          "uncachedInputTokens": 21708,
+          "outputTokens": 6707,
+          "cacheReadTokens": 3200,
+          "cacheWriteTokens": 0,
+          "reasoningTokens": null
+        },
+        "servedRoutes": [
+          {
+            "provider": "deepseek-official",
+            "model": "deepseek-flash"
+          }
+        ],
+        "toolCalls": 1,
+        "turns": [
+          {
+            "turn": 1,
+            "startSeq": 3,
+            "endSeq": 19,
+            "reason": {
+              "kind": "completed"
+            },
+            "usage": {
+              "uncachedInputTokens": 21708,
+              "outputTokens": 6707,
+              "totalTokens": 31615,
+              "cacheReadTokens": 3200,
+              "cacheWriteTokens": 0,
+              "routes": [
+                {
+                  "provider": "deepseek-official",
+                  "model": "deepseek-flash"
+                }
+              ]
+            }
+          }
+        ],
+        "attempts": [
+          {
+            "seq": 15,
+            "type": "assistant/message",
+            "turn": 1,
+            "step": 1
+          }
+        ],
+        "retries": []
+      },
+      "blockers": []
+    },
+    {
+      "sessionId": "619539d8-7c88-4050-b2c6-8536196e90fa",
+      "header": {
+        "version": 4,
+        "id": "619539d8-7c88-4050-b2c6-8536196e90fa",
+        "createdAt": 1791260864652,
+        "cwd": "/home/genie/.local/share/mikro-engine-split/experiments-g8/native-repositories/g8-native-smoke",
+        "parentSession": "7417ef4c-ddd8-4fcd-ad56-45cf208c6d26",
+        "isSeeded": false,
+        "origin": "subagent",
+        "delegationDepth": 1
+      },
+      "inheritedEventCount": 0,
+      "durableEventCount": 205,
+      "durableEventsSha256": "70d629116a8628972b3c554f61561fa4724993467efde7667fa54b321102b730",
+      "ownEventCount": 205,
+      "accounting": {
+        "totals": {
+          "totalTokens": 1607529,
+          "uncachedInputTokens": 51214,
+          "outputTokens": 21083,
+          "cacheReadTokens": 1535232,
+          "cacheWriteTokens": 0,
+          "reasoningTokens": null
+        },
+        "servedRoutes": [
+          {
+            "provider": "deepseek-official",
+            "model": "deepseek-flash"
+          }
+        ],
+        "toolCalls": 36,
+        "turns": [
+          {
+            "turn": 1,
+            "startSeq": 3,
+            "endSeq": 204,
+            "reason": {
+              "kind": "completed"
+            },
+            "usage": {
+              "uncachedInputTokens": 51214,
+              "outputTokens": 21083,
+              "totalTokens": 1607529,
+              "cacheReadTokens": 1535232,
+              "cacheWriteTokens": 0,
+              "routes": [
+                {
+                  "provider": "deepseek-official",
+                  "model": "deepseek-flash"
+                }
+              ]
+            }
+          }
+        ],
+        "attempts": [
+          {
+            "seq": 15,
+            "type": "assistant/message",
+            "turn": 1,
+            "step": 1
+          },
+          {
+            "seq": 23,
+            "type": "assistant/message",
+            "turn": 1,
+            "step": 2
+          },
+          {
+            "seq": 31,
+            "type": "assistant/message",
+            "turn": 1,
+            "step": 3
+          },
+          {
+            "seq": 39,
+            "type": "assistant/message",
+            "turn": 1,
+            "step": 4
+          },
+          {
+            "seq": 45,
+            "type": "assistant/message",
+            "turn": 1,
+            "step": 5
+          },
+          {
+            "seq": 56,
+            "type": "assistant/message",
+            "turn": 1,
+            "step": 6
+          },
+          {
+            "seq": 64,
+            "type": "assistant/message",
+            "turn": 1,
+            "step": 7
+          },
+          {
+            "seq": 70,
+            "type": "assistant/message",
+            "turn": 1,
+            "step": 8
+          },
+          {
+            "seq": 76,
+            "type": "assistant/message",
+            "turn": 1,
+            "step": 9
+          },
+          {
+            "seq": 82,
+            "type": "assistant/message",
+            "turn": 1,
+            "step": 10
+          },
+          {
+            "seq": 88,
+            "type": "assistant/message",
+            "turn": 1,
+            "step": 11
+          },
+          {
+            "seq": 94,
+            "type": "assistant/message",
+            "turn": 1,
+            "step": 12
+          },
+          {
+            "seq": 100,
+            "type": "assistant/message",
+            "turn": 1,
+            "step": 13
+          },
+          {
+            "seq": 106,
+            "type": "assistant/message",
+            "turn": 1,
+            "step": 14
+          },
+          {
+            "seq": 112,
+            "type": "assistant/message",
+            "turn": 1,
+            "step": 15
+          },
+          {
+            "seq": 118,
+            "type": "assistant/message",
+            "turn": 1,
+            "step": 16
+          },
+          {
+            "seq": 124,
+            "type": "assistant/message",
+            "turn": 1,
+            "step": 17
+          },
+          {
+            "seq": 130,
+            "type": "assistant/message",
+            "turn": 1,
+            "step": 18
+          },
+          {
+            "seq": 136,
+            "type": "assistant/message",
+            "turn": 1,
+            "step": 19
+          },
+          {
+            "seq": 142,
+            "type": "assistant/message",
+            "turn": 1,
+            "step": 20
+          },
+          {
+            "seq": 148,
+            "type": "assistant/message",
+            "turn": 1,
+            "step": 21
+          },
+          {
+            "seq": 156,
+            "type": "assistant/message",
+            "turn": 1,
+            "step": 22
+          },
+          {
+            "seq": 162,
+            "type": "assistant/message",
+            "turn": 1,
+            "step": 23
+          },
+          {
+            "seq": 170,
+            "type": "assistant/message",
+            "turn": 1,
+            "step": 24
+          },
+          {
+            "seq": 176,
+            "type": "assistant/message",
+            "turn": 1,
+            "step": 25
+          },
+          {
+            "seq": 182,
+            "type": "assistant/message",
+            "turn": 1,
+            "step": 26
+          },
+          {
+            "seq": 188,
+            "type": "assistant/message",
+            "turn": 1,
+            "step": 27
+          },
+          {
+            "seq": 194,
+            "type": "assistant/message",
+            "turn": 1,
+            "step": 28
+          },
+          {
+            "seq": 200,
+            "type": "assistant/message",
+            "turn": 1,
+            "step": 29
+          }
+        ],
+        "retries": []
+      },
+      "blockers": []
+    },
+    {
+      "sessionId": "68543100-e336-4acc-a84d-1e3b515b7575",
+      "header": {
+        "version": 4,
+        "id": "68543100-e336-4acc-a84d-1e3b515b7575",
+        "createdAt": 1791260999604,
+        "cwd": "/home/genie/.local/share/mikro-engine-split/experiments-g8/native-repositories/g8-native-smoke",
+        "parentSession": "7417ef4c-ddd8-4fcd-ad56-45cf208c6d26",
+        "isSeeded": false,
+        "origin": "subagent",
+        "delegationDepth": 1
+      },
+      "inheritedEventCount": 0,
+      "durableEventCount": 166,
+      "durableEventsSha256": "de0f79dfe33f00d95f85500f04fe8a8f0a2763c2fea3502bb87f81681e9c9c3e",
+      "ownEventCount": 166,
+      "accounting": {
+        "totals": {
+          "totalTokens": 940664,
+          "uncachedInputTokens": 50964,
+          "outputTokens": 20580,
+          "cacheReadTokens": 869120,
+          "cacheWriteTokens": 0,
+          "reasoningTokens": null
+        },
+        "servedRoutes": [
+          {
+            "provider": "deepseek-official",
+            "model": "deepseek-flash"
+          }
+        ],
+        "toolCalls": 30,
+        "turns": [
+          {
+            "turn": 1,
+            "startSeq": 3,
+            "endSeq": 165,
+            "reason": {
+              "kind": "completed"
+            },
+            "usage": {
+              "uncachedInputTokens": 50964,
+              "outputTokens": 20580,
+              "totalTokens": 940664,
+              "cacheReadTokens": 869120,
+              "cacheWriteTokens": 0,
+              "routes": [
+                {
+                  "provider": "deepseek-official",
+                  "model": "deepseek-flash"
+                }
+              ]
+            }
+          }
+        ],
+        "attempts": [
+          {
+            "seq": 15,
+            "type": "assistant/message",
+            "turn": 1,
+            "step": 1
+          },
+          {
+            "seq": 25,
+            "type": "assistant/message",
+            "turn": 1,
+            "step": 2
+          },
+          {
+            "seq": 31,
+            "type": "assistant/message",
+            "turn": 1,
+            "step": 3
+          },
+          {
+            "seq": 37,
+            "type": "assistant/message",
+            "turn": 1,
+            "step": 4
+          },
+          {
+            "seq": 45,
+            "type": "assistant/message",
+            "turn": 1,
+            "step": 5
+          },
+          {
+            "seq": 51,
+            "type": "assistant/message",
+            "turn": 1,
+            "step": 6
+          },
+          {
+            "seq": 57,
+            "type": "assistant/message",
+            "turn": 1,
+            "step": 7
+          },
+          {
+            "seq": 63,
+            "type": "assistant/message",
+            "turn": 1,
+            "step": 8
+          },
+          {
+            "seq": 71,
+            "type": "assistant/message",
+            "turn": 1,
+            "step": 9
+          },
+          {
+            "seq": 79,
+            "type": "assistant/message",
+            "turn": 1,
+            "step": 10
+          },
+          {
+            "seq": 87,
+            "type": "assistant/message",
+            "turn": 1,
+            "step": 11
+          },
+          {
+            "seq": 93,
+            "type": "assistant/message",
+            "turn": 1,
+            "step": 12
+          },
+          {
+            "seq": 99,
+            "type": "assistant/message",
+            "turn": 1,
+            "step": 13
+          },
+          {
+            "seq": 105,
+            "type": "assistant/message",
+            "turn": 1,
+            "step": 14
+          },
+          {
+            "seq": 111,
+            "type": "assistant/message",
+            "turn": 1,
+            "step": 15
+          },
+          {
+            "seq": 117,
+            "type": "assistant/message",
+            "turn": 1,
+            "step": 16
+          },
+          {
+            "seq": 123,
+            "type": "assistant/message",
+            "turn": 1,
+            "step": 17
+          },
+          {
+            "seq": 129,
+            "type": "assistant/message",
+            "turn": 1,
+            "step": 18
+          },
+          {
+            "seq": 137,
+            "type": "assistant/message",
+            "turn": 1,
+            "step": 19
+          },
+          {
+            "seq": 143,
+            "type": "assistant/message",
+            "turn": 1,
+            "step": 20
+          },
+          {
+            "seq": 149,
+            "type": "assistant/message",
+            "turn": 1,
+            "step": 21
+          },
+          {
+            "seq": 155,
+            "type": "assistant/message",
+            "turn": 1,
+            "step": 22
+          },
+          {
+            "seq": 161,
+            "type": "assistant/message",
+            "turn": 1,
+            "step": 23
+          }
+        ],
+        "retries": []
+      },
+      "blockers": []
+    },
+    {
+      "sessionId": "ea903608-9957-4372-9d4c-6cba2f2a491d",
+      "header": {
+        "version": 4,
+        "id": "ea903608-9957-4372-9d4c-6cba2f2a491d",
+        "createdAt": 1791261197203,
+        "cwd": "/home/genie/.local/share/mikro-engine-split/experiments-g8/native-repositories/g8-native-smoke",
+        "parentSession": "7417ef4c-ddd8-4fcd-ad56-45cf208c6d26",
+        "isSeeded": false,
+        "origin": "subagent",
+        "delegationDepth": 1
+      },
+      "inheritedEventCount": 0,
+      "durableEventCount": 79,
+      "durableEventsSha256": "5d5f638f1659f41fed5acd2661c1e2ca11cdce8431052a10536e192b0a771139",
+      "ownEventCount": 79,
+      "accounting": {
+        "totals": {
+          "totalTokens": 387139,
+          "uncachedInputTokens": 49297,
+          "outputTokens": 10802,
+          "cacheReadTokens": 327040,
+          "cacheWriteTokens": 0,
+          "reasoningTokens": null
+        },
+        "servedRoutes": [
+          {
+            "provider": "deepseek-official",
+            "model": "deepseek-flash"
+          }
+        ],
+        "toolCalls": 13,
+        "turns": [
+          {
+            "turn": 1,
+            "startSeq": 3,
+            "endSeq": 78,
+            "reason": {
+              "kind": "completed"
+            },
+            "usage": {
+              "uncachedInputTokens": 49297,
+              "outputTokens": 10802,
+              "totalTokens": 387139,
+              "cacheReadTokens": 327040,
+              "cacheWriteTokens": 0,
+              "routes": [
+                {
+                  "provider": "deepseek-official",
+                  "model": "deepseek-flash"
+                }
+              ]
+            }
+          }
+        ],
+        "attempts": [
+          {
+            "seq": 15,
+            "type": "assistant/message",
+            "turn": 1,
+            "step": 1
+          },
+          {
+            "seq": 21,
+            "type": "assistant/message",
+            "turn": 1,
+            "step": 2
+          },
+          {
+            "seq": 27,
+            "type": "assistant/message",
+            "turn": 1,
+            "step": 3
+          },
+          {
+            "seq": 33,
+            "type": "assistant/message",
+            "turn": 1,
+            "step": 4
+          },
+          {
+            "seq": 44,
+            "type": "assistant/message",
+            "turn": 1,
+            "step": 5
+          },
+          {
+            "seq": 52,
+            "type": "assistant/message",
+            "turn": 1,
+            "step": 6
+          },
+          {
+            "seq": 60,
+            "type": "assistant/message",
+            "turn": 1,
+            "step": 7
+          },
+          {
+            "seq": 68,
+            "type": "assistant/message",
+            "turn": 1,
+            "step": 8
+          },
+          {
+            "seq": 74,
+            "type": "assistant/message",
+            "turn": 1,
+            "step": 9
+          }
+        ],
+        "retries": []
+      },
+      "blockers": []
+    },
+    {
+      "sessionId": "f5edd679-bf94-4d60-a7e9-30caaa3b4a9e",
+      "header": {
+        "version": 4,
+        "id": "f5edd679-bf94-4d60-a7e9-30caaa3b4a9e",
+        "createdAt": 1791261270482,
+        "cwd": "/home/genie/.local/share/mikro-engine-split/experiments-g8/native-repositories/g8-native-smoke",
+        "parentSession": "7417ef4c-ddd8-4fcd-ad56-45cf208c6d26",
+        "isSeeded": false,
+        "origin": "subagent",
+        "delegationDepth": 1
+      },
+      "inheritedEventCount": 0,
+      "durableEventCount": 235,
+      "durableEventsSha256": "087bba2079034c02829ae8d584bc3dcf6c63460773e6618204182e6c4b040778",
+      "ownEventCount": 235,
+      "accounting": {
+        "totals": {
+          "totalTokens": 2340419,
+          "uncachedInputTokens": 67229,
+          "outputTokens": 40742,
+          "cacheReadTokens": 2232448,
+          "cacheWriteTokens": 0,
+          "reasoningTokens": null
+        },
+        "servedRoutes": [
+          {
+            "provider": "deepseek-official",
+            "model": "deepseek-flash"
+          }
+        ],
+        "toolCalls": 47,
+        "turns": [
+          {
+            "turn": 1,
+            "startSeq": 3,
+            "endSeq": 234,
+            "reason": {
+              "kind": "completed"
+            },
+            "usage": {
+              "uncachedInputTokens": 67229,
+              "outputTokens": 40742,
+              "totalTokens": 2340419,
+              "cacheReadTokens": 2232448,
+              "cacheWriteTokens": 0,
+              "routes": [
+                {
+                  "provider": "deepseek-official",
+                  "model": "deepseek-flash"
+                }
+              ]
+            }
+          }
+        ],
+        "attempts": [
+          {
+            "seq": 15,
+            "type": "assistant/message",
+            "turn": 1,
+            "step": 1
+          },
+          {
+            "seq": 23,
+            "type": "assistant/message",
+            "turn": 1,
+            "step": 2
+          },
+          {
+            "seq": 31,
+            "type": "assistant/message",
+            "turn": 1,
+            "step": 3
+          },
+          {
+            "seq": 42,
+            "type": "assistant/message",
+            "turn": 1,
+            "step": 4
+          },
+          {
+            "seq": 50,
+            "type": "assistant/message",
+            "turn": 1,
+            "step": 5
+          },
+          {
+            "seq": 58,
+            "type": "assistant/message",
+            "turn": 1,
+            "step": 6
+          },
+          {
+            "seq": 66,
+            "type": "assistant/message",
+            "turn": 1,
+            "step": 7
+          },
+          {
+            "seq": 72,
+            "type": "assistant/message",
+            "turn": 1,
+            "step": 8
+          },
+          {
+            "seq": 78,
+            "type": "assistant/message",
+            "turn": 1,
+            "step": 9
+          },
+          {
+            "seq": 84,
+            "type": "assistant/message",
+            "turn": 1,
+            "step": 10
+          },
+          {
+            "seq": 92,
+            "type": "assistant/message",
+            "turn": 1,
+            "step": 11
+          },
+          {
+            "seq": 100,
+            "type": "assistant/message",
+            "turn": 1,
+            "step": 12
+          },
+          {
+            "seq": 108,
+            "type": "assistant/message",
+            "turn": 1,
+            "step": 13
+          },
+          {
+            "seq": 116,
+            "type": "assistant/message",
+            "turn": 1,
+            "step": 14
+          },
+          {
+            "seq": 124,
+            "type": "assistant/message",
+            "turn": 1,
+            "step": 15
+          },
+          {
+            "seq": 130,
+            "type": "assistant/message",
+            "turn": 1,
+            "step": 16
+          },
+          {
+            "seq": 138,
+            "type": "assistant/message",
+            "turn": 1,
+            "step": 17
+          },
+          {
+            "seq": 146,
+            "type": "assistant/message",
+            "turn": 1,
+            "step": 18
+          },
+          {
+            "seq": 154,
+            "type": "assistant/message",
+            "turn": 1,
+            "step": 19
+          },
+          {
+            "seq": 160,
+            "type": "assistant/message",
+            "turn": 1,
+            "step": 20
+          },
+          {
+            "seq": 168,
+            "type": "assistant/message",
+            "turn": 1,
+            "step": 21
+          },
+          {
+            "seq": 174,
+            "type": "assistant/message",
+            "turn": 1,
+            "step": 22
+          },
+          {
+            "seq": 180,
+            "type": "assistant/message",
+            "turn": 1,
+            "step": 23
+          },
+          {
+            "seq": 186,
+            "type": "assistant/message",
+            "turn": 1,
+            "step": 24
+          },
+          {
+            "seq": 192,
+            "type": "assistant/message",
+            "turn": 1,
+            "step": 25
+          },
+          {
+            "seq": 198,
+            "type": "assistant/message",
+            "turn": 1,
+            "step": 26
+          },
+          {
+            "seq": 204,
+            "type": "assistant/message",
+            "turn": 1,
+            "step": 27
+          },
+          {
+            "seq": 210,
+            "type": "assistant/message",
+            "turn": 1,
+            "step": 28
+          },
+          {
+            "seq": 216,
+            "type": "assistant/message",
+            "turn": 1,
+            "step": 29
+          },
+          {
+            "seq": 224,
+            "type": "assistant/message",
+            "turn": 1,
+            "step": 30
+          },
+          {
+            "seq": 230,
+            "type": "assistant/message",
+            "turn": 1,
+            "step": 31
+          }
+        ],
+        "retries": []
+      },
+      "blockers": []
+    }
+  ],
+  "measuredNativeTotals": {
+    "totalTokens": 5929207,
+    "modelToolCalls": 153,
+    "sessionCount": 7
+  },
+  "actualExternalLedgerFailures": [
+    {
+      "sessionId": "b7daed69-0b68-4208-9ea4-7d3be88baf77",
+      "seq": 17,
+      "event": {
+        "type": "tool/result",
+        "seq": 17,
+        "time": 1791260705144,
+        "data": {
+          "turn": 1,
+          "step": 1,
+          "message": {
+            "role": "tool",
+            "source": {
+              "kind": "tool",
+              "callId": "call_00_TiuWAD5G7AuRLfHjrjKK6553"
+            },
+            "toolCallId": "call_00_TiuWAD5G7AuRLfHjrjKK6553",
+            "content": [
+              {
+                "type": "text",
+                "text": "facts: skipped (EROFS: read-only file system, mkdir '/home/genie/.local/share/mikro-engine-split/experiments-g8/caller-trust/g8-native-smoke/.mikro/runs')\n517 | `)}notify(method,params={}){this.send({jsonrpc:\"2.0\",method,params})}request(method,params,timeoutMs){let id=this.nextId++;return new Promise((resolve20,reject)=>{let timer=setTimeout(()=>{this.pending.delete(id),reject(Error(`${method} timed out after ${timeoutMs}ms`))},timeoutMs);this.pending.set(id,{resolve:(v)=>{clearTimeout(timer),resolve20(v)},reject:(e)=>{clearTimeout(timer),reject(e)}}),this.send({jsonrpc:\"2.0\",id,method,params})})}close(){try{this.proc.kill()}catch{}}}function parseEngine(value){if(value!==\"rlm\"&&value!==\"pi\"&&value!==\"prime\"&&value!==\"prime-sdk\")throw Error(\"engine must be rlm, pi, prime, or prime-sdk\");return value}function parseEngineFlag(argv){let indexes=argv.flatMap((arg,i)=>arg===\"--engine\"||arg.startsWith(\"--engine=\")?[i]:[]);if(indexes.length>1)throw Error(\"--engine may only be supplied once\");if(!indexes.length)return;let token=argv[indexes[0]];return parseEngine(token.startsWith(\"--engine=\")?token.slice(9):argv[indexes[0]+1])}function factsContextPath(option,runsDir,runId)\n518 | `),writeFileSync20(contextPath,renderFacts(facts)),{path:path2,contextPath,candidates:facts.candidates.length,ms:Date.now()-t0,gh:facts.basis.gh}}var RAW_CAP_BYTES=1048576,RAW_TRUNCATION_MARKER=`\n519 | [truncated by scripts/mikro/call.ts at ${RAW_CAP_BYTES} bytes]\n520 | `;function persistFailedRaw(runsDir,runId,attempt,raw){if(!raw)return;try{let marker=Buffer.from(RAW_TRUNCATION_MARKER,\"utf8\"),full=Buffer.from(raw,\"utf8\"),truncated=full.length>RAW_CAP_BYTES,bytes=truncated?Buffer.concat([full.subarray(0,RAW_CAP_BYTES-marker.length),marker]):full;mkdirSync21(runsDir,{recursive:!0});let path2=join43(runsDir,`raw-${runId}-${attempt}.txt`);return writeFileSync20(path2,bytes),{path:path2,bytes:bytes.length,sha256:createHash17(\"sha256\").update(bytes).digest(\"hex\"),truncated}}catch(error2){process.stderr.write(`raw: not retained (${error2 instanceof Error?error2.message:String(error2)})\n521 | `);return}}var sha=(text)=>createHash17(\"sha256\").update(text).digest(\"hex\").slice(0,12),PRICE_BASIS=\"deepseek-list-2026-09-18-peak\",cachedKeyEnv=null;function providerKeyEnv(){if(cachedKeyEnv)return cachedKeyEnv;if(cachedKeyEnv={},process.env.DEEPSEEK_API_KEY)return cachedKeyEnv;let gate=join43(process.env.HOME??\"\",\".mikro\",\"gate-env.sh\");if(!existsSync25(gate))return cachedKeyEnv;try{let script=`source \"${gate.replace(/\"/g,\"\\\\\\\"\")}\" >/dev/null 2>&1; printf %s \"$DEEPSEEK_API_KEY\"`,out4=Bun.spawnSync([\"bash\",\"-lc\",script],{env:process.env}).stdout.toString().trim();if(out4)cachedKeyEnv={DEEPSEEK_API_KEY:out4}}catch{}return cachedKeyEnv}function toolName(agent){return`mikro_${agent.toLowerCase().replace(/[^a-z0-9_-]/g,\"_\")}`}var cachedGhToken=null;function ghTokenEnv(){if(cachedGhToken)return cachedGhToken;if(cachedGhToken={},process.env.GH_TOKEN)return cachedGhToken={GH_TOKEN:process.env.GH_TOKEN},cachedGhToken;try{let probe=Bun.spawnSync([\"gh\",\"auth\",\"token\"],{env:process.env}),token=probe.exitCode===0?probe\n522 | `),result.isError)errors3.push(`tool error: ${raw.slice(0,300)}`);if(footer=parseFooter(raw),!footer)errors3.push(\"no cost footer in the answer\");else if(cost+=footer.cost,footer.budgetHit)errors3.push(`budget hit: ${footer.budgetHit}`);let body=stripFooter(raw);if(!body.trim())errors3.push(\"empty answer\");let extracted=extractJson(body);if(extracted.error)errors3.push(extracted.error);else if(schema){let parsed=schema.safeParse(extracted.value);if(!parsed.success)for(let issue of parsed.error.issues.slice(0,12))errors3.push(`schema: ${issue.path.join(\".\")||\"(root)\"} \\u2014 ${issue.message}`);else{citations=verifyCitations(parsed.data,dir),answer=verifyStatus(applyResolutions(parsed.data,citations),statusGate),statusRow=statusLedgerRow(answer);for(let c of citations.filter((x)=>!x.ok))errors3.push(`citation: ${c.path}${c.line?`:${c.line}`:\"\"} \\u2014 ${c.reason}`)}}else{citations=verifyCitations(extracted.value,dir),answer=verifyStatus(applyResolutions(extracted.value,citations),statusGate),statusRow=statusLed\n\nEROFS: read-only file system, mkdir '/home/genie/.local/share/mikro-engine-split/experiments-g8/caller-trust/g8-native-smoke/.mikro/runs'\n    path: \"/home/genie/.local/share/mikro-engine-split/experiments-g8/caller-trust/g8-native-smoke/.mikro/runs\",\n syscall: \"mkdir\",\n   errno: -30,\n    code: \"EROFS\"\n\n      at runAgent (/home/genie/orca/workspaces/genie/mikro-engine-split/dist/genie.js:522:1744)\n      at async runCallCli (/home/genie/orca/workspaces/genie/mikro-engine-split/dist/genie.js:531:42)\n      at async <anonymous> (/home/genie/orca/workspaces/genie/mikro-engine-split/dist/genie.js:825:627)\nnote: missing sourcemaps for /home/genie/orca/workspaces/genie/mikro-engine-split/dist/genie.js\nnote: consider bundling with '--sourcemap' to get unminified traces\n\nBun v1.3.14 (Linux x64)\n"
+              }
+            ],
+            "isError": false,
+            "id": "8e17c428-fe8e-448c-b3fc-b6addeaa7c0c"
+          }
+        },
+        "sourceEventSeqs": [
+          16
+        ],
+        "surfaceOp": "append"
+      }
+    },
+    {
+      "sessionId": "619539d8-7c88-4050-b2c6-8536196e90fa",
+      "seq": 114,
+      "event": {
+        "type": "tool/result",
+        "seq": 114,
+        "time": 1791260936052,
+        "data": {
+          "turn": 1,
+          "step": 15,
+          "message": {
+            "role": "tool",
+            "source": {
+              "kind": "tool",
+              "callId": "call_00_aMDTOjJ2TJCvbTuASS2r3470"
+            },
+            "toolCallId": "call_00_aMDTOjJ2TJCvbTuASS2r3470",
+            "content": [
+              {
+                "type": "text",
+                "text": "exit=1\n      at <anonymous> (/home/genie/.local/share/mikro-engine-split/experiments-g8/native-repositories/g8-native-smoke/.claude/worktrees/wish-g8-native-smoke/src/lib/metrics-export.test.ts:32:3)\n(fail) Phoenix projection > span ids are deterministic per install and the repo path is hashed, never sent [0.15ms]\n17 | let root: string;\n18 | let env: NodeJS.ProcessEnv;\n19 | let savedHome: string | undefined;\n20 | \n21 | beforeEach(() => {\n22 |   root = mkdtempSync(join(tmpdir(), 'genie-metrics-export-'));\n              ^\nerror: EROFS: read-only file system, mkdtemp '/home/genie/.local/share/mikro-engine-split/experiments-g8/native-runs/g8-native-smoke-pnpm/tmp/genie-metrics-export-5nCe4a'\n      at <anonymous> (/home/genie/.local/share/mikro-engine-split/experiments-g8/native-repositories/g8-native-smoke/.claude/worktrees/wish-g8-native-smoke/src/lib/metrics-export.test.ts:22:10)\n27 | });\n28 | \n29 | afterEach(() => {\n30 |   if (savedHome === undefined) Reflect.deleteProperty(process.env, 'GENIE_HOME');\n31 |   else process.env.GENIE_HOME = savedHome;\n32 |   rmSync(root, { recursive: true, force: true });\n       ^\nTypeError: path must be a string or TypedArray\n      at <anonymous> (/home/genie/.local/share/mikro-engine-split/experiments-g8/native-repositories/g8-native-smoke/.claude/worktrees/wish-g8-native-smoke/src/lib/metrics-export.test.ts:32:3)\n(fail) Phoenix projection > posts only ids Phoenix does not hold and reports what never read back [0.15ms]\n\n 0 pass\n 18 fail\nRan 18 tests across 1 file. [96.00ms]\n"
+              }
+            ],
+            "isError": false,
+            "id": "b4e9b948-5bf8-4db9-ab33-7e586c690faa"
+          }
+        },
+        "sourceEventSeqs": [
+          113
+        ],
+        "surfaceOp": "append"
+      }
+    },
+    {
+      "sessionId": "68543100-e336-4acc-a84d-1e3b515b7575",
+      "seq": 73,
+      "event": {
+        "type": "tool/result",
+        "seq": 73,
+        "time": 1791261095784,
+        "data": {
+          "turn": 1,
+          "step": 9,
+          "message": {
+            "role": "tool",
+            "source": {
+              "kind": "tool",
+              "callId": "call_00_M76vaNJajsHAwfqEc2oV0097"
+            },
+            "toolCallId": "call_00_M76vaNJajsHAwfqEc2oV0097",
+            "content": [
+              {
+                "type": "text",
+                "text": "700:error: EROFS: read-only file system, mkdtemp '/home/genie/.local/share/mikro-engine-split/experiments-g8/native-runs/g8-native-smoke-pnpm/tmp/genie-cli-reg-pS11tj'\n719:error: EROFS: read-only file system, mkdtemp '/home/genie/.local/share/mikro-engine-split/experiments-g8/native-runs/g8-native-smoke-pnpm/tmp/genie-cli-reg-SWDIoT'\n738:error: EROFS: read-only file system, mkdtemp '/home/genie/.local/share/mikro-engine-split/experiments-g8/native-runs/g8-native-smoke-pnpm/tmp/genie-cli-reg-dF8szV'\n757:error: EROFS: read-only file system, mkdtemp '/home/genie/.local/share/mikro-engine-split/experiments-g8/native-runs/g8-native-smoke-pnpm/tmp/genie-cli-reg-LGi4zb'\n776:error: EROFS: read-only file system, mkdtemp '/home/genie/.local/share/mikro-engine-split/experiments-g8/native-runs/g8-native-smoke-pnpm/tmp/genie-cli-reg-w1WTWm'\n795:error: EROFS: read-only file system, mkdtemp '/home/genie/.local/share/mikro-engine-split/experiments-g8/native-runs/g8-native-smoke-pnpm/tmp/genie-cli-reg-tGSyoJ'\n814:error: EROFS: read-only file system, mkdtemp '/home/genie/.local/share/mikro-engine-split/experiments-g8/native-runs/g8-native-smoke-pnpm/tmp/genie-cli-reg-AHTdhE'\n835:error: EROFS: read-only file system, mkdtemp '/home/genie/.local/share/mikro-engine-split/experiments-g8/native-runs/g8-native-smoke-pnpm/tmp/skills-lint-clean-root-ElUXRv'\n857:error: EROFS: read-only file system, mkdtemp '/home/genie/.local/share/mikro-engine-split/experiments-g8/native-runs/g8-native-smoke-pnpm/tmp/skills-lint-KfyIif'\n876:error: EROFS: read-only file system, mkdtemp '/home/genie/.local/share/mikro-engine-split/experiments-g8/native-runs/g8-native-smoke-pnpm/tmp/skills-lint-Tgr6nU'\n895:error: EROFS: read-only file system, mkdtemp '/home/genie/.local/share/mikro-engine-split/experiments-g8/native-runs/g8-native-smoke-pnpm/tmp/skills-lint-b6MqOt'\n914:error: EROFS: read-only file system, mkdtemp '/home/genie/.local/share/mikro-engine-split/experiments-g8/native-runs/g8-native-smoke-pnpm/tmp/skill-metadata-QXurDo'\n933:error: EROFS: read-only file system, mkdtemp '/home/genie/.local/share/mikro-engine-split/experiments-g8/native-runs/g8-native-smoke-pnpm/tmp/skill-metadata-T6HcMh'\n952:error: EROFS: read-only file system, mkdtemp '/home/genie/.local/share/mikro-engine-split/experiments-g8/native-runs/g8-native-smoke-pnpm/tmp/skill-metadata-iSE2yS'\n976:error: EROFS: read-only file system, mkdtemp '/home/genie/.local/share/mikro-engine-split/experiments-g8/native-runs/g8-native-smoke-pnpm/tmp/skills-lint-tokens-D10KSC'\n995:error: EROFS: read-only file system, mkdtemp '/home/genie/.local/share/mikro-engine-split/experiments-g8/native-runs/g8-native-smoke-pnpm/tmp/skills-lint-tokens-lXUSFe'\n1014:error: EROFS: read-only file system, mkdtemp '/home/genie/.local/share/mikro-engine-split/experiments-g8/native-runs/g8-native-smoke-pnpm/tmp/skills-lint-tokens-m5oPeV'\n1033:error: EROFS: read-only file system, mkdtemp '/home/genie/.local/share/mikro-engine-split/experiments-g8/native-runs/g8-native-smoke-pnpm/tmp/skills-lint-tokens-jmdXUt'\n1052:error: EROFS: read-only file system, mkdtemp '/home/genie/.local/share/mikro-engine-split/experiments-g8/native-runs/g8-native-smoke-pnpm/tmp/skills-lint-tokens-5t5znm'\n1071:error: EROFS: read-only file system, mkdtemp '/home/genie/.local/share/mikro-engine-split/experiments-g8/native-runs/g8-native-smoke-pnpm/tmp/skills-lint-tokens-jvikH7'\n1090:error: EROFS: read-only file system, mkdtemp '/home/genie/.local/share/mikro-engine-split/experiments-g8/native-runs/g8-native-smoke-pnpm/tmp/skills-lint-tokens-4jhlNW'\n1109:error: EROFS: read-only file system, mkdtemp '/home/genie/.local/share/mikro-engine-split/experiments-g8/native-runs/g8-native-smoke-pnpm/tmp/skills-lint-tokens-KejzEd'\n1128:error: EROFS: read-only file system, mkdtemp '/home/genie/.local/share/mikro-engine-split/experiments-g8/native-runs/g8-native-smoke-pnpm/tmp/skills-lint-tokens-rYZQVP'\n1147:error: EROFS: read-only file system, mkdtemp '/home/genie/.local/share/mikro-engine-split/experiments-g8/native-runs/g8-native-smoke-pnpm/tmp/skills-lint-tokens-zcSGUw'\n1166:error: EROFS: read-only file system, mkdtemp '/home/genie/.local/share/mikro-engine-split/experiments-g8/native-runs/g8-native-smoke-pnpm/tmp/skills-lint-tokens-me6DIs'\n1185:error: EROFS: read-only file system, mkdtemp '/home/genie/.local/share/mikro-engine-split/experiments-g8/native-runs/g8-native-smoke-pnpm/tmp/skills-lint-tokens-eYdSmQ'\n1204:error: EROFS: read-only file system, mkdtemp '/home/genie/.local/share/mikro-engine-split/experiments-g8/native-runs/g8-native-smoke-pnpm/tmp/skills-lint-tokens-6lSa1g'\n1223:error: EROFS: read-only file system, mkdtemp '/home/genie/.local/share/mikro-engine-split/experiments-g8/native-runs/g8-native-smoke-pnpm/tmp/skills-lint-tokens-IMg2BS'\n1242:error: EROFS: read-only file system, mkdtemp '/home/genie/.local/share/mikro-engine-split/experiments-g8/native-runs/g8-native-smoke-pnpm/tmp/skills-lint-tokens-EvsTjn'\n1261:error: EROFS: read-only file system, mkdtemp '/home/genie/.local/share/mikro-engine-split/experiments-g8/native-runs/g8-native-smoke-pnpm/tmp/skills-lint-tokens-yDv3H8'\n1280:error: EROFS: read-only file system, mkdtemp '/home/genie/.local/share/mikro-engine-split/experiments-g8/native-runs/g8-native-smoke-pnpm/tmp/skills-lint-tokens-QYnMEj'\n1299:error: EROFS: read-only file system, mkdtemp '/home/genie/.local/share/mikro-engine-split/experiments-g8/native-runs/g8-native-smoke-pnpm/tmp/skills-lint-tokens-qI00HE'\n1318:error: EROFS: read-only file system, mkdtemp '/home/genie/.local/share/mikro-engine-split/experiments-g8/native-runs/g8-native-smoke-pnpm/tmp/skills-lint-tokens-4VcTAC'\n1337:error: EROFS: read-only file system, mkdtemp '/home/genie/.local/share/mikro-engine-split/experiments-g8/native-runs/g8-native-smoke-pnpm/tmp/skills-lint-tokens-vwwzfT'\n1357:error: EROFS: read-only file system, mkdtemp '/home/genie/.local/share/mikro-engine-split/experiments-g8/native-runs/g8-native-smoke-pnpm/tmp/skills-lint-taxonomy-UjLaSA'\n1376:error: EROFS: read-only file system, mkdtemp '/home/genie/.local/share/mikro-engine-split/experiments-g8/native-runs/g8-native-smoke-pnpm/tmp/skills-lint-taxonomy-HGuLSW'\n1395:error: EROFS: read-only file system, mkdtemp '/home/genie/.local/share/mikro-engine-split/experiments-g8/native-runs/g8-native-smoke-pnpm/tmp/skills-lint-taxonomy-FmRcJH'\n1414:error: EROFS: read-only file system, mkdtemp '/home/genie/.local/share/mikro-engine-split/experiments-g8/native-runs/g8-native-smoke-pnpm/tmp/skills-lint-taxonomy-u7U6VD'\n1433:error: EROFS: read-only file system, mkdtemp '/home/genie/.local/share/mikro-engine-split/experiments-g8/native-runs/g8-native-smoke-pnpm/tmp/skills-lint-taxonomy-FopZ8a'\n1456:error: EROFS: read-only file system, mkdtemp '/home/genie/.local/share/mikro-engine-split/experiments-g8/native-runs/g8-native-smoke-pnpm/tmp/skills-lint-mutates-T257bF'\n"
+              }
+            ],
+            "isError": false,
+            "id": "dd8c4807-7a94-4b5b-9681-e18c14a02049"
+          }
+        },
+        "sourceEventSeqs": [
+          72
+        ],
+        "surfaceOp": "append"
+      }
+    },
+    {
+      "sessionId": "68543100-e336-4acc-a84d-1e3b515b7575",
+      "seq": 81,
+      "event": {
+        "type": "tool/result",
+        "seq": 81,
+        "time": 1791261102528,
+        "data": {
+          "turn": 1,
+          "step": 10,
+          "message": {
+            "role": "tool",
+            "source": {
+              "kind": "tool",
+              "callId": "call_00_H5EXoHTq2c0iHRXxGpRW5340"
+            },
+            "toolCallId": "call_00_H5EXoHTq2c0iHRXxGpRW5340",
+            "content": [
+              {
+                "type": "text",
+                "text": "== primary summary lines ==\n33864: 1166 pass\n33865: 2 skip\n33866: 1979 fail\n33867: 2 errors\n33869:Ran 3147 tests across 156 files. [13.93s]\n== non-EROFS error lines ==\n2624:error: expect(received).toEqual(expected)\n6874:error: expect(received).toContain(expected)\n33870:error: script \"check\" exited with code 1\n== error line count ==\n1804\n== EROFS count ==\n2187\n== line count ==\n33870 /home/genie/.local/share/mikro-engine-split/experiments-g8/native-repositories/g8-native-smoke/.git/worktrees/wish-g8-native-smoke/g8-gate-scratch/check.log\n"
+              }
+            ],
+            "isError": false,
+            "id": "d68e993f-a7f8-4751-a10b-5a37c23c60f1"
+          }
+        },
+        "sourceEventSeqs": [
+          80
+        ],
+        "surfaceOp": "append"
+      }
+    },
+    {
+      "sessionId": "68543100-e336-4acc-a84d-1e3b515b7575",
+      "seq": 95,
+      "event": {
+        "type": "tool/result",
+        "seq": 95,
+        "time": 1791261112032,
+        "data": {
+          "turn": 1,
+          "step": 12,
+          "message": {
+            "role": "tool",
+            "source": {
+              "kind": "tool",
+              "callId": "call_00_N00tPELUUNb1UWfd1D2z1070"
+            },
+            "toolCallId": "call_00_N00tPELUUNb1UWfd1D2z1070",
+            "content": [
+              {
+                "type": "text",
+                "text": "== lines 685-700 ==\n\nRetained hotspots (score, location, function):\n  -  26  src/genie-commands/doctor.ts:1211 codexPluginSurfaceChecks\n\nOK: budget intact.\nbun test v1.3.14 (0d9b296a)\n\nsrc/genie.test.ts:\n13 | \n14 | describe('genie CLI registration', () => {\n15 |   let fxHome: string;\n16 | \n17 |   beforeEach(() => {\n18 |     fxHome = mkdtempSync(join(tmpdir(), 'genie-cli-reg-'));\n                  ^\nerror: EROFS: read-only file system, mkdtemp '/home/genie/.local/share/mikro-engine-split/experiments-g8/native-runs/g8-native-smoke-pnpm/tmp/genie-cli-reg-pS11tj'\n== lines 33855-33870 ==\n(fail) openSqlite migration ladder > each step stamps its own `to` inside its own transaction [0.07ms]\n(fail) openSqlite migration ladder > a step that throws rolls back its DDL AND its stamp [0.06ms]\n(fail) openSqlite migration ladder > two concurrent openers converge: one migration, no corruption, both current [0.07ms]\n(fail) openSqlite migration ladder > `migrate: false` declines with PendingMigrationError and changes nothing [0.08ms]\n(fail) openSqlite migration ladder > `migrate: false` on a database the ladder could NOT bridge still throws ForeignDbError [0.07ms]\n(fail) openSqlite migration ladder > `beforeMigrate` runs once, before any step, and a throw there aborts untouched [0.07ms]\n(fail) openSqlite migration ladder > the newer-build refusal carries the exact documented sentence [0.07ms]\n(fail) openSqlite migration ladder > a database from a NEWER build names the remedy, not \"unrecognized\" [0.06ms]\n\n 1166 pass\n 2 skip\n 1979 fail\n 2 errors\n 6043 expect() calls\nRan 3147 tests across 156 files. [13.93s]\nerror: script \"check\" exited with code 1\n== distinct test-file header lines ==\n156\n== count of fail markers in first half (stream) ==\n3955\n== count of fail markers in summary region ==\n2\n"
+              }
+            ],
+            "isError": false,
+            "id": "67040ed3-785d-4daa-a078-14cc47d95880"
+          }
+        },
+        "sourceEventSeqs": [
+          94
+        ],
+        "surfaceOp": "append"
+      }
+    },
+    {
+      "sessionId": "68543100-e336-4acc-a84d-1e3b515b7575",
+      "seq": 113,
+      "event": {
+        "type": "tool/result",
+        "seq": 113,
+        "time": 1791261130637,
+        "data": {
+          "turn": 1,
+          "step": 15,
+          "message": {
+            "role": "tool",
+            "source": {
+              "kind": "tool",
+              "callId": "call_00_7cHhqtjqVXIhR27lVkkm2047"
+            },
+            "toolCallId": "call_00_7cHhqtjqVXIhR27lVkkm2047",
+            "content": [
+              {
+                "type": "text",
+                "text": "== fail markers by line range before summary ==\n3955\n== line count ==\n33870 /home/genie/.local/share/mikro-engine-split/experiments-g8/native-repositories/g8-native-smoke/.git/worktrees/wish-g8-native-smoke/g8-gate-scratch/check.log\n== around card-render header 31869 ==\n25 | });\n26 | \n27 | afterEach(() => {\n28 |   rmSync(base, { recursive: true, force: true });\n       ^\nTypeError: path must be a string or TypedArray\n      at <anonymous> (/home/genie/.local/share/mikro-engine-split/experiments-g8/native-repositories/g8-native-smoke/.claude/worktrees/wish-g8-native-smoke/src/lib/v5/sqlite-open.test.ts:28:3)\n(fail) openSqlite migration ladder > a database from a NEWER build names the remedy, not \"unrecognized\" [0.06ms]\n\nsrc/lib/v5/card-render.test.ts:\n(pass) livenessBadge > unclaimed cards carry no liveness glyph [2.61ms]\n(pass) livenessBadge > claimed cards map heartbeat age to \u25b6 / \u23f8 / \u2620 [0.18ms]\n(pass) blockBadge > a deps-blocked card (no stored blocker) renders \u26d4 deps (render-derived) [0.09ms]\n(pass) blockBadge > a stored block renders provenance + reason [0.07ms]\n(pass) blockBadge > an unblocked, non-blocked card renders no \u26d4 [0.04ms]\n(pass) commentBadge + cardBadges assembly > commentBadge appears only for a positive count [0.05ms]\n(pass) commentBadge + cardBadges assembly > cardBadges concatenates liveness, block, then comments; empty when none [0.31ms]\n\n2 tests skipped:\n(skip) live boundary: the facts context file (skipped without bwrap + the mikro runtime) > a facts file under the trusted root is readable inside the sandbox and cannot be written\n(skip) live boundary: the facts context file (skipped without bwrap + the mikro runtime) > git runs inside the sandbox over a linked worktree, which is what the facts scan needs\n\n\n1979 tests failed:\n(fail) genie CLI registration > update --help registers the explicit --sync-only compatibility surface [0.69ms]\n(fail) genie CLI registration > hidden post-delivery mode converges locally without entering channel/network delivery [0.12ms]\n(fail) genie CLI registration > init --help discloses every project MCP file it may reconcile [0.08ms]\n(fail) genie CLI registration > doctor --fix help discloses its tighten-only scope and refusal conditions [0.12ms]\n(fail) genie CLI registration > update rejects an unknown flag with a nonzero exit (pre-contract binaries error, not update) [0.09ms]\n(fail) genie CLI registration > conflicting update modes return one user-facing parser error without a stack trace [0.07ms]\n(fail) genie CLI registration > hidden post-delivery mode rejects delivery and compatibility flags before action [0.06ms]\n== around 30000 ==\n88 |   dir = mkdtempSync(join(tmpdir(), 'genie-task-'));\n             ^\nerror: EROFS: read-only file system, mkdtemp '/home/genie/.local/share/mikro-engine-split/experiments-g8/native-runs/g8-native-smoke-pnpm/tmp/genie-task-J30q75'\n      at <anonymous> (/home/genie/.local/share/mikro-engine-split/experiments-g8/native-repositories/g8-native-smoke/.claude/worktrees/wish-g8-native-smoke/src/lib/v5/task-state.test.ts:88:9)\n91 |   process.env.GENIE_HOME = genieHome;\n92 |   db = openDb({ path: join(dir, 'genie.db') });\n93 | });\n94 | \n95 | afterEach(() => {\n96 |   db.close();\n       ^\nTypeError: undefined is not an object (evaluating 'db.close')\n      at <anonymous> (/home/genie/.local/share/mikro-engine-split/experiments-g8/native-repositories/g8-native-smoke/.claude/worktrees/wish-g8-native-smoke/src/lib/v5/task-state.test.ts:96:3)\n(fail) atomic checkout claim (single process) > a second claim on a fresh claim raises CheckoutConflictError [0.11ms]\n83 |  */\n84 | let genieHome: string;\n85 | let previousGenieHome: string | undefined;\n86 | \n87 | beforeEach(() => {\n88 |   dir = mkdtempSync(join(tmpdir(), 'genie-task-'));\n             ^\n== distinct test-file header count in file ==\n156\n"
+              }
+            ],
+            "isError": false,
+            "id": "8b18f706-a65a-49b7-9964-a0191d0b4667"
+          }
+        },
+        "sourceEventSeqs": [
+          112
+        ],
+        "surfaceOp": "append"
+      }
+    },
+    {
+      "sessionId": "68543100-e336-4acc-a84d-1e3b515b7575",
+      "seq": 125,
+      "event": {
+        "type": "tool/result",
+        "seq": 125,
+        "time": 1791261143369,
+        "data": {
+          "turn": 1,
+          "step": 17,
+          "message": {
+            "role": "tool",
+            "source": {
+              "kind": "tool",
+              "callId": "call_00_i9bCkeVwOqaeFTIMDpQb6092"
+            },
+            "toolCallId": "call_00_i9bCkeVwOqaeFTIMDpQb6092",
+            "content": [
+              {
+                "type": "text",
+                "text": "== context of non-EROFS errors ==\n--- line 2624 ---\n1594 |   test('every state was reached by the scenarios above', () => {\n1595 |     expect([...seenStates].sort()).toEqual([...STATES].sort());\n                                          ^\nerror: expect(received).toEqual(expected)\n\n--- line 6874 ---\n88 |     // Surface the failure reason if this ever regresses.\n89 |     expect(result.stdout + result.stderr).toContain('fresh-install-smoke: OK');\n                                               ^\nerror: expect(received).toContain(expected)\n\n== unhandled error blocks ==\n4536:# Unhandled error between tests\n24996:# Unhandled error between tests\n== metrics-export failures with context ==\n17636:src/lib/metrics-export.test.ts:\n17645:      at <anonymous> (/home/genie/.local/share/mikro-engine-split/experiments-g8/native-repositories/g8-native-smoke/.claude/worktrees/wish-g8-native-smoke/src/lib/metrics-export.test.ts:22:10)\n17654:      at <anonymous> (/home/genie/.local/share/mikro-engine-split/experiments-g8/native-repositories/g8-native-smoke/.claude/worktrees/wish-g8-native-smoke/src/lib/metrics-export.test.ts:32:3)\n17664:      at <anonymous> (/home/genie/.local/share/mikro-engine-split/experiments-g8/native-repositories/g8-native-smoke/.claude/worktrees/wish-g8-native-smoke/src/lib/metrics-export.test.ts:22:10)\n17673:      at <anonymous> (/home/genie/.local/share/mikro-engine-split/experiments-g8/native-repositories/g8-native-smoke/.claude/worktrees/wish-g8-native-smoke/src/lib/metrics-export.test.ts:32:3)\n17683:      at <anonymous> (/home/genie/.local/share/mikro-engine-split/experiments-g8/native-repositories/g8-native-smoke/.claude/worktrees/wish-g8-native-smoke/src/lib/metrics-export.test.ts:22:10)\n17692:      at <anonymous> (/home/genie/.local/share/mikro-engine-split/experiments-g8/native-repositories/g8-native-smoke/.claude/worktrees/wish-g8-native-smoke/src/lib/metrics-export.test.ts:32:3)\n17702:      at <anonymous> (/home/genie/.local/share/mikro-engine-split/experiments-g8/native-repositories/g8-native-smoke/.claude/worktrees/wish-g8-native-smoke/src/lib/metrics-export.test.ts:22:10)\n17711:      at <anonymous> (/home/genie/.local/share/mikro-engine-split/experiments-g8/native-repositories/g8-native-smoke/.claude/worktrees/wish-g8-native-smoke/src/lib/metrics-export.test.ts:32:3)\n17721:      at <anonymous> (/home/genie/.local/share/mikro-engine-split/experiments-g8/native-repositories/g8-native-smoke/.claude/worktrees/wish-g8-native-smoke/src/lib/metrics-export.test.ts:22:10)\n17730:      at <anonymous> (/home/genie/.local/share/mikro-engine-split/experiments-g8/native-repositories/g8-native-smoke/.claude/worktrees/wish-g8-native-smoke/src/lib/metrics-export.test.ts:32:3)\n17740:      at <anonymous> (/home/genie/.local/share/mikro-engine-split/experiments-g8/native-repositories/g8-native-smoke/.claude/worktrees/wish-g8-native-smoke/src/lib/metrics-export.test.ts:22:10)\n17749:      at <anonymous> (/home/genie/.local/share/mikro-engine-split/experiments-g8/native-repositories/g8-native-smoke/.claude/worktrees/wish-g8-native-smoke/src/lib/metrics-export.test.ts:32:3)\n17759:      at <anonymous> (/home/genie/.local/share/mikro-engine-split/experiments-g8/native-repositories/g8-native-smoke/.claude/worktrees/wish-g8-native-smoke/src/lib/metrics-export.test.ts:22:10)\n17768:      at <anonymous> (/home/genie/.local/share/mikro-engine-split/experiments-g8/native-repositories/g8-native-smoke/.claude/worktrees/wish-g8-native-smoke/src/lib/metrics-export.test.ts:32:3)\n17778:      at <anonymous> (/home/genie/.local/share/mikro-engine-split/experiments-g8/native-repositories/g8-native-smoke/.claude/worktrees/wish-g8-native-smoke/src/lib/metrics-export.test.ts:22:10)\n17787:      at <anonymous> (/home/genie/.local/share/mikro-engine-split/experiments-g8/native-repositories/g8-native-smoke/.claude/worktrees/wish-g8-native-smoke/src/lib/metrics-export.test.ts:32:3)\n17797:      at <anonymous> (/home/genie/.local/share/mikro-engine-split/experiments-g8/native-repositories/g8-native-smoke/.claude/worktrees/wish-g8-native-smoke/src/lib/metrics-export.test.ts:22:10)\n17806:      at <anonymous> (/home/genie/.local/share/mikro-engine-split/experiments-g8/native-repositories/g8-native-smoke/.claude/worktrees/wish-g8-native-smoke/src/lib/metrics-export.test.ts:32:3)\n17816:      at <anonymous> (/home/genie/.local/share/mikro-engine-split/experiments-g8/native-repositories/g8-native-smoke/.claude/worktrees/wish-g8-native-smoke/src/lib/metrics-export.test.ts:22:10)\n17825:      at <anonymous> (/home/genie/.local/share/mikro-engine-split/experiments-g8/native-repositories/g8-native-smoke/.claude/worktrees/wish-g8-native-smoke/src/lib/metrics-export.test.ts:32:3)\n17835:      at <anonymous> (/home/genie/.local/share/mikro-engine-split/experiments-g8/native-repositories/g8-native-smoke/.claude/worktrees/wish-g8-native-smoke/src/lib/metrics-export.test.ts:22:10)\n17844:      at <anonymous> (/home/genie/.local/share/mikro-engine-split/experiments-g8/native-repositories/g8-native-smoke/.claude/worktrees/wish-g8-native-smoke/src/lib/metrics-export.test.ts:32:3)\n17854:      at <anonymous> (/home/genie/.local/share/mikro-engine-split/experiments-g8/native-repositories/g8-native-smoke/.claude/worktrees/wish-g8-native-smoke/src/lib/metrics-export.test.ts:22:10)\n17863:      at <anonymous> (/home/genie/.local/share/mikro-engine-split/experiments-g8/native-repositories/g8-native-smoke/.claude/worktrees/wish-g8-native-smoke/src/lib/metrics-export.test.ts:32:3)\n17873:      at <anonymous> (/home/genie/.local/share/mikro-engine-split/experiments-g8/native-repositories/g8-native-smoke/.claude/worktrees/wish-g8-native-smoke/src/lib/metrics-export.test.ts:22:10)\n17882:      at <anonymous> (/home/genie/.local/share/mikro-engine-split/experiments-g8/native-repositories/g8-native-smoke/.claude/worktrees/wish-g8-native-smoke/src/lib/metrics-export.test.ts:32:3)\n17892:      at <anonymous> (/home/genie/.local/share/mikro-engine-split/experiments-g8/native-repositories/g8-native-smoke/.claude/worktrees/wish-g8-native-smoke/src/lib/metrics-export.test.ts:22:10)\n17901:      at <anonymous> (/home/genie/.local/share/mikro-engine-split/experiments-g8/native-repositories/g8-native-smoke/.claude/worktrees/wish-g8-native-smoke/src/lib/metrics-export.test.ts:32:3)\n17911:      at <anonymous> (/home/genie/.local/share/mikro-engine-split/experiments-g8/native-repositories/g8-native-smoke/.claude/worktrees/wish-g8-native-smoke/src/lib/metrics-export.test.ts:22:10)\n17920:      at <anonymous> (/home/genie/.local/share/mikro-engine-split/experiments-g8/native-repositories/g8-native-smoke/.claude/worktrees/wish-g8-native-smoke/src/lib/metrics-export.test.ts:32:3)\n17930:      at <anonymous> (/home/genie/.local/share/mikro-engine-split/experiments-g8/native-repositories/g8-native-smoke/.claude/worktrees/wish-g8-native-smoke/src/lib/metrics-export.test.ts:22:10)\n17939:      at <anonymous> (/home/genie/.local/share/mikro-engine-split/experiments-g8/native-repositories/g8-native-smoke/.claude/worktrees/wish-g8-native-smoke/src/lib/metrics-export.test.ts:32:3)\n17949:      at <anonymous> (/home/genie/.local/share/mikro-engine-split/experiments-g8/native-repositories/g8-native-smoke/.claude/worktrees/wish-g8-native-smoke/src/lib/metrics-export.test.ts:22:10)\n17958:      at <anonymous> (/home/genie/.local/share/mikro-engine-split/experiments-g8/native-repositories/g8-native-smoke/.claude/worktrees/wish-g8-native-smoke/src/lib/metrics-export.test.ts:32:3)\n17968:      at <anonymous> (/home/genie/.local/share/mikro-engine-split/experiments-g8/native-repositories/g8-native-smoke/.claude/worktrees/wish-g8-native-smoke/src/lib/metrics-export.test.ts:22:10)\n17977:      at <anonymous> (/home/genie/.local/share/mikro-engine-split/experiments-g8/native-repositories/g8-native-smoke/.claude/worktrees/wish-g8-native-smoke/src/lib/metrics-export.test.ts:32:3)\n17655: (fail) runtime session logs \u2192 usage samples > claude-code: one sample per message id (the last streamed record), subagent logs included [0.34ms]\n17674: (fail) runtime session logs \u2192 usage samples > codex: one sample per moved cumulative total (re-emitted token_count skipped), cached input split out [0.10ms]\n17693: (fail) runtime session logs \u2192 usage samples > pi/OMP: assistant message usage with the runtime\u2019s own cost, sibling subagent logs included [0.10ms]\n17712: (fail) runtime session logs \u2192 usage samples > no runtime, or no log on this host: no samples (unknown, never zero) [0.10ms]\n17731: (fail) ledger \u2192 verified intervals > a rolled-back line whose event id was reused is unmatched, never attributed [0.08ms]\n17750: (fail) ledger \u2192 verified intervals > intervals carry the opening session\u2019s usage inside the window; no log \u2192 usage null [0.16ms]\n17769: (fail) ledger \u2192 verified intervals > an OMP shell exported no session id: its usage joins by the one OMP session in that cwd, else stays null [0.08ms]\n17788: (fail) ledger \u2192 verified intervals > a window match with no call inside the interval is unknown, never 0; a nested-shell line is ambiguous [0.08ms]\n17807: (fail) ledger \u2192 verified intervals > the OMP window join needs a session alive at the opening event, and never reads pi logs [0.08ms]\n17826: (fail) ledger \u2192 verified intervals > mikro offload runs inside the window are priced on the interval; a repo with no mikro ledger is unknown [0.08ms]\n17845: (fail) ledger \u2192 verified intervals > offload: an unpriced attempt makes the bill unknown; another card in the same window makes runs ambiguous; registered worktrees and GENIE_HOME ledgers count [0.08ms]\n17864: (fail) ledger \u2192 verified intervals > offload: an unreadable ledger, alone or beside readable ones, is unknown \u2014 never a measured 0 [0.08ms]\n17883: (fail) ledger \u2192 verified intervals > offload: a directory-only ledger set is no ledger; a readable empty ledger beside it is a measured 0 [0.09ms]\n17902: (fail) ledger \u2192 verified intervals > a corrupt ledger line is counted, and --since drops older lines [0.08ms]\n17921: (fail) Phoenix projection > a target needs an http(s) endpoint, a project and at most an env var NAME for the key [0.10ms]\n17940: (fail) Phoenix projection > the install salt is random, persisted 0600 and stable across calls [0.08ms]\n17959: (fail) Phoenix projection > span ids are deterministic per install and the repo path is hashed, never sent [0.11ms]\n17978: (fail) Phoenix projection > posts only ids Phoenix does not hold and reports what never read back [0.08ms]\n"
+              }
+            ],
+            "isError": false,
+            "id": "a0b0f3e3-9f96-4ccb-999f-286dfcb6c164"
+          }
+        },
+        "sourceEventSeqs": [
+          124
+        ],
+        "surfaceOp": "append"
+      }
+    },
+    {
+      "sessionId": "ea903608-9957-4372-9d4c-6cba2f2a491d",
+      "seq": 17,
+      "event": {
+        "type": "tool/result",
+        "seq": 17,
+        "time": 1791261218387,
+        "data": {
+          "turn": 1,
+          "step": 1,
+          "message": {
+            "role": "tool",
+            "source": {
+              "kind": "tool",
+              "callId": "call_00_ET_742hDcDoDnUoZQuujmfv2422"
+            },
+            "toolCallId": "call_00_ET_742hDcDoDnUoZQuujmfv2422",
+            "content": [
+              {
+                "type": "text",
+                "text": "[stderr]\n517 | `)}notify(method,params={}){this.send({jsonrpc:\"2.0\",method,params})}request(method,params,timeoutMs){let id=this.nextId++;return new Promise((resolve20,reject)=>{let timer=setTimeout(()=>{this.pending.delete(id),reject(Error(`${method} timed out after ${timeoutMs}ms`))},timeoutMs);this.pending.set(id,{resolve:(v)=>{clearTimeout(timer),resolve20(v)},reject:(e)=>{clearTimeout(timer),reject(e)}}),this.send({jsonrpc:\"2.0\",id,method,params})})}close(){try{this.proc.kill()}catch{}}}function parseEngine(value){if(value!==\"rlm\"&&value!==\"pi\"&&value!==\"prime\"&&value!==\"prime-sdk\")throw Error(\"engine must be rlm, pi, prime, or prime-sdk\");return value}function parseEngineFlag(argv){let indexes=argv.flatMap((arg,i)=>arg===\"--engine\"||arg.startsWith(\"--engine=\")?[i]:[]);if(indexes.length>1)throw Error(\"--engine may only be supplied once\");if(!indexes.length)return;let token=argv[indexes[0]];return parseEngine(token.startsWith(\"--engine=\")?token.slice(9):argv[indexes[0]+1])}function factsContextPath(option,runsDir,runId)\n518 | `),writeFileSync20(contextPath,renderFacts(facts)),{path:path2,contextPath,candidates:facts.candidates.length,ms:Date.now()-t0,gh:facts.basis.gh}}var RAW_CAP_BYTES=1048576,RAW_TRUNCATION_MARKER=`\n519 | [truncated by scripts/mikro/call.ts at ${RAW_CAP_BYTES} bytes]\n520 | `;function persistFailedRaw(runsDir,runId,attempt,raw){if(!raw)return;try{let marker=Buffer.from(RAW_TRUNCATION_MARKER,\"utf8\"),full=Buffer.from(raw,\"utf8\"),truncated=full.length>RAW_CAP_BYTES,bytes=truncated?Buffer.concat([full.subarray(0,RAW_CAP_BYTES-marker.length),marker]):full;mkdirSync21(runsDir,{recursive:!0});let path2=join43(runsDir,`raw-${runId}-${attempt}.txt`);return writeFileSync20(path2,bytes),{path:path2,bytes:bytes.length,sha256:createHash17(\"sha256\").update(bytes).digest(\"hex\"),truncated}}catch(error2){process.stderr.write(`raw: not retained (${error2 instanceof Error?error2.message:String(error2)})\n521 | `);return}}var sha=(text)=>createHash17(\"sha256\").update(text).digest(\"hex\").slice(0,12),PRICE_BASIS=\"deepseek-list-2026-09-18-peak\",cachedKeyEnv=null;function providerKeyEnv(){if(cachedKeyEnv)return cachedKeyEnv;if(cachedKeyEnv={},process.env.DEEPSEEK_API_KEY)return cachedKeyEnv;let gate=join43(process.env.HOME??\"\",\".mikro\",\"gate-env.sh\");if(!existsSync25(gate))return cachedKeyEnv;try{let script=`source \"${gate.replace(/\"/g,\"\\\\\\\"\")}\" >/dev/null 2>&1; printf %s \"$DEEPSEEK_API_KEY\"`,out4=Bun.spawnSync([\"bash\",\"-lc\",script],{env:process.env}).stdout.toString().trim();if(out4)cachedKeyEnv={DEEPSEEK_API_KEY:out4}}catch{}return cachedKeyEnv}function toolName(agent){return`mikro_${agent.toLowerCase().replace(/[^a-z0-9_-]/g,\"_\")}`}var cachedGhToken=null;function ghTokenEnv(){if(cachedGhToken)return cachedGhToken;if(cachedGhToken={},process.env.GH_TOKEN)return cachedGhToken={GH_TOKEN:process.env.GH_TOKEN},cachedGhToken;try{let probe=Bun.spawnSync([\"gh\",\"auth\",\"token\"],{env:process.env}),token=probe.exitCode===0?probe\n522 | `),result.isError)errors3.push(`tool error: ${raw.slice(0,300)}`);if(footer=parseFooter(raw),!footer)errors3.push(\"no cost footer in the answer\");else if(cost+=footer.cost,footer.budgetHit)errors3.push(`budget hit: ${footer.budgetHit}`);let body=stripFooter(raw);if(!body.trim())errors3.push(\"empty answer\");let extracted=extractJson(body);if(extracted.error)errors3.push(extracted.error);else if(schema){let parsed=schema.safeParse(extracted.value);if(!parsed.success)for(let issue of parsed.error.issues.slice(0,12))errors3.push(`schema: ${issue.path.join(\".\")||\"(root)\"} \\u2014 ${issue.message}`);else{citations=verifyCitations(parsed.data,dir),answer=verifyStatus(applyResolutions(parsed.data,citations),statusGate),statusRow=statusLedgerRow(answer);for(let c of citations.filter((x)=>!x.ok))errors3.push(`citation: ${c.path}${c.line?`:${c.line}`:\"\"} \\u2014 ${c.reason}`)}}else{citations=verifyCitations(extracted.value,dir),answer=verifyStatus(applyResolutions(extracted.value,citations),statusGate),statusRow=statusLed\n\nEROFS: read-only file system, mkdir '/home/genie/.local/share/mikro-engine-split/experiments-g8/caller-trust/g8-native-smoke/.mikro/runs'\n    path: \"/home/genie/.local/share/mikro-engine-split/experiments-g8/caller-trust/g8-native-smoke/.mikro/runs\",\n syscall: \"mkdir\",\n   errno: -30,\n    code: \"EROFS\"\n\n      at runAgent (/home/genie/orca/workspaces/genie/mikro-engine-split/dist/genie.js:522:1744)\n      at async runCallCli (/home/genie/orca/workspaces/genie/mikro-engine-split/dist/genie.js:531:42)\n      at async <anonymous> (/home/genie/orca/workspaces/genie/mikro-engine-split/dist/genie.js:825:627)\nnote: missing sourcemaps for /home/genie/orca/workspaces/genie/mikro-engine-split/dist/genie.js\nnote: consider bundling with '--sourcemap' to get unminified traces\n\nBun v1.3.14 (Linux x64)\n[sandbox: file access denied under workspace-write mode]\n[sandbox: escalation available \u2014 retry this exact command once with sandbox_permissions (the narrowest wider mode that suffices) + justification; the approval prompt asks the user]\n[exit code: 1]"
+              }
+            ],
+            "isError": false,
+            "id": "ad540daf-d0d1-43dd-8cf8-f6fca89a637b"
+          }
+        },
+        "sourceEventSeqs": [
+          16
+        ],
+        "surfaceOp": "append"
+      }
+    },
+    {
+      "sessionId": "f5edd679-bf94-4d60-a7e9-30caaa3b4a9e",
+      "seq": 68,
+      "event": {
+        "type": "tool/result",
+        "seq": 68,
+        "time": 1791261316201,
+        "data": {
+          "turn": 1,
+          "step": 7,
+          "message": {
+            "role": "tool",
+            "source": {
+              "kind": "tool",
+              "callId": "call_00_yGm2kvw3RRcZvhi8dX2R4222"
+            },
+            "toolCallId": "call_00_yGm2kvw3RRcZvhi8dX2R4222",
+            "content": [
+              {
+                "type": "text",
+                "text": "33870 /home/genie/.local/share/mikro-engine-split/experiments-g8/native-repositories/g8-native-smoke/.git/worktrees/wish-g8-native-smoke/g8-gate-scratch/check.log\n=== head ===\n$ bun run typecheck && bun run lint && bun run dead-code && bun run skills:lint && bun run wishes:lint && bun run lint:complexity-budget && bun test\n$ tsc --noEmit && tsc --noEmit -p plugins/dsh-genie-board/tsconfig.json && tsc --noEmit -p plugins/dsh-workflow-loader/tsconfig.json\n$ biome check .\n./src/genie-commands/doctor.ts:1211:10 lint/complexity/noExcessiveCognitiveComplexity \u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\n\n  ! Excessive complexity of 26 detected (max: 25).\n  \n    1209 \u2502  * active plugin manifest must declare no `mcpServers` route. Read-only.\n    1210 \u2502  */\n  > 1211 \u2502 function codexPluginSurfaceChecks(probe: CodexPluginProbe): CheckResult[] {\n         \u2502          ^^^^^^^^^^^^^^^^^^^^^^^^\n    1212 \u2502   if (!probe.installed) return [];\n    1213 \u2502   const manifest = probe.activePluginRoot ? join(probe.activePluginRoot, '.codex-plugin', 'plugin.json') : null;\n  \n  i Please refactor this function to reduce its complexity score from 26 to the max allowed complexity 25.\n  \n\nChecked 324 files in 297ms. No fixes applied.\nFound 1 warning.\n$ bunx knip\nConfiguration hints (2)\nreact                                    knip.json  Remove from ignoreDependencies\nplugins/dsh-genie-board/build.test.ts    knip.json  Remove redundant entry pattern\n$ bun run scripts/skills-lint.ts\n[\n  {\n    \"skill\": \"skills/brainstorm/references/without-a-workflow.md\",\n    \"missingCommands\": [],\n    \"resourceViolations\": [],\n    \"metadataViolations\": [],\n    \"bannedTokens\": [],\n    \"mutationViolations\": [],\n    \"hazardViolations\": []\n  },\n  {\n    \"skill\": \"skills/brainstorm/references/design-template.md\",\n    \"missingCommands\": [],\n    \"resourceViolations\": [],\n    \"metadataViolations\": [],\n    \"bannedTokens\": [],\n=== non-EROFS error lines ===\n2624:error: expect(received).toEqual(expected)\n6874:error: expect(received).toContain(expected)\n33870:error: script \"check\" exited with code 1\n"
+              }
+            ],
+            "isError": false,
+            "id": "ecabfe54-0db2-4550-8c49-72459ff44086"
+          }
+        },
+        "sourceEventSeqs": [
+          67
+        ],
+        "surfaceOp": "append"
+      }
+    },
+    {
+      "sessionId": "f5edd679-bf94-4d60-a7e9-30caaa3b4a9e",
+      "seq": 74,
+      "event": {
+        "type": "tool/result",
+        "seq": 74,
+        "time": 1791261319071,
+        "data": {
+          "turn": 1,
+          "step": 8,
+          "message": {
+            "role": "tool",
+            "source": {
+              "kind": "tool",
+              "callId": "call_00_xmXSWu4MEUrIl8M4KzaE5971"
+            },
+            "toolCallId": "call_00_xmXSWu4MEUrIl8M4KzaE5971",
+            "content": [
+              {
+                "type": "text",
+                "text": "=== around 2590-2650 ===\nEROFS: read-only file system, mkdtemp '/home/genie/.local/share/mikro-engine-split/experiments-g8/native-runs/g8-native-smoke-pnpm/tmp/genie-bs-repo-sPsQZX'\n    path: \"/home/genie/.local/share/mikro-engine-split/experiments-g8/native-runs/g8-native-smoke-pnpm/tmp/genie-bs-repo-sPsQZX\",\n syscall: \"mkdtemp\",\n   errno: -30,\n    code: \"EROFS\"\n\n      at tempDir (/home/genie/.local/share/mikro-engine-split/experiments-g8/native-repositories/g8-native-smoke/.claude/worktrees/wish-g8-native-smoke/scripts/brainstorm-workflow-behavior.test.ts:118:15)\n      at newEnv (/home/genie/.local/share/mikro-engine-split/experiments-g8/native-repositories/g8-native-smoke/.claude/worktrees/wish-g8-native-smoke/scripts/brainstorm-workflow-behavior.test.ts:168:16)\n      at <anonymous> (/home/genie/.local/share/mikro-engine-split/experiments-g8/native-repositories/g8-native-smoke/.claude/worktrees/wish-g8-native-smoke/scripts/brainstorm-workflow-behavior.test.ts:1580:17)\n(fail) the closed state set > failed: a spine agent that returns nothing [0.23ms]\n113 |   for (const dir of dirs) rmSync(dir, { recursive: true, force: true });\n114 |   dirs = [];\n115 | });\n116 | \n117 | function tempDir(prefix: string): string {\n118 |   const dir = mkdtempSync(join(tmpdir(), prefix));\n                    ^\nEROFS: read-only file system, mkdtemp '/home/genie/.local/share/mikro-engine-split/experiments-g8/native-runs/g8-native-smoke-pnpm/tmp/genie-bs-repo-7Gcwuv'\n    path: \"/home/genie/.local/share/mikro-engine-split/experiments-g8/native-runs/g8-native-smoke-pnpm/tmp/genie-bs-repo-7Gcwuv\",\n syscall: \"mkdtemp\",\n   errno: -30,\n    code: \"EROFS\"\n\n      at tempDir (/home/genie/.local/share/mikro-engine-split/experiments-g8/native-repositories/g8-native-smoke/.claude/worktrees/wish-g8-native-smoke/scripts/brainstorm-workflow-behavior.test.ts:118:15)\n      at newEnv (/home/genie/.local/share/mikro-engine-split/experiments-g8/native-repositories/g8-native-smoke/.claude/worktrees/wish-g8-native-smoke/scripts/brainstorm-workflow-behavior.test.ts:168:16)\n      at <anonymous> (/home/genie/.local/share/mikro-engine-split/experiments-g8/native-repositories/g8-native-smoke/.claude/worktrees/wish-g8-native-smoke/scripts/brainstorm-workflow-behavior.test.ts:1587:17)\n(fail) the closed state set > failed: intake without tool paths dispatches nothing [0.24ms]\n1590 |     expect(labels).toEqual([]);\n1591 |     expect(result.notes[0]).toContain('tools.ledger, tools.evidence, tools.reviewContract');\n1592 |   });\n1593 | \n1594 |   test('every state was reached by the scenarios above', () => {\n1595 |     expect([...seenStates].sort()).toEqual([...STATES].sort());\n                                          ^\nerror: expect(received).toEqual(expected)\n\n- [\n-   \"answered\",\n-   \"blocked\",\n-   \"done\",\n-   \"failed\",\n-   \"round\",\n- ]\n+ []\n\n- Expected  - 7\n+ Received  + 1\n\n      at <anonymous> (/home/genie/.local/share/mikro-engine-split/experiments-g8/native-repositories/g8-native-smoke/.claude/worktrees/wish-g8-native-smoke/scripts/brainstorm-workflow-behavior.test.ts:1595:36)\n(fail) the closed state set > every state was reached by the scenarios above [0.30ms]\n\nscripts/skill-intake-workflow-parity.test.ts:\n(pass) skill-audit fronts the skill-intake workflow > the skill states the explicit-script-path rule for both scopes [0.25ms]\n(pass) skill-audit fronts the skill-intake workflow > meta.phases, the phase() calls and the by-hand stages are one roster [0.54ms]\n(pass) skill-audit fronts the skill-intake workflow > the disposition vocabulary is one closed set, in order [0.19ms]\n(pass) the untrusted-data fence cannot drift > the script holds the fence once and the skill body repeats it verbatim [0.17ms]\n(pass) the untrusted-data fence cannot drift > both file-reading stages carry the fence [0.27ms]\n(pass) the reporting keys and the agent budget are pinned > injectionAttempts is a REQUIRED key on both reading stages [0.11ms]\n(pass) the reporting keys and the agent budget are pinned > the fan-out is bounded and no loop can reintroduce a per-candidate agent [0.93ms]\n(pass) the boundary the workflow never crosses survives in the front door > the SKILL.md body keeps the authorization and the withheld ranking [0.05ms]\n(pass) the boundary the workflow never crosses survives in the front door > the reference keeps the caller-owned half and the two shard rules [0.09ms]\n\n=== around 6840-6900 ===\n(pass) wish.js runs the repository own check and install commands > (39) the scout prompt carries the discovery rules in their order, the exclusion and the evidence rule [1.74ms]\n(pass) wish.js runs the repository own check and install commands > (40) the gate runs the one liveness command, and the old husky-only checks are gone [2.77ms]\n(pass) wish.js runs the repository own check and install commands > (41) an injected check and install outside the discovery forms reach no executor or gate prompt [1.76ms]\n(pass) wish.js runs the repository own check and install commands > (50) a run with no discovered check logs one none phrase per frozen command, never (none) (none) [1.53ms]\n(pass) wish.js runs the repository own check and install commands > (51) a refused check logs refused at admission, never as not discovered [1.45ms]\n(pass) wish.js freezes the validation command as one focused test invocation > (52) a validation command that is not a focused test invocation over declared files is refused at admission and never reaches the gate [1.42ms]\n(pass) wish.js freezes the validation command as one focused test invocation > (53) the caller validation command overrides the scout's and is the one the gate runs [6.55ms]\n(pass) wish.js freezes the validation command as one focused test invocation > (54) a refused validation command still leaves a frozen check command running the gate [1.58ms]\n(pass) wish.js freezes the validation command as one focused test invocation > (55) a flag or a task-runner argument under a legitimate head is refused at admission and never reaches the gate [3.78ms]\n(pass) wish.js freezes the validation command as one focused test invocation > (56) a ./-spelled declared path and an allowed flag freeze and run as written [1.33ms]\n(pass) wish.js stops a refused validation command at admission, before any executor runs > (57) go test ./... with no check command ends blocked at admission, zero executor calls, the named refusal and the escape [1.07ms]\n(pass) wish.js stops a refused validation command at admission, before any executor runs > (57) pytest tests/ with no check command ends blocked at admission, zero executor calls, the named refusal and the escape [0.96ms]\n(pass) wish.js stops a refused validation command at admission, before any executor runs > (57) gradle test --tests Foo with no check command ends blocked at admission, zero executor calls, the named refusal and the escape [0.62ms]\n(pass) wish.js stops a refused validation command at admission, before any executor runs > (57) mvn test -Dtest=Foo with no check command ends blocked at admission, zero executor calls, the named refusal and the escape [0.62ms]\n(pass) wish.js stops a refused validation command at admission, before any executor runs > (58) a refused check command is no check command: the same admission stop [0.93ms]\n(pass) wish.js stops a refused validation command at admission, before any executor runs > (59) a caller validation that the tripwire refuses stops at admission, without the shape escape [0.85ms]\n(pass) wish.js stops a refused validation command at admission, before any executor runs > (60) the caller validation is the documented escape: the same proposal runs to merge-ready [1.36ms]\n(pass) wish.js stops a refused validation command at admission, before any executor runs > (61) a frozen check command keeps the stop at the gate: a hook system never needed the validation command [2.49ms]\n(pass) wish.js stops a refused validation command at admission, before any executor runs > (62) no check and no validation proposed at all is not a refusal: it still ends at the gate [0.96ms]\n(pass) wish.js stops a refused validation command at admission, before any executor runs > (63) a route refusal outranks the admission stop: a denylist hit is refused, not blocked [0.83ms]\n(pass) wish.js admission failures report instead of crashing > (22) the scout answers nothing -> refused, route report, the scout named silent, a rendered report [0.66ms]\n(pass) wish.js admission failures report instead of crashing > (23) the scout throws -> missed at Admit with the thrown reason, a rendered report [0.55ms]\n(pass) wish.js admission failures report instead of crashing > (24) the judge answers nothing -> refused, route report, the judge named silent [0.65ms]\n(pass) wish.js admission failures report instead of crashing > (25) the judge throws -> missed at Admit with the thrown reason [0.65ms]\n\nscripts/fresh-install-smoke.test.ts:\n(pass) fresh-install-smoke > decodes escaped characters when resolving the checkout root [0.13ms]\n84 |   });\n85 | \n86 |   test('passes the digest-bound design review and post-stamp drift checks against the real skills tree', () => {\n87 |     const result = runSmoke();\n88 |     // Surface the failure reason if this ever regresses.\n89 |     expect(result.stdout + result.stderr).toContain('fresh-install-smoke: OK');\n                                               ^\nerror: expect(received).toContain(expected)\n\nExpected to contain: \"fresh-install-smoke: OK\"\nReceived: \"157 |   for (const file of [brainstormTool, wishTool, template]) {\\n158 |     if (!existsSync(file) || !lstatSync(file).isFile() || lstatSync(file).isSymbolicLink()) {\\n159 |       fail(`design-review contract resource must be a physical file: ${file}`);\\n160 |     }\\n161 |   }\\n162 |   const root = mkdtempSync(join(tmpdir(), 'genie-design-review-smoke-'));\\n                     ^\\nEROFS: read-only file system, mkdtemp '/home/genie/.local/share/mikro-engine-split/experiments-g8/native-runs/g8-native-smoke-pnpm/tmp/genie-design-review-smoke-zintRU'\\n    path: \\\"/home/genie/.local/share/mikro-engine-split/experiments-g8/native-runs/g8-native-smoke-pnpm/tmp/genie-design-review-smoke-zintRU\\\",\\n syscall: \\\"mkdtemp\\\",\\n   errno: -30,\\n    code: \\\"EROFS\\\"\\n\\n      at checkDesignReviewEvidenceTool (/home/genie/.local/share/mikro-engine-split/experiments-g8/native-repositories/g8-native-smoke/.claude/worktrees/wish-g8-native-smoke/scripts/fresh-install-smoke.ts:162:16)\\n      at main (/home/genie/.local/share/mikro-engine-split/experiments-g8/native-repositories/g8-native-smoke/.claude/worktrees/wish-g8-native-smoke/scripts/fresh-install-smoke.ts:307:5)\\n      at /home/genie/.local/share/mikro-engine-split/experiments-g8/native-repositories/g8-native-smoke/.claude/worktrees/wish-g8-native-smoke/scripts/fresh-install-smoke.ts:320:23\\n\\nBun v1.3.14 (Linux x64)\\n\"\n\n      at <anonymous> (/home/genie/.local/share/mikro-engine-split/experiments-g8/native-repositories/g8-native-smoke/.claude/worktrees/wish-g8-native-smoke/scripts/fresh-install-smoke.test.ts:89:43)\n(fail) fresh-install-smoke > passes the digest-bound design review and post-stamp drift checks against the real skills tree [72.94ms]\n93 | \n94 |   // The staged and extracted payload trees build-binary.sh checks are passed\n95 |   // through --skills-dir, so the shipped-inventory comparison has to run for\n96 |   // those too: a payload that dropped a skill must fail here, not ship.\n97 |   test('a payload skills tree missing a shipped skill fails the inventory guard', () => {\n98 |     const root = mkdtempSync(join(tmpdir(), 'genie-payload-inventory-fixture-'));\n                      ^\nerror: EROFS: read-only file system, mkdtemp '/home/genie/.local/share/mikro-engine-split/experiments-g8/native-runs/g8-native-smoke-pnpm/tmp/genie-payload-inventory-fixture-k1Dwuk'\n      at <anonymous> (/home/genie/.local/share/mikro-engine-split/experiments-g8/native-repositories/g8-native-smoke/.claude/worktrees/wish-g8-native-smoke/scripts/fresh-install-smoke.test.ts:98:18)\n(fail) fresh-install-smoke > a payload skills tree missing a shipped skill fails the inventory guard [0.38ms]\n115 |       rmSync(root, { recursive: true, force: true });\n116 |     }\n117 |   });\n118 | \n119 |   test('the same metadata is safe in plugin and user tiers because prompts contain no selector', () => {\n120 |     const root = mkdtempSync(join(tmpdir(), 'genie-selector-free-fixture-'));\n                       ^\nerror: EROFS: read-only file system, mkdtemp '/home/genie/.local/share/mikro-engine-split/experiments-g8/native-runs/g8-native-smoke-pnpm/tmp/genie-selector-free-fixture-C9Aoih'\n      at <anonymous> (/home/genie/.local/share/mikro-engine-split/experiments-g8/native-repositories/g8-native-smoke/.claude/worktrees/wish-g8-native-smoke/scripts/fresh-install-smoke.test.ts:120:18)\n(fail) fresh-install-smoke > the same metadata is safe in plugin and user tiers because prompts contain no selector [0.29ms]\n"
+              }
+            ],
+            "isError": false,
+            "id": "2473555d-5563-4838-9a52-a66237489928"
+          }
+        },
+        "sourceEventSeqs": [
+          73
+        ],
+        "surfaceOp": "append"
+      }
+    },
+    {
+      "sessionId": "f5edd679-bf94-4d60-a7e9-30caaa3b4a9e",
+      "seq": 80,
+      "event": {
+        "type": "tool/result",
+        "seq": 80,
+        "time": 1791261324101,
+        "data": {
+          "turn": 1,
+          "step": 9,
+          "message": {
+            "role": "tool",
+            "source": {
+              "kind": "tool",
+              "callId": "call_00_dvIJG2IA6dknHtIleXm53854"
+            },
+            "toolCallId": "call_00_dvIJG2IA6dknHtIleXm53854",
+            "content": [
+              {
+                "type": "text",
+                "text": "=== metrics-export lines ===\n17636:src/lib/metrics-export.test.ts:\n17642:22 |   root = mkdtempSync(join(tmpdir(), 'genie-metrics-export-'));\n17644:error: EROFS: read-only file system, mkdtemp '/home/genie/.local/share/mikro-engine-split/experiments-g8/native-runs/g8-native-smoke-pnpm/tmp/genie-metrics-export-9UMKpM'\n17645:      at <anonymous> (/home/genie/.local/share/mikro-engine-split/experiments-g8/native-repositories/g8-native-smoke/.claude/worktrees/wish-g8-native-smoke/src/lib/metrics-export.test.ts:22:10)\n17654:      at <anonymous> (/home/genie/.local/share/mikro-engine-split/experiments-g8/native-repositories/g8-native-smoke/.claude/worktrees/wish-g8-native-smoke/src/lib/metrics-export.test.ts:32:3)\n17661:22 |   root = mkdtempSync(join(tmpdir(), 'genie-metrics-export-'));\n17663:error: EROFS: read-only file system, mkdtemp '/home/genie/.local/share/mikro-engine-split/experiments-g8/native-runs/g8-native-smoke-pnpm/tmp/genie-metrics-export-XFr50M'\n17664:      at <anonymous> (/home/genie/.local/share/mikro-engine-split/experiments-g8/native-repositories/g8-native-smoke/.claude/worktrees/wish-g8-native-smoke/src/lib/metrics-export.test.ts:22:10)\n17673:      at <anonymous> (/home/genie/.local/share/mikro-engine-split/experiments-g8/native-repositories/g8-native-smoke/.claude/worktrees/wish-g8-native-smoke/src/lib/metrics-export.test.ts:32:3)\n17680:22 |   root = mkdtempSync(join(tmpdir(), 'genie-metrics-export-'));\n17682:error: EROFS: read-only file system, mkdtemp '/home/genie/.local/share/mikro-engine-split/experiments-g8/native-runs/g8-native-smoke-pnpm/tmp/genie-metrics-export-j6suEh'\n17683:      at <anonymous> (/home/genie/.local/share/mikro-engine-split/experiments-g8/native-repositories/g8-native-smoke/.claude/worktrees/wish-g8-native-smoke/src/lib/metrics-export.test.ts:22:10)\n17692:      at <anonymous> (/home/genie/.local/share/mikro-engine-split/experiments-g8/native-repositories/g8-native-smoke/.claude/worktrees/wish-g8-native-smoke/src/lib/metrics-export.test.ts:32:3)\n17699:22 |   root = mkdtempSync(join(tmpdir(), 'genie-metrics-export-'));\n17701:error: EROFS: read-only file system, mkdtemp '/home/genie/.local/share/mikro-engine-split/experiments-g8/native-runs/g8-native-smoke-pnpm/tmp/genie-metrics-export-DlMz0F'\n17702:      at <anonymous> (/home/genie/.local/share/mikro-engine-split/experiments-g8/native-repositories/g8-native-smoke/.claude/worktrees/wish-g8-native-smoke/src/lib/metrics-export.test.ts:22:10)\n17711:      at <anonymous> (/home/genie/.local/share/mikro-engine-split/experiments-g8/native-repositories/g8-native-smoke/.claude/worktrees/wish-g8-native-smoke/src/lib/metrics-export.test.ts:32:3)\n17718:22 |   root = mkdtempSync(join(tmpdir(), 'genie-metrics-export-'));\n17720:error: EROFS: read-only file system, mkdtemp '/home/genie/.local/share/mikro-engine-split/experiments-g8/native-runs/g8-native-smoke-pnpm/tmp/genie-metrics-export-fKDIRq'\n17721:      at <anonymous> (/home/genie/.local/share/mikro-engine-split/experiments-g8/native-repositories/g8-native-smoke/.claude/worktrees/wish-g8-native-smoke/src/lib/metrics-export.test.ts:22:10)\n17730:      at <anonymous> (/home/genie/.local/share/mikro-engine-split/experiments-g8/native-repositories/g8-native-smoke/.claude/worktrees/wish-g8-native-smoke/src/lib/metrics-export.test.ts:32:3)\n17737:22 |   root = mkdtempSync(join(tmpdir(), 'genie-metrics-export-'));\n17739:error: EROFS: read-only file system, mkdtemp '/home/genie/.local/share/mikro-engine-split/experiments-g8/native-runs/g8-native-smoke-pnpm/tmp/genie-metrics-export-jHH3oz'\n17740:      at <anonymous> (/home/genie/.local/share/mikro-engine-split/experiments-g8/native-repositories/g8-native-smoke/.claude/worktrees/wish-g8-native-smoke/src/lib/metrics-export.test.ts:22:10)\n17749:      at <anonymous> (/home/genie/.local/share/mikro-engine-split/experiments-g8/native-repositories/g8-native-smoke/.claude/worktrees/wish-g8-native-smoke/src/lib/metrics-export.test.ts:32:3)\n17756:22 |   root = mkdtempSync(join(tmpdir(), 'genie-metrics-export-'));\n17758:error: EROFS: read-only file system, mkdtemp '/home/genie/.local/share/mikro-engine-split/experiments-g8/native-runs/g8-native-smoke-pnpm/tmp/genie-metrics-export-zTkdGO'\n17759:      at <anonymous> (/home/genie/.local/share/mikro-engine-split/experiments-g8/native-repositories/g8-native-smoke/.claude/worktrees/wish-g8-native-smoke/src/lib/metrics-export.test.ts:22:10)\n17768:      at <anonymous> (/home/genie/.local/share/mikro-engine-split/experiments-g8/native-repositories/g8-native-smoke/.claude/worktrees/wish-g8-native-smoke/src/lib/metrics-export.test.ts:32:3)\n17775:22 |   root = mkdtempSync(join(tmpdir(), 'genie-metrics-export-'));\n17777:error: EROFS: read-only file system, mkdtemp '/home/genie/.local/share/mikro-engine-split/experiments-g8/native-runs/g8-native-smoke-pnpm/tmp/genie-metrics-export-HYUK2j'\n17778:      at <anonymous> (/home/genie/.local/share/mikro-engine-split/experiments-g8/native-repositories/g8-native-smoke/.claude/worktrees/wish-g8-native-smoke/src/lib/metrics-export.test.ts:22:10)\n17787:      at <anonymous> (/home/genie/.local/share/mikro-engine-split/experiments-g8/native-repositories/g8-native-smoke/.claude/worktrees/wish-g8-native-smoke/src/lib/metrics-export.test.ts:32:3)\n17794:22 |   root = mkdtempSync(join(tmpdir(), 'genie-metrics-export-'));\n17796:error: EROFS: read-only file system, mkdtemp '/home/genie/.local/share/mikro-engine-split/experiments-g8/native-runs/g8-native-smoke-pnpm/tmp/genie-metrics-export-KXiDiP'\n17797:      at <anonymous> (/home/genie/.local/share/mikro-engine-split/experiments-g8/native-repositories/g8-native-smoke/.claude/worktrees/wish-g8-native-smoke/src/lib/metrics-export.test.ts:22:10)\n17806:      at <anonymous> (/home/genie/.local/share/mikro-engine-split/experiments-g8/native-repositories/g8-native-smoke/.claude/worktrees/wish-g8-native-smoke/src/lib/metrics-export.test.ts:32:3)\n17813:22 |   root = mkdtempSync(join(tmpdir(), 'genie-metrics-export-'));\n17815:error: EROFS: read-only file system, mkdtemp '/home/genie/.local/share/mikro-engine-split/experiments-g8/native-runs/g8-native-smoke-pnpm/tmp/genie-metrics-export-cZFYUZ'\n17816:      at <anonymous> (/home/genie/.local/share/mikro-engine-split/experiments-g8/native-repositories/g8-native-smoke/.claude/worktrees/wish-g8-native-smoke/src/lib/metrics-export.test.ts:22:10)\n=== directory-only ledger ===\n17883:(fail) ledger \u2192 verified intervals > offload: a directory-only ledger set is no ledger; a readable empty ledger beside it is a measured 0 [0.09ms]\n33059:(fail) ledger \u2192 verified intervals > offload: a directory-only ledger set is no ledger; a readable empty ledger beside it is a measured 0 [0.09ms]\n=== EROFS count ===\n2187\n=== first EROFS line ===\n700:error: EROFS: read-only file system, mkdtemp '/home/genie/.local/share/mikro-engine-split/experiments-g8/native-runs/g8-native-smoke-pnpm/tmp/genie-cli-reg-pS11tj'\n719:error: EROFS: read-only file system, mkdtemp '/home/genie/.local/share/mikro-engine-split/experiments-g8/native-runs/g8-native-smoke-pnpm/tmp/genie-cli-reg-SWDIoT'\n738:error: EROFS: read-only file system, mkdtemp '/home/genie/.local/share/mikro-engine-split/experiments-g8/native-runs/g8-native-smoke-pnpm/tmp/genie-cli-reg-dF8szV'\n"
+              }
+            ],
+            "isError": false,
+            "id": "249c432b-eb77-4d8c-9891-d16c6c0302de"
+          }
+        },
+        "sourceEventSeqs": [
+          79
+        ],
+        "surfaceOp": "append"
+      }
+    },
+    {
+      "sessionId": "f5edd679-bf94-4d60-a7e9-30caaa3b4a9e",
+      "seq": 88,
+      "event": {
+        "type": "tool/result",
+        "seq": 88,
+        "time": 1791261340507,
+        "data": {
+          "turn": 1,
+          "step": 10,
+          "message": {
+            "role": "tool",
+            "source": {
+              "kind": "tool",
+              "callId": "call_01_wo3vT9ogJ5kOB34N5nSt6657"
+            },
+            "toolCallId": "call_01_wo3vT9ogJ5kOB34N5nSt6657",
+            "content": [
+              {
+                "type": "text",
+                "text": "exit=1\n      at <anonymous> (/home/genie/.local/share/mikro-engine-split/experiments-g8/native-repositories/g8-native-smoke/.claude/worktrees/wish-g8-native-smoke/src/lib/metrics-export.test.ts:32:3)\n(fail) Phoenix projection > span ids are deterministic per install and the repo path is hashed, never sent [0.10ms]\n17 | let root: string;\n18 | let env: NodeJS.ProcessEnv;\n19 | let savedHome: string | undefined;\n20 | \n21 | beforeEach(() => {\n22 |   root = mkdtempSync(join(tmpdir(), 'genie-metrics-export-'));\n              ^\nerror: EROFS: read-only file system, mkdtemp '/home/genie/.local/share/mikro-engine-split/experiments-g8/native-runs/g8-native-smoke-pnpm/tmp/genie-metrics-export-t5vCwV'\n      at <anonymous> (/home/genie/.local/share/mikro-engine-split/experiments-g8/native-repositories/g8-native-smoke/.claude/worktrees/wish-g8-native-smoke/src/lib/metrics-export.test.ts:22:10)\n27 | });\n28 | \n29 | afterEach(() => {\n30 |   if (savedHome === undefined) Reflect.deleteProperty(process.env, 'GENIE_HOME');\n31 |   else process.env.GENIE_HOME = savedHome;\n32 |   rmSync(root, { recursive: true, force: true });\n       ^\nTypeError: path must be a string or TypedArray\n      at <anonymous> (/home/genie/.local/share/mikro-engine-split/experiments-g8/native-repositories/g8-native-smoke/.claude/worktrees/wish-g8-native-smoke/src/lib/metrics-export.test.ts:32:3)\n(fail) Phoenix projection > posts only ids Phoenix does not hold and reports what never read back [0.10ms]\n\n 0 pass\n 18 fail\nRan 18 tests across 1 file. [77.00ms]\n"
+              }
+            ],
+            "isError": false,
+            "id": "f5d83ea8-d030-4d5c-95e0-987abf3ac44a"
+          }
+        },
+        "sourceEventSeqs": [
+          87
+        ],
+        "surfaceOp": "append"
+      }
+    }
+  ],
+  "offloadCostUsd": null,
+  "offloadAccountingComplete": false,
+  "invoicedBilling": null,
+  "canonicalNativeSmokeReceiptEligible": false,
+  "diagnosis": {
+    "observed": "Actual integration CLI selected; scout and review return external trusted-caller .mikro/runs EROFS under native workspace-write sandbox.",
+    "inference": "Bridge mandatory started receipt is also outside writable root and precedes backend invocation; absent sidecars are consistent with no backend dispatch, but terminal caller error alone does not prove zero offload bill.",
+    "rootHeaderHypothesis": "Installed public SDK omits root delegationDepth in live creation and materializes0 in JSONL durable header; original observed header was not retained, so exact original discrepancy is not claimed recovered."
+  },
+  "preservedFailureAndBill": true,
+  "scoredCells": 0,
+  "experimentalPRs": 0
+}

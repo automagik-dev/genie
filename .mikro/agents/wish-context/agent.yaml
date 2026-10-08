@@ -8,7 +8,7 @@
 schema_version: 1
 tools_api: 1
 shape: loop
-model: deepseek-api/deepseek-flash
+model: deepseek/deepseek-flash
 thinking: low
 description: >-
   Discovers the repository context for one intent sentence: related wishes,

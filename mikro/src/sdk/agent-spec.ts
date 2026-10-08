@@ -104,37 +104,25 @@ export interface AgentSpec {
 	readonly budget?: AgentBudget;
 	/** System-prompt assembly overrides. `undefined` means "not declared". */
 	readonly prompt?: AgentPrompt;
-	/**
-	 * Internal, undocumented: which runtime backend executes this agent's
-	 * turns (wish mikro-v2-prime-backend). Absent means `mikro` — the legacy
-	 * engine, which stays the default. Deliberately NOT part of the
-	 * documented `agent.yaml` schema: it is a gate/experiment selector that
-	 * may change without notice.
-	 *
-	 * - `mikro` — the legacy in-process engine (`rlmLoop`). The default.
-	 * - `prime` — one `prime-agent` subprocess per turn
-	 *   (`src/mcp/backends/prime.ts`).
-	 * - `prime-sdk` — the same agent driven in-process through prime's
-	 *   programmatic SDK (`src/mcp/backends/prime-sdk.ts`): no per-turn cold
-	 *   start, plus custom tools, structured output, custom providers, and
-	 *   sub-call depth, which the subprocess flag surface cannot express.
-	 */
-	readonly backend?: "mikro" | "prime" | "prime-sdk";
+	/** Public execution engine. Omission keeps the RLM default. */
+	readonly engine?: Engine;
 	/** Preserved unrecognised keys — consumers layer their own schema. */
 	readonly extras: Readonly<Record<string, unknown>>;
 }
 
-/** Backends a spec may name. Pinned here so the error text can list them. */
-const VALID_BACKENDS: readonly NonNullable<AgentSpec["backend"]>[] = [
-	"mikro",
-	"prime",
-	"prime-sdk",
-] as const;
+export type Engine = "rlm" | "pi" | "prime" | "prime-sdk";
+export const ENGINES: readonly Engine[] = ["rlm", "pi", "prime", "prime-sdk"];
+
+/** Explicit selectors never silently degrade to the default. */
+export function parseEngine(value: unknown): Engine {
+	if (value === "rlm" || value === "pi" || value === "prime" || value === "prime-sdk") return value;
+	throw new Error(`engine must be one of ${ENGINES.join(" | ")}; got ${JSON.stringify(value)}`);
+}
 
 /**
  * Inclusive bounds for `temperature:`. Kept local rather than imported from
  * `src/config.ts` so this parser stays free of the project config loader —
- * the same reason `VALID_BACKENDS` is spelled out here. The canonical
+ * the same reason engine validation is local. The canonical
  * definition (and the reason the ceiling is 2) is `TEMPERATURE_MIN` /
  * `TEMPERATURE_MAX` in `src/config.ts`; keep the two in step.
  */
@@ -190,7 +178,7 @@ function parseBudget(raw: unknown): AgentBudget | undefined {
  * spellings are accepted the way `budget:` accepts both of its own.
  *
  * A non-boolean value throws rather than being ignored, for the same reason
- * `thinking:` and `backend:` throw: silently keeping the default here would
+ * `thinking:` and `engine:` throw: silently keeping the default here would
  * look exactly like a working opt-out.
  */
 function parsePrompt(raw: unknown): AgentPrompt | undefined {
@@ -208,8 +196,15 @@ function parsePrompt(raw: unknown): AgentPrompt | undefined {
 }
 
 function parseScope(raw: unknown): AgentScope | undefined {
-	if (!raw || typeof raw !== "object") return undefined;
+	if (raw === undefined || raw === null) return undefined;
+	if (typeof raw !== "object" || Array.isArray(raw)) throw new Error("agent.yaml: scope must be a mapping");
 	const s = raw as Record<string, unknown>;
+	for (const key of ["reads", "writes"]) {
+		const value = s[key];
+		if (Object.hasOwn(s, key) && (!Array.isArray(value) || value.some((item: unknown) => typeof item !== "string" || !item.trim()))) {
+			throw new Error(`agent.yaml: scope.${key} must be an array of non-empty strings`);
+		}
+	}
 	const reads = asStringArray(s.reads);
 	const writes = asStringArray(s.writes);
 	if (!reads && !writes) return undefined;
@@ -292,20 +287,10 @@ export function parseAgentSpec(yamlText: string, dir: string): AgentSpec {
 		temperature = parsed;
 	}
 
-	// Same validate-don't-ignore rule as `thinking:`: a typo'd backend would
-	// silently fall back to the legacy engine and look like it worked, which
-	// is exactly the silent degradation a selection field must not allow.
-	const backendRaw = asString(r.backend);
-	if (
-		backendRaw !== undefined &&
-		backendRaw !== "mikro" &&
-		backendRaw !== "prime" &&
-		backendRaw !== "prime-sdk"
-	) {
-		throw new Error(
-			`agent.yaml: backend must be one of ${VALID_BACKENDS.join(" | ")}, got "${backendRaw}"`,
-		);
+	if (Object.hasOwn(r, "backend")) {
+		throw new Error("agent.yaml: obsolete backend field; use engine: rlm | pi | prime | prime-sdk");
 	}
+	const engine = Object.hasOwn(r, "engine") ? parseEngine(r.engine) : undefined;
 
 	// Build the "extras" bag by stripping the known keys from r.
 	const known = new Set([
@@ -321,7 +306,7 @@ export function parseAgentSpec(yamlText: string, dir: string): AgentSpec {
 		"temperature",
 		"scope",
 		"budget",
-		"backend",
+		"engine",
 		"prompt",
 	]);
 	const extras: Record<string, unknown> = {};
@@ -342,7 +327,7 @@ export function parseAgentSpec(yamlText: string, dir: string): AgentSpec {
 		scope: parseScope(r.scope),
 		budget: parseBudget(r.budget),
 		prompt: parsePrompt(r.prompt),
-		backend: backendRaw as AgentSpec["backend"] | undefined,
+		engine,
 		extras,
 	};
 }

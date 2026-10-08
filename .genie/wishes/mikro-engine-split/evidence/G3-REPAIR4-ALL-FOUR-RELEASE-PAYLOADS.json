@@ -1,0 +1,164 @@
+{
+  "schemaVersion": 1,
+  "createdAt": "2026-10-08T02:41:46.417365+00:00",
+  "job": "bg_110",
+  "actualExitCode": 0,
+  "actualSeconds": 57.77,
+  "rawOutputProvenance": "Full completed bg_110 notice retained in Main history; no numeric artifact was supplied",
+  "explicitExitMarker": "G3_REPAIR4_ALL_FOUR_RELEASE_BUILDS_EXIT=0",
+  "candidateManifestSha256": "423ab63772c9b93c2b86657f997a7b960acecc2bf63516d57f29b3dbc04212c5",
+  "candidateVersion": "6.261005.1",
+  "unchangedBuilderSha256": "f900fe38a42ee2f1689bd4a4c4c58aaef46aa8a16516b02f2b282082aa51513e",
+  "commands": [
+    "bash scripts/build-binary.sh --platform linux-x64-glibc",
+    "bash scripts/build-binary.sh --platform linux-x64-musl",
+    "bash scripts/build-binary.sh --platform linux-arm64",
+    "bash scripts/build-binary.sh --platform darwin-arm64"
+  ],
+  "targets": [
+    {
+      "platform": "linux-x64-glibc",
+      "path": "/home/genie/orca/workspaces/genie/mikro-engine-split/dist/genie-6.261005.1-linux-x64-glibc.tar.gz",
+      "sha256": "22c0f74c7b203342bfa4b35e56b779e4867a6dae5754aceb1554104c11c1352f",
+      "bytes": 36980394,
+      "binarySha256": "9e16d3e638e998ad500c6667c6de1ae9cb43abfed1df205668b0311b9a08fa58",
+      "stageMode": "0700",
+      "topLevelMembers": [
+        ".",
+        ".agents",
+        ".claude-plugin",
+        "LICENSE",
+        "VERSION",
+        "genie",
+        "plugins",
+        "skills",
+        "templates"
+      ],
+      "noTopLevelMikroRuntime": true
+    },
+    {
+      "platform": "linux-x64-musl",
+      "path": "/home/genie/orca/workspaces/genie/mikro-engine-split/dist/genie-6.261005.1-linux-x64-musl.tar.gz",
+      "sha256": "738a525d42572a17c9777160761407a5e6302206f199616d08f0606c75bb8348",
+      "bytes": 35671065,
+      "binarySha256": "7d41a153f992dffcd66aa35a5b099cb5239ec30282715d8947d74a7ee5bc4e88",
+      "stageMode": "0700",
+      "topLevelMembers": [
+        ".",
+        ".agents",
+        ".claude-plugin",
+        "LICENSE",
+        "VERSION",
+        "genie",
+        "plugins",
+        "skills",
+        "templates"
+      ],
+      "noTopLevelMikroRuntime": true
+    },
+    {
+      "platform": "linux-arm64",
+      "path": "/home/genie/orca/workspaces/genie/mikro-engine-split/dist/genie-6.261005.1-linux-arm64.tar.gz",
+      "sha256": "653e9ec139bd844d75cf2c29d84c946956df63016daf896017d4cf9791b5a548",
+      "bytes": 36701471,
+      "binarySha256": "c37e0231a51cd9e63498569a6605e1d5ea6f93f71bca8f91e435df96961084d1",
+      "stageMode": "0700",
+      "topLevelMembers": [
+        ".",
+        ".agents",
+        ".claude-plugin",
+        "LICENSE",
+        "VERSION",
+        "genie",
+        "plugins",
+        "skills",
+        "templates"
+      ],
+      "noTopLevelMikroRuntime": true
+    },
+    {
+      "platform": "darwin-arm64",
+      "path": "/home/genie/orca/workspaces/genie/mikro-engine-split/dist/genie-6.261005.1-darwin-arm64.tar.gz",
+      "sha256": "d6f4542295c668d437694efd776619db678a64f6c6c6db28d051c0f9ef07d9a2",
+      "bytes": 24975298,
+      "binarySha256": "25027a50801c3fce5d466688a8cac4ee6d9e6755e2d3b3f642207271ac3da9a3",
+      "stageMode": "0700",
+      "topLevelMembers": [
+        ".",
+        ".agents",
+        ".claude-plugin",
+        "LICENSE",
+        "VERSION",
+        "genie",
+        "plugins",
+        "skills",
+        "templates"
+      ],
+      "noTopLevelMikroRuntime": true
+    }
+  ],
+  "checksObservedForEveryTarget": [
+    "actual Bun binary compile for supported target",
+    "source package version parity",
+    "staged plugin+VERSION+compatibility-floor stamp",
+    "18 validskills/40 bundledreferences/Claudevariables-unset fresh-install-smoke before/staged/afterextract",
+    "exact tarball extraction regular files+directories only/no symlinks/no tests",
+    "bidirectional byte and mode equality staging vs extracted",
+    "extracted version parity",
+    "compressed size\u226480MB"
+  ],
+  "priorAllFourPayloadsPreserved": {
+    "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/paid-runtime-archives/all-four-payloads-before-repair4.tar",
+    "sha256": "a49407a1b8477c02e3df4c54af8296087dc530e5bbc77e42aa7d76a4bd10c505",
+    "mode": "0400",
+    "memberHashesIndependentlyVerified": [
+      {
+        "member": "dist/genie-6.261005.1-linux-x64-glibc.tar.gz",
+        "sha256": "a8b028789f6481597100ed96dba84bf5866bea5cd240ff1b40495827fb33be69",
+        "bytes": 36980845
+      },
+      {
+        "member": "dist/genie-6.261005.1-linux-x64-musl.tar.gz",
+        "sha256": "661f50e00cbd9cecbff9365055f724ac02a847a66ed2262f8ff296e914eb2ffb",
+        "bytes": 35671067
+      },
+      {
+        "member": "dist/genie-6.261005.1-linux-arm64.tar.gz",
+        "sha256": "80207866c1e9eb2f50cd321c5335be9e22914e89efe7d9f71bea6ab316793301",
+        "bytes": 36701514
+      },
+      {
+        "member": "dist/genie-6.261005.1-darwin-arm64.tar.gz",
+        "sha256": "8ad9bb5d815bc53e2c2c36b201a830e7c9e0cba58165616e0c18e2ea3ec9e145",
+        "bytes": 24975315
+      }
+    ]
+  },
+  "actualLinuxSurfaceSmoke": {
+    "actualExitCode": 0,
+    "actualSeconds": 2.92,
+    "marker": "G3_REPAIR4_LINUX_RELEASE_SMOKES_EXIT=0",
+    "glibc": [
+      "--version6.261005.1",
+      "mikro --help",
+      "mikro call --help with --engine rlm|pi|prime|prime-sdk"
+    ],
+    "musl": {
+      "actualVersion": "6.261005.1",
+      "imageDigest": "sha256:5acc90a93e91ff07bf72aa90a7c9f0fa189765aec90b47bdbf2152d2196383c0",
+      "user": "1001:1001",
+      "network": "none",
+      "readonlyRootAndBind": true,
+      "capabilitiesDropped": "ALL",
+      "noNewPrivileges": true,
+      "containerRemoved": true
+    },
+    "smokeJob": "foreground actual completed command after bg110"
+  },
+  "all2404IncludedRecordsUnchangedAfterBuild": true,
+  "limits": [
+    "ARM/Mach-O built/extracted/byte-and-mode-verified but not executed",
+    "Local unsigned builds, not signed release promotion or production install",
+    "Historical paid108+18 not rerun or regraded"
+  ]
+}

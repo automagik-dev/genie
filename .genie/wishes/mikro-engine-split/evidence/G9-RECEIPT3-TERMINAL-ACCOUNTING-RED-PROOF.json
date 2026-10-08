@@ -1,0 +1,156 @@
+{
+  "schemaVersion": 1,
+  "createdAt": "2026-10-07T08:29:59.855312+00:00",
+  "candidateManifestSha256": "de15a94e6f66a7930cf639090e5a7f3fe21ab8900dc9403ce560b6ad57f8352f",
+  "actualCommand": "/home/genie/.hermes/node/bin/node <private>/final-local-smokes/diagnose-terminal-accounting-g9.mjs",
+  "actualExitCode": 1,
+  "actualSeconds": 4.38,
+  "rawOutput": "artifact://810",
+  "kind": "Red reproduction, no repair or passing-after claim",
+  "proof": {
+    "schemaVersion": 1,
+    "kind": "actual-compiled-Legacy-runTurn-terminal-accounting-red-loop",
+    "externalModelCalls": 0,
+    "realPython": true,
+    "sourceOrArtifactModified": false,
+    "packets": [
+      {
+        "case": "reported-root-failure",
+        "index": 1,
+        "usage": {
+          "prompt_tokens": 11,
+          "completion_tokens": 7,
+          "total_tokens": 18
+        }
+      },
+      {
+        "case": "reported-root-failure",
+        "index": 2,
+        "usage": {
+          "prompt_tokens": 13,
+          "completion_tokens": 5,
+          "total_tokens": 18
+        }
+      },
+      {
+        "case": "cancel-unreported",
+        "index": 1,
+        "usage": {
+          "prompt_tokens": 11,
+          "completion_tokens": 7,
+          "total_tokens": 18
+        }
+      },
+      {
+        "case": "cancel-unreported",
+        "index": 2
+      },
+      {
+        "case": "schema-invalid",
+        "index": 1,
+        "usage": {
+          "prompt_tokens": 11,
+          "completion_tokens": 7,
+          "total_tokens": 18
+        }
+      }
+    ],
+    "cases": [
+      {
+        "name": "reported-root-failure",
+        "requests": 2,
+        "outcome": {
+          "answer": "mikro receipt-fixture failed: LLM stopped with reason \"length\": No provider diagnostic",
+          "text": "mikro receipt-fixture failed: LLM stopped with reason \"length\": No provider diagnostic\n\n---\nmikro \u00b7 receipt-fixture \u00b7 receipt-fixture/control \u00b7 usage coverage: partial; unreported totals unknown \u00b7 0.6s \u00b7 session reported-root-failure\nobserved_usage: {\"coverage\":\"partial\",\"iterations\":2,\"subtotal\":{\"inputTokens\":13,\"outputTokens\":5,\"totalCost\":0.000022999999999999997},\"totals\":null}",
+          "failed": true
+        },
+        "partialObservation": {
+          "coverage": "partial",
+          "iterations": 2,
+          "subtotal": {
+            "inputTokens": 13,
+            "outputTokens": 5,
+            "totalCost": 2.2999999999999997e-05
+          },
+          "totals": null
+        }
+      },
+      {
+        "name": "cancel-unreported",
+        "requests": 2,
+        "outcome": {
+          "answer": "Error: RLM query timed out",
+          "text": "Error: RLM query timed out\n\n---\nmikro \u00b7 receipt-fixture \u00b7 receipt-fixture/control \u00b7 2 iterations \u00b7 11 in / 7 out \u00b7 $0.0000 \u00b7 0.1s \u00b7 session cancel-unreported",
+          "failed": true
+        },
+        "partialObservation": null
+      },
+      {
+        "name": "pre-aborted-zero",
+        "requests": 0,
+        "outcome": {
+          "answer": "Error: RLM query timed out",
+          "text": "Error: RLM query timed out\n\n---\nmikro \u00b7 receipt-fixture \u00b7 receipt-fixture/control \u00b7 0 iterations \u00b7 0 in / 0 out \u00b7 $0.00 \u00b7 0.0s \u00b7 session pre-aborted-zero",
+          "failed": true
+        },
+        "partialObservation": null
+      },
+      {
+        "name": "schema-invalid",
+        "requests": 1,
+        "outcome": {
+          "answer": "{\"wrong\":true}",
+          "text": "{\"wrong\":true}\n\n---\nmikro \u00b7 receipt-fixture \u00b7 receipt-fixture/control \u00b7 1 iteration \u00b7 11 in / 7 out \u00b7 $0.0000 \u00b7 0.1s \u00b7 validation_failed: true \u00b7 session schema-invalid",
+          "failed": false
+        },
+        "partialObservation": null
+      }
+    ],
+    "problems": [
+      "cumulative_prior_and_failed_packet_usage_not_preserved",
+      "cancellation_subtotal_exposed_as_complete_footer"
+    ],
+    "compiled": [
+      {
+        "path": "mikro/dist/src/rlm.js",
+        "sha256": "36235cd4e48c3fcdfaacd5714c602bd3165e22484122b5346a20319b27bccf25"
+      },
+      {
+        "path": "mikro/dist/src/mcp/backends/legacy.js",
+        "sha256": "7651e75a2ef0cb8eeac1314b7087bfe523fbb2b56a59227cd35823653c5a4a96"
+      },
+      {
+        "path": "mikro/dist/src/mcp/server.js",
+        "sha256": "866812b56ed4313ad2f8be6ba0062fcf8620e13f30943086d6916568be0539b9"
+      }
+    ],
+    "proofRoot": "/home/genie/.local/share/mikro-engine-split/experiments-g8/g9-terminal-accounting-proof-Ex1VZS"
+  },
+  "source": "import assert from 'node:assert/strict';\nimport { createServer } from 'node:http';\nimport { mkdtemp, writeFile, readFile } from 'node:fs/promises';\nimport { join } from 'node:path';\nimport { createHash } from 'node:crypto';\nimport { parseCustomProviders } from '/home/genie/orca/workspaces/genie/mikro-engine-split/mikro/dist/src/custom-providers.js';\nimport { LegacyMikroBackend } from '/home/genie/orca/workspaces/genie/mikro-engine-split/mikro/dist/src/mcp/backends/legacy.js';\nimport { runTurn } from '/home/genie/orca/workspaces/genie/mikro-engine-split/mikro/dist/src/mcp/server.js';\nconst proofRoot = await mkdtemp('/home/genie/.local/share/mikro-engine-split/experiments-g8/g9-terminal-accounting-proof-');\nlet activeCase;\nlet packetIndex = 0;\nlet controller;\nconst packets = [];\nconst server = createServer(async (req,res) => {\n  for await (const _ of req) {}\n  packetIndex++;\n  packets.push({case:activeCase,index:packetIndex});\n  if (activeCase === 'cancel-unreported' && packetIndex === 2) {\n    controller.abort(new Error('local cancellation during unreported operation'));\n    res.destroy();\n    return;\n  }\n  const failed = activeCase === 'reported-root-failure' && packetIndex === 2;\n  const text = failed ? '' : activeCase === 'schema-invalid' ? 'FINAL({\"wrong\":true})' : \"```repl\\nprint('continue')\\n```\";\n  const usage = failed ? {prompt_tokens:13,completion_tokens:5,total_tokens:18} : {prompt_tokens:11,completion_tokens:7,total_tokens:18};\n  packets[packets.length-1].usage = usage;\n  res.writeHead(200, {'Content-Type':'text/event-stream'});\n  res.end(`data: ${JSON.stringify({id:'local-terminal-accounting',object:'chat.completion.chunk',model:'control',choices:[{index:0,delta:{role:'assistant',content:text},finish_reason:failed?'length':'stop'}],usage})}\\n\\ndata: [DONE]\\n\\n`);\n});\nawait new Promise(resolve => server.listen(0,'127.0.0.1',resolve));\nconst address = server.address();\nassert(address && typeof address !== 'string');\nconst providers = parseCustomProviders({'receipt-fixture':{'base-url':`http://127.0.0.1:${address.port}/v1`,'api-key-env':'MIKRO_RLM_RECEIPT_FIXTURE_KEY',models:{control:{cost:{input:1,output:2}}}}},'local terminal diagnostic');\nprocess.env.MIKRO_RLM_RECEIPT_FIXTURE_KEY = 'fixture-only-not-a-credential';\nconst config = { system: null, tools: [], criteria: null, model: { provider: 'receipt-fixture', model: 'control', providers }, configDir: proofRoot, budget: { maxCost: null, maxTokens: null, maxDepth: 0 }, contextConfig: { extensions: ['.md'], exclude: ['node_modules'] }, toolsLevel: 'core', cache: { enabled: false, strategy: 'full', retention: 'long' }, gemini: { thinkingLevel: null, googleSearch: false, urlContext: false, codeExecution: false, computerUse: false, mapsGrounding: false, fileSearch: false, mediaResolution: null }, output: { schema: null }, storage: { enabled: 'never', mode: 'persistent', dataDir: join(proofRoot, 'data'), port: 0, chunkSize: null, chunkUtilization: 0.6, charsPerToken: 4 }, prompt: { appendStopProtocol: true }, validate: null, providers, configSource: 'yaml' };\nconst cases = [];\ntry {\n  for (const name of ['reported-root-failure','cancel-unreported','pre-aborted-zero','schema-invalid']) {\n    activeCase = name;\n    packetIndex = 0;\n    controller = new AbortController();\n    if (name === 'pre-aborted-zero') controller.abort(new Error('pre-aborted local control'));\n    config.output.schema = name === 'schema-invalid' ? {type:'object',required:['wanted'],properties:{wanted:{type:'boolean'}},additionalProperties:false} : null;\n    const outcome = await runTurn(new LegacyMikroBackend(),undefined,config,'receipt-fixture','local terminal accounting proof',name,undefined,proofRoot,undefined,name==='schema-invalid'?1:3,controller.signal);\n    const partialLine = outcome.text.split('\\n').find(line => line.startsWith('observed_usage: '));\n    cases.push({name,requests:packetIndex,outcome,partialObservation:partialLine?JSON.parse(partialLine.slice('observed_usage: '.length)):null});\n  }\n} finally {\n  delete process.env.MIKRO_RLM_RECEIPT_FIXTURE_KEY;\n  server.closeAllConnections();\n  await new Promise((resolve,reject) => server.close(error => error?reject(error):resolve()));\n}\nconst failedCase = cases.find(row => row.name==='reported-root-failure');\nconst canceledCase = cases.find(row => row.name==='cancel-unreported');\nconst problems = [];\nif (failedCase.partialObservation?.subtotal.inputTokens !== 24 || failedCase.partialObservation?.subtotal.outputTokens !== 12) problems.push('cumulative_prior_and_failed_packet_usage_not_preserved');\nif (canceledCase.partialObservation?.coverage !== 'partial' || canceledCase.partialObservation?.totals !== null) problems.push('cancellation_subtotal_exposed_as_complete_footer');\nconst paths = ['mikro/dist/src/rlm.js','mikro/dist/src/mcp/backends/legacy.js','mikro/dist/src/mcp/server.js'];\nconst compiled = [];\nfor (const rel of paths) compiled.push({path:rel,sha256:createHash('sha256').update(await readFile('/home/genie/orca/workspaces/genie/mikro-engine-split/'+rel)).digest('hex')});\nconst proof = {schemaVersion:1,kind:'actual-compiled-Legacy-runTurn-terminal-accounting-red-loop',externalModelCalls:0,realPython:true,sourceOrArtifactModified:false,packets,cases,problems,compiled,proofRoot};\nconst proofPath = join(proofRoot,'proof.json');\nawait writeFile(proofPath,JSON.stringify(proof,null,2)+'\\n',{mode:0o600,flag:'wx'});\nconsole.log(JSON.stringify({proofPath,problems,cases,localRequests:packets.length,externalModelCalls:0}));\nassert.deepEqual(problems,[],'required outward cumulative and cancellation accounting invariants');\n",
+  "sourceSha256": "df0b769a73ceba09f61689fca93ad6d659a8aa797507a38836a3a7b38931312f",
+  "noExternalModelOrJevCall": true,
+  "sourceCandidateUnchanged": true,
+  "budgets": "G3correctness3/B3 andquality1/cap1; G8 5/B5 exhausted unchanged. Source repair beyond those bounds requires owner decision.",
+  "hypothesesAndIsolation": [
+    {
+      "hypothesis": "Cumulative prior usage is lost before outward typed root failure adaptation",
+      "contrast": "reported-root-failure after11/7 then13/5 emits only13/5, not known24/12",
+      "result": "confirmed actualcompiledLegacy/runTurn"
+    },
+    {
+      "hypothesis": "Cancellation adapter marks observed prior subtotal complete although second dispatched request has no receipt",
+      "contrast": "cancel afterfirst11/7 andduringsecondunreportedrequest emits complete numeric footer, not partial",
+      "result": "confirmed actualcompiledLegacy/runTurn"
+    },
+    {
+      "hypothesis": "Strict-schema final is classified as failure by outward MCP envelope",
+      "contrast": "schema-invalid single local response withoutwanted requiredfield",
+      "result": false
+    },
+    {
+      "hypothesis": "Pre-aborted zero-call return omits receipt as cap-failure does",
+      "contrast": "pre-aborted-zero startsnoHTTPrequest; actualoutwardtextretained",
+      "result": "observation only, not proof of a paid unknown zero bill"
+    }
+  ]
+}

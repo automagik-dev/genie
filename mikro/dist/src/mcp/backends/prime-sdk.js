@@ -4,7 +4,7 @@
  * (`createAgentSession`), instead of spawning its CLI once per turn.
  *
  * Default-off and additive: nothing selects this backend unless an agent
- * spec says `backend: prime-sdk`. `src/mcp/backends/prime.ts` is untouched.
+ * spec says `engine: prime-sdk`. `src/mcp/backends/prime.ts` is untouched.
  *
  * ## Why a second prime backend
  * `PrimeBackend` shells out to `prime-agent --mode json -p` per turn, which
@@ -129,6 +129,7 @@ import { TIMEOUT_ANSWER } from "../../rlm.js";
 import { loadPythonPlugins } from "../../sdk/python-plugin.js";
 import { loadPluginTools } from "../../sdk/tool-loader.js";
 import { createToolRegistry } from "../../sdk/tool-registry.js";
+import { BackendRunError } from "../backend.js";
 import { DEFAULT_PRIME_DEADLINE_MS, EXPECTED_PRIME_VERSION } from "./prime.js";
 /** The shared prime-agent release whose SDK surface this module targets. */
 export const EXPECTED_PRIME_SDK_VERSION = EXPECTED_PRIME_VERSION;
@@ -206,7 +207,7 @@ export function resolvePrimeRoot() {
     if (probe.status !== 0 || binary.length === 0) {
         throw new Error("prime-sdk backend: prime-agent is not on PATH, so its SDK cannot be located. " +
             `Install prime-agent ${EXPECTED_PRIME_SDK_VERSION}, set MIKRO_PRIME_AGENT_ROOT to the ` +
-            "installed package root, or switch the agent back to `backend: mikro`.");
+            "installed package root, or switch the agent back to `engine: rlm`.");
     }
     // `which` yields the launcher; the real file is <root>/dist/bundle/cli.js.
     const real = spawnSync("readlink", ["-f", binary], { encoding: "utf8" });
@@ -227,7 +228,7 @@ export function assertPinnedSdkVersion(root, expected) {
     if (!existsSync(manifestPath)) {
         failWith(`prime-sdk backend: no package.json at "${manifestPath}" — "${root}" is not an installed ` +
             "prime-agent package root. Set MIKRO_PRIME_AGENT_ROOT to the right directory, or switch " +
-            "the agent back to `backend: mikro`.");
+            "the agent back to `engine: rlm`.");
     }
     let manifest;
     try {
@@ -244,7 +245,7 @@ export function assertPinnedSdkVersion(root, expected) {
             "mikro pins this backend to an exact SDK version — upgrades are deliberate events. " +
             `(The subprocess backend pins ${EXPECTED_PRIME_VERSION}; the two are separate ` +
             "compatibility surfaces — the programmatic session API versus the CLI JSON stream.) " +
-            "Move the pin as a recorded decision, or switch the agent back to `backend: mikro`.");
+            "Move the pin as a recorded decision, or switch the agent back to `engine: rlm`.");
     }
 }
 /**
@@ -261,7 +262,7 @@ export function createPrimeSdkLoader(options = {}) {
             const entry = join(root, "dist", "index.js");
             if (!existsSync(entry)) {
                 throw new Error(`prime-sdk backend: the installed prime-agent has no SDK entry point at "${entry}". ` +
-                    "Reinstall prime-agent, or switch the agent back to `backend: mikro`.");
+                    "Reinstall prime-agent, or switch the agent back to `engine: rlm`.");
             }
             return (await import(pathToFileURL(entry).href));
         })();
@@ -277,7 +278,7 @@ export function assertSupportedConfig(config, agentName) {
     const who = agentName ? `agent "${agentName}"` : "this run";
     const reject = (field, why) => {
         throw new Error(`prime-sdk backend: ${who} declares ${field}, which the prime-sdk leg cannot honor (${why}). ` +
-            "Remove it from the agent/config or switch the agent back to `backend: mikro`.");
+            "Remove it from the agent/config or switch the agent back to `engine: rlm`.");
     };
     if (config.tools && config.tools.length > 0) {
         reject("custom REPL tools (TOOLS.md)", "they are Python source injected into mikro's own REPL, and createAgentSession exposes no " +
@@ -311,7 +312,7 @@ export function assertSupportedConfig(config, agentName) {
         throw new Error(`prime-sdk backend: ${who} sets budget.max_cost on provider "${provider}", whose ` +
             "per-model pricing mikro cannot declare to prime — prime would compute every call as $0 " +
             "and the ceiling would never fire. Drop budget.max_cost, use budget.max_tokens instead, " +
-            "or switch the agent back to `backend: mikro`.");
+            "or switch the agent back to `engine: rlm`.");
     }
 }
 /** Build the `models.json` document for a custom provider, or null for a built-in. */
@@ -324,7 +325,7 @@ export function buildModelsJson(provider, modelId, agentName) {
         throw new Error(`prime-sdk backend: ${who} is pinned to model "${provider}/${modelId}", and "${provider}" is ` +
             `neither one of prime's built-in providers (${[...PRIME_BUILTIN_PROVIDERS].join(", ")}) ` +
             `nor one mikro can describe to prime (${Object.keys(CUSTOM_PROVIDERS).join(", ")}). ` +
-            "Re-pin the agent's model, or switch the agent back to `backend: mikro`.");
+            "Re-pin the agent's model, or switch the agent back to `engine: rlm`.");
     }
     return {
         providers: {
@@ -454,7 +455,7 @@ async function planSpecTools(agent) {
             `${unresolved.map((n) => `"${n}"`).join(", ")} that resolve to no plugin under ` +
             `${join(agent.spec.dir, "tools")} and name no prime built-in ` +
             `(${[...PRIME_BUILTIN_TOOLS].join(", ")}). Add the plugin file, remove the declaration, ` +
-            "or switch the agent back to `backend: mikro`. " +
+            "or switch the agent back to `engine: rlm`. " +
             `(loaded: ${[...mjs.loaded, ...py.loaded].join(", ") || "none"})`);
     }
     return { custom, builtin };
@@ -543,7 +544,11 @@ export function materializePlan(plan) {
  */
 export function runSdkSession(load, plan, emit, limits, configuredPrimeAgentDir, providerPayloadTransform) {
     return (async () => {
+        if (limits.signal?.aborted)
+            throw new BackendRunError("Prime SDK run cancelled before session startup");
         const sdk = await load();
+        if (limits.signal?.aborted)
+            throw new BackendRunError("Prime SDK run cancelled before session startup");
         materializePlan(plan);
         const primeAgentDir = configuredPrimeAgentDir ?? sdk.getAgentDir();
         // Match the CLI's canonical config inputs. Scratch is used only when Mikro
@@ -558,7 +563,7 @@ export function runSdkSession(load, plan, emit, limits, configuredPrimeAgentDir,
             const registryError = modelRegistry.getError?.();
             throw new Error(`prime-sdk backend: prime cannot resolve model "${plan.provider}/${plan.modelId}". ` +
                 (registryError ? `models.json error: ${registryError}. ` : "") +
-                "Re-pin the agent's model, or switch the agent back to `backend: mikro`.");
+                "Re-pin the agent's model, or switch the agent back to `engine: rlm`.");
         }
         // Registry models are shared catalog values. Clone rather than mutate so
         // concurrent turns with different provider output caps cannot race.
@@ -572,6 +577,7 @@ export function runSdkSession(load, plan, emit, limits, configuredPrimeAgentDir,
         let emitDoneArgs = null;
         let killed = null;
         const usage = { inputTokens: 0, outputTokens: 0, totalCost: 0 };
+        let observedUsage;
         const customTools = plan.tools.map((tool) => sdk.defineTool({
             name: tool.name,
             label: tool.name,
@@ -648,7 +654,9 @@ export function runSdkSession(load, plan, emit, limits, configuredPrimeAgentDir,
                 // Already finishing — the prompt promise is the only resolver.
             }
         };
-        session.subscribe((event) => {
+        const cancel = () => breach("cancelled");
+        limits.signal?.addEventListener("abort", cancel, { once: true });
+        const subscription = session.subscribe((event) => {
             switch (event.type) {
                 case "turn_start":
                     // Turns are prime's analog of legacy iterations. Break when the
@@ -690,6 +698,16 @@ export function runSdkSession(load, plan, emit, limits, configuredPrimeAgentDir,
                             usage.inputTokens += num(u.input);
                             usage.outputTokens += num(u.output);
                             usage.totalCost += num(u.cost?.total);
+                            const { input, output } = u;
+                            const cost = u.cost?.total;
+                            if (typeof input === "number" && Number.isFinite(input) &&
+                                typeof output === "number" && Number.isFinite(output) &&
+                                typeof cost === "number" && Number.isFinite(cost)) {
+                                observedUsage ??= { inputTokens: 0, outputTokens: 0, totalCost: 0 };
+                                observedUsage.inputTokens += input;
+                                observedUsage.outputTokens += output;
+                                observedUsage.totalCost += cost;
+                            }
                         }
                         if (limits.maxCost !== null && usage.totalCost >= limits.maxCost) {
                             breach("max-cost");
@@ -711,7 +729,11 @@ export function runSdkSession(load, plan, emit, limits, configuredPrimeAgentDir,
         });
         let deadlineTimer = setTimeout(() => breach("deadline"), limits.deadlineMs);
         try {
-            await session.prompt(plan.query);
+            // Cancellation may have arrived during asynchronous session creation.
+            if (limits.signal?.aborted)
+                cancel();
+            if (!killed)
+                await session.prompt(plan.query);
         }
         catch (err) {
             // An abort we asked for is a designed stop, not a failure; anything
@@ -723,11 +745,18 @@ export function runSdkSession(load, plan, emit, limits, configuredPrimeAgentDir,
             if (deadlineTimer)
                 clearTimeout(deadlineTimer);
             deadlineTimer = undefined;
+            limits.signal?.removeEventListener("abort", cancel);
             try {
-                session.dispose();
+                if (typeof subscription === "function")
+                    subscription();
             }
-            catch {
-                // Disposal is best-effort; the scratch dir is removed either way.
+            finally {
+                try {
+                    session.dispose();
+                }
+                catch {
+                    // Disposal is best-effort; the scratch dir is removed either way.
+                }
             }
         }
         /** The answer the model reported, or null when it never called emit_done. */
@@ -741,6 +770,10 @@ export function runSdkSession(load, plan, emit, limits, configuredPrimeAgentDir,
         };
         if (killed) {
             switch (killed) {
+                case "cancelled":
+                    throw new BackendRunError("Prime SDK run cancelled", observedUsage ? {
+                        iterations: turns, usage: observedUsage, usageComplete: false,
+                    } : undefined);
                 case "deadline":
                     // Legacy's timeout answer, so isFailedRun classifies it as failed.
                     return { answer: TIMEOUT_ANSWER, turns, budgetHit: null, usage: { ...usage } };
@@ -774,7 +807,7 @@ export function runSdkSession(load, plan, emit, limits, configuredPrimeAgentDir,
                 // exists to avoid.
                 throw new Error(`prime-sdk backend: the run finished without calling \`${EMIT_DONE_TOOL}\`, so it ` +
                     "produced no structured output for the declared `output.schema`. Re-run, relax the " +
-                    "schema, or switch the agent back to `backend: mikro`.");
+                    "schema, or switch the agent back to `engine: rlm`.");
             }
             // No schema: the final assistant text is exactly what the subprocess
             // backend would have returned, so fall back to it rather than fail.
@@ -805,15 +838,20 @@ export class PrimeSdkBackend {
         }
     }
     async run(agent, request, emit) {
+        if (request.signal?.aborted)
+            throw new BackendRunError("Prime SDK run cancelled before session startup");
         const limits = {
             deadlineMs: sdkDeadlineMs(),
             maxCost: request.config.budget?.maxCost ?? null,
             maxTokens: request.config.budget?.maxTokens ?? null,
             maxTurns: request.maxIterations !== undefined ? request.maxIterations : null,
+            signal: request.signal,
         };
         const scratchDir = createScratchDir();
         try {
             const plan = await buildPlan(scratchDir, agent, request);
+            if (request.signal?.aborted)
+                throw new BackendRunError("Prime SDK run cancelled before session startup");
             const result = await this.engine(plan, emit, limits);
             return {
                 answer: result.answer,

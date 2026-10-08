@@ -350,7 +350,7 @@ function agent(model) {
       shape: "single-step",
       tools: [],
       extras: {},
-      backend: "prime-sdk",
+      engine: "prime-sdk",
     },
   };
 }

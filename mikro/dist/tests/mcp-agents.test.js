@@ -155,7 +155,7 @@ describe("validateAgentTools", () => {
     after(() => {
         rmSync(tmp, { recursive: true, force: true });
     });
-    function agent(name, tools, backend) {
+    function agent(name, tools, engine) {
         const dir = join(tmp, "agents", name);
         mkdirSync(join(dir, "tools"), { recursive: true });
         return {
@@ -170,7 +170,7 @@ describe("validateAgentTools", () => {
                 shape: "loop",
                 tools,
                 extras: {},
-                ...(backend ? { backend } : {}),
+                ...(engine ? { engine } : {}),
             },
         };
     }
@@ -242,7 +242,7 @@ describe("validateAgentTools", () => {
     });
 });
 describe("MCP agent description truth", () => {
-    const microagent = (name, tools, backend, unavailable) => ({
+    const microagent = (name, tools, engine, unavailable) => ({
         name,
         toolName: toToolName(name),
         dir: `/tmp/${name}`,
@@ -254,30 +254,19 @@ describe("MCP agent description truth", () => {
             shape: "loop",
             tools,
             extras: {},
-            ...(backend ? { backend } : {}),
+            ...(engine ? { engine } : {}),
         },
         ...(unavailable ? { unavailable } : {}),
     });
-    it("ends every available and unavailable agent description with backend and tools", () => {
+    it("describes effective default engine and declared tools", () => {
         const tools = buildToolList([
             microagent("plain", []),
             microagent("sdk", ["search", "fetch"], "prime-sdk"),
             microagent("broken", ["ghost"], undefined, "missing tools: ghost — repair it."),
         ]);
-        assert.match(tools[1].description ?? "", /Backend: mikro\. Tools: none declared\.$/);
-        assert.match(tools[2].description ?? "", /Backend: prime-sdk\. Tools: search, fetch\.$/);
-        assert.match(tools[3].description ?? "", /Backend: mikro\. Tools: ghost\.$/);
-    });
-    it("leaves the generic tool description unchanged", () => {
-        const generic = buildToolList([])[0];
-        assert.equal(generic.description, "Launch a general-purpose mikro agent to handle a self-contained task " +
-            "autonomously (RLM loop: Python REPL plus recursion). Use it to offload " +
-            "work you would otherwise grind through inline — analysis over a large " +
-            "body of files, repeated extraction, wide searches. Give it a complete, " +
-            "standalone prompt: it runs to completion and returns a single final " +
-            "report, and cannot ask follow-up questions mid-run. The result carries " +
-            "the tokens and cost it used plus a session_id; pass that session_id back " +
-            "to this tool to continue the conversation.");
+        assert.match(tools[1].description ?? "", /Engine: rlm\. Tools: none declared\.$/);
+        assert.match(tools[2].description ?? "", /Engine: prime-sdk\. Tools: search, fetch\.$/);
+        assert.match(tools[3].description ?? "", /Engine: rlm\. Tools: ghost\.$/);
     });
 });
 /**

@@ -14,11 +14,14 @@ import type { MikroConfig, ToolDef, ValidateConfig } from "./config.js";
 import type { LoadedContext, ContextItem } from "./context.js";
 import { buildCachedSystemPrompt, computeContentHash, buildSessionId, estimateTokens } from "./cache.js";
 import { appendStopProtocol, isStructuredOutputMode } from "./stop-protocol.js";
-import { REPL } from "./repl.js";
+import { REPL, REPLTimeoutError } from "./repl.js";
+import type { ExecuteResult } from "./ipc.js";
 import { PgStorage } from "./storage.js";
 import { ObservabilityRecorder } from "./observe.js";
 import {
   llmComplete,
+  LLMCompletionError,
+  type LLMResponse,
   handleLLMRequest,
   createUsage,
   createGeminiCallCounts,
@@ -89,6 +92,26 @@ export const EMPTY_RESPONSES_BUDGET_HIT = "empty_responses";
 /** Exact `answer` returned by the wall-clock-timeout abort. */
 export const TIMEOUT_ANSWER = "Error: RLM query timed out";
 
+/** Terminal run failure carrying observed cumulative subtotals, not inferred totals. */
+export class RLMRunError extends Error {
+  readonly usage?: UsageStats;
+  readonly usageComplete = false;
+
+  constructor(
+    message: string,
+    readonly iterations: number,
+    readonly budgetHit: string | null,
+    usage?: UsageStats,
+    options?: ErrorOptions,
+  ) {
+    super(message, options);
+    this.name = "RLMRunError";
+    // Outstanding IPC can settle after failure; this receipt must remain the
+    // subtotal observed at the terminal transition, never a mutable accumulator.
+    if (usage) this.usage = Object.freeze({ ...usage });
+  }
+}
+
 /** Options for the RLM loop. */
 export interface RLMOptions {
   maxIterations: number;
@@ -115,13 +138,15 @@ export interface RLMOptions {
   emitter?: EmitterAndStream;
   /** Declared-tool resolver exposed to Python through the REPL bridge. */
   tools?: ToolResolver;
+  /** Caller cancellation; combined with the existing wall-clock deadline. */
+  signal?: AbortSignal;
 }
 
 /**
  * Add live SDK events and run-scoped cancellation to REPL tool dispatch.
  *
- * The REPL supplies its own signal to a ToolResolver. Declared plugins instead
- * receive the enclosing run's signal so the loop timeout can interrupt them.
+ * Declared plugins receive combined generation and run cancellation, so a
+ * timed-out block cannot keep a bridge dispatch alive in the replacement.
  */
 export function bridgeToolResolver(
   resolver: ToolResolver,
@@ -135,7 +160,8 @@ export function bridgeToolResolver(
     readonly signal: AbortSignal;
   }
 ): ToolResolver {
-  return async (tool, args, _replSignal) => {
+  return async (tool, args, replSignal) => {
+    const signal = AbortSignal.any([options.signal, replSignal]);
     emitter.emit(makeEvent<ToolCallBeforeEvent>("ToolCallBefore", {
       sessionId: options.sessionId,
       ...options.selfTag,
@@ -144,8 +170,18 @@ export function bridgeToolResolver(
       args,
     }));
     const startMs = Date.now();
+    let rejectAbort: ((reason: unknown) => void) | undefined;
+    const onAbort = (): void => rejectAbort?.(signal.reason);
     try {
-      const result = await resolver(tool, args, options.signal);
+      signal.throwIfAborted();
+      const result = await Promise.race([
+        resolver(tool, args, signal),
+        new Promise<never>((_resolve, reject) => {
+          rejectAbort = reject;
+          signal.addEventListener("abort", onAbort, { once: true });
+          if (signal.aborted) onAbort();
+        }),
+      ]);
       emitter.emit(makeEvent<ToolCallAfterEvent>("ToolCallAfter", {
         sessionId: options.sessionId,
         ...options.selfTag,
@@ -168,6 +204,8 @@ export function bridgeToolResolver(
         ok: false,
       }));
       throw error;
+    } finally {
+      signal.removeEventListener("abort", onAbort);
     }
   };
 }
@@ -388,13 +426,12 @@ export interface ValidationGate {
   readonly validate: ValidateConfig | null;
   /** Validate attempts spent INCLUDING this one (1 on the first check). */
   readonly attempt: number;
-  /** False at the forced-final site: validate and flag, but never retry. */
+  /** False when a terminal-only candidate may be validated but not retried. */
   readonly retryCapable: boolean;
   /**
    * True when another iteration is actually available — the caller mirrors
    * the loop's own top-of-loop tests (iteration budget, wall-clock abort,
-   * cost/token budget) so a granted retry can never hang or silently become
-   * the forced-final path.
+   * cost/token budget) so a granted retry never consumes an extra model turn.
    */
   readonly roomForRetry: boolean;
 }
@@ -458,6 +495,18 @@ export async function rlmLoop(
   const childUsage = createUsage();
   const geminiCounts = createGeminiCallCounts();
   const budget = new BudgetTracker(config.budget);
+  let recordedInputTokens = 0;
+  let recordedOutputTokens = 0;
+  let recordedCost = 0;
+  // Root and IPC completions can settle across a timeout generation boundary.
+  // Account each cumulative increment once, regardless of completion ordering.
+  const recordBudgetUsage = (): void => {
+    budget.record(usage.inputTokens - recordedInputTokens, usage.outputTokens - recordedOutputTokens,
+      usage.totalCost - recordedCost);
+    recordedInputTokens = usage.inputTokens;
+    recordedOutputTokens = usage.outputTokens;
+    recordedCost = usage.totalCost;
+  };
 
   // ── Storage mode setup ──────────────────────────────────
   let storage: PgStorage | undefined;
@@ -535,9 +584,15 @@ export async function rlmLoop(
   let cacheConfig: CacheLLMConfig | undefined;
   let abortController!: AbortController;
   let timeoutHandle!: ReturnType<typeof setTimeout>;
+  let removeCallerAbort: (() => void) | undefined;
+  let actualIterations = 0;
+  let rootFailure: LLMCompletionError | undefined;
   let repl!: REPL;
 
   try {
+    if (!Number.isSafeInteger(opts.maxIterations) || opts.maxIterations < 1) {
+      throw new Error("maxIterations must be a positive integer");
+    }
     if (opts.storageMode) {
       storage = new PgStorage();
       await storage.start(config.storage);
@@ -596,6 +651,10 @@ export async function rlmLoop(
     // cannot leak a dangling timer (nothing after setTimeout can throw).
     repl = new REPL();
     abortController = new AbortController();
+    const onCallerAbort = (): void => abortController.abort(opts.signal?.reason);
+    opts.signal?.addEventListener("abort", onCallerAbort, { once: true });
+    removeCallerAbort = () => opts.signal?.removeEventListener("abort", onCallerAbort);
+    if (opts.signal?.aborted) onCallerAbort();
     if (opts.tools) {
       repl.onToolRequest(bridgeToolResolver(opts.tools, emitter, {
         sessionId: selfCorrelationId,
@@ -608,6 +667,7 @@ export async function rlmLoop(
     }, opts.timeout);
   } catch (err: unknown) {
     if (timeoutHandle) clearTimeout(timeoutHandle);
+    removeCallerAbort?.();
     if (recorder) recorder.recordError(err instanceof Error ? err.message : String(err));
     if (storage) await storage.stop().catch(() => {});
     emitter.emit(makeEvent<ErrorEvent>("Error", {
@@ -633,23 +693,23 @@ export async function rlmLoop(
     }
 
     await repl.start({
-      context: replContext as string | string[] | Record<string, unknown>,
+      context: replContext,
       tools: Object.keys(toolsMap).length > 0 ? toolsMap : undefined,
       loadGeminiBatteries: isGoogleProvider(config.model.provider) && (config.toolsLevel === "standard" || config.toolsLevel === "full"),
       loadPgBatteries: !!opts.storageMode,
       toolsLevel: config.toolsLevel,
+      signal: abortController.signal,
     });
 
     // Set up LLM request handler for REPL IPC — pass storage for pg_* routes
-    repl.onLLMRequest(async (request) => {
+    repl.onLLMRequest(async (request, generationSignal) => {
       const startMs = Date.now();
-      const childUsageBefore = { ...childUsage };
       const remainingChildBudget = buildRemainingChildBudget(config, budget);
       const results = await handleLLMRequest(
         request,
         config,
         usage,
-        abortController.signal,
+        AbortSignal.any([abortController.signal, generationSignal]),
         geminiCounts,
         storage,
         childUsage,
@@ -657,6 +717,7 @@ export async function rlmLoop(
           logger: opts.logger,
           parentRunId: selfCorrelationId,
           maxIterations: opts.maxIterations,
+          maxRetries: opts.maxRetries,
           timeout: opts.timeout,
           maxDepth: config.budget.maxDepth ?? 3,
           maxCost: remainingChildBudget.maxCost,
@@ -687,18 +748,7 @@ export async function rlmLoop(
             }
           },
         }
-      );
-      const childUsageDelta = {
-        inputTokens: childUsage.inputTokens - childUsageBefore.inputTokens,
-        outputTokens: childUsage.outputTokens - childUsageBefore.outputTokens,
-        cacheReadTokens: childUsage.cacheReadTokens - childUsageBefore.cacheReadTokens,
-        cacheWriteTokens: childUsage.cacheWriteTokens - childUsageBefore.cacheWriteTokens,
-        totalCost: childUsage.totalCost - childUsageBefore.totalCost,
-        llmCalls: childUsage.llmCalls - childUsageBefore.llmCalls,
-      };
-      if (childUsageDelta.llmCalls > 0) {
-        budget.record(childUsageDelta.inputTokens, childUsageDelta.outputTokens, childUsageDelta.totalCost);
-      }
+      ).finally(recordBudgetUsage);
       // Record sub-calls to observability
       if (recorder && request.request_type !== "llm_query" && request.request_type !== "llm_query_batched") {
         recorder.recordSubCall(
@@ -718,6 +768,7 @@ export async function rlmLoop(
       validationFailed = false
     ): Promise<RLMResult> => {
       clearTimeout(timeoutHandle);
+      removeCallerAbort?.();
       // Record final observability event
       if (recorder) {
         recorder.recordFinal(answer, iterations, {
@@ -741,32 +792,35 @@ export async function rlmLoop(
       return buildResult(answer, usage, iterations, config, budget.getState().budgetHit, geminiCounts, repl.getGeminiBatteriesUsed(), buildUsageBreakdown(usage, childUsage), validationFailed);
     };
 
-    // ── VALIDATE.md gate ──────────────────────────────────
-    // One wrapper, seven finalize sites. Validation logic lives in
-    // `decideValidatedFinal`; this closure supplies the run-scoped inputs
-    // (attempt counter, remaining room) and owns the observability.
+    // Every accepted final checks both output.schema and VALIDATE.md, if declared.
+    const finalSchemas: ValidateConfig[] = [];
+    if (config.output.schema) {
+      finalSchemas.push({ schema: config.output.schema, rawBlock: JSON.stringify(config.output.schema) });
+    }
+    if (config.validate) finalSchemas.push(config.validate);
     let validateAttempts = 0;
     const finalizeWithValidation = (
       answer: string,
       iteration: number,
       mode: "retry-capable" | "flag-only"
     ): ValidationDecision => {
-      if (!config.validate) {
+      if (finalSchemas.length === 0) {
         return { kind: "finalize", validationFailed: false, errors: [] };
       }
       validateAttempts += 1;
-      const decision = decideValidatedFinal(answer, {
-        validate: config.validate,
-        attempt: validateAttempts,
-        retryCapable: mode === "retry-capable",
-        // The three tests the top of the loop would apply next. Checking them
-        // here is what keeps a granted retry from degrading into the
-        // forced-final path (or into an iteration that never runs).
-        roomForRetry:
-          iteration + 1 < opts.maxIterations &&
-          !abortController.signal.aborted &&
-          !budget.isExceeded(),
-      });
+      let decision: ValidationDecision = { kind: "finalize", validationFailed: false, errors: [] };
+      for (const validate of finalSchemas) {
+        decision = decideValidatedFinal(answer, {
+          validate,
+          attempt: validateAttempts,
+          retryCapable: mode === "retry-capable",
+          roomForRetry:
+            iteration + 1 < opts.maxIterations &&
+            !abortController.signal.aborted &&
+            !budget.isExceeded(),
+        });
+        if (decision.kind === "retry" || decision.validationFailed) break;
+      }
       if (decision.kind === "finalize" && !decision.validationFailed) return decision;
 
       emitter.emit(makeEvent<ValidationEvent>("Validation", {
@@ -792,19 +846,18 @@ export async function rlmLoop(
       { role: "system", content: systemPrompt },
       {
         role: "user",
-        content: buildUserPrompt(query, 0, contextMetadata),
+        content: opts.maxIterations === 1 ? `${contextMetadata}\n\nQuery: ${query}` : buildUserPrompt(query, 0, contextMetadata),
       },
     ];
+    recordBudgetUsage(); // Zero cost/token allowances are already exhausted.
 
     // Iteration loop
-    let actualIterations = 0;
     let consecutiveEmpty = 0;
     let emptyAbort = false;
     for (let iteration = 0; iteration < opts.maxIterations; iteration++) {
       // Check timeout
       if (abortController.signal.aborted) {
-        if (opts.verbose) logVerbose(iteration, "timeout reached");
-        break;
+        throw new Error("RLM query deadline or cancellation reached");
       }
 
       // Check budget
@@ -813,14 +866,18 @@ export async function rlmLoop(
         break;
       }
       actualIterations = iteration + 1;
+      const finalTurn = iteration === opts.maxIterations - 1;
+      if (finalTurn) {
+        const finalInstruction = isStructuredOutputMode(config)
+          ? "Return complete JSON matching the declared schemas."
+          : "Use FINAL(<answer>) or FINAL_VAR(<existing variable>).";
+        appendValidationRetryTurn(messages,
+          "This is the last model turn within maxIterations. Provide your complete final answer NOW from the available context and observations. " +
+          finalInstruction + " Do not start more analysis or model/tool calls.");
+      }
 
-      // Set when this iteration's FINAL lost its schema check and the wrapper
-      // granted a retry. Nothing downstream may finalize once it is set; the
-      // hint becomes this turn's user message at the very end of the body.
-      // Held in an object rather than a `let`: the only write happens inside
-      // the `settle` closure below, which makes tsc narrow every outer read
-      // to `null` and type-check none of them. A property read is re-widened
-      // at each site, so the comparisons downstream are actually checked.
+      // Repair feedback owns the next allowed turn; no later candidate from
+      // this response may finalize once a retry has been requested.
       const retryState: { hint: string | null } = { hint: null };
 
       /**
@@ -831,6 +888,12 @@ export async function rlmLoop(
         candidate: string,
         mode: "retry-capable" | "flag-only"
       ): Promise<RLMResult | null> => {
+        const trimmed = candidate.trim();
+        if (!trimmed || trimmed === "..." || trimmed === "…" || trimmed === "Ellipsis") {
+          retryState.hint = "FINAL requires a complete answer, not an empty value or ellipsis.";
+          return null;
+        }
+        abortController.signal.throwIfAborted();
         const decision = finalizeWithValidation(candidate, iteration, mode);
         if (decision.kind === "finalize") {
           return finalize(candidate, iteration + 1, decision.validationFailed);
@@ -861,16 +924,28 @@ export async function rlmLoop(
         model: formatModelRef(config.model.provider, config.model.model),
         iteration,
       });
-      const response = await llmComplete(messages, config.model, {
-        maxTokens: opts.maxOutputTokens,
-        maxRetries: opts.maxRetries,
-        signal: abortController.signal,
-        cacheConfig,
-        thinkingLevel: config.gemini.thinkingLevel,
-        temperature: config.temperature,
-        outputSchema: config.output.schema,
-        geminiConfig: config.gemini,
-      });
+      let response: LLMResponse;
+      try {
+        response = await llmComplete(messages, config.model, {
+          maxTokens: opts.maxOutputTokens,
+          maxRetries: opts.maxRetries,
+          signal: abortController.signal,
+          cacheConfig,
+          thinkingLevel: config.gemini.thinkingLevel,
+          temperature: config.temperature,
+          outputSchema: config.output.schema,
+          geminiConfig: config.gemini,
+        });
+      } catch (error: unknown) {
+        if (error instanceof LLMCompletionError) {
+          rootFailure = error;
+          if (error.usage) {
+            mergeUsage(usage, error.usage);
+            recordBudgetUsage();
+          }
+        }
+        throw error;
+      }
       const llmDurationMs = Date.now() - llmStartMs;
       langfuse.rootGenerationEnd(generationId, {
         output: response.text,
@@ -878,7 +953,8 @@ export async function rlmLoop(
         usage: response.usage,
       });
       mergeUsage(usage, response.usage);
-      budget.record(response.usage.inputTokens, response.usage.outputTokens, response.usage.totalCost);
+      recordBudgetUsage();
+      abortController.signal.throwIfAborted();
 
       // Live metrics: accumulate this iteration's tokens + cost so the
       // IterationOutput snapshot carries per-node cost/tokens/latency.
@@ -947,28 +1023,18 @@ export async function rlmLoop(
         if (opts.verbose) {
           logVerbose(iteration, "structured output mode: response is final answer");
         }
-        return finalize(responseText, iteration + 1);
-      }
-
-      // Check for FINAL signal in the text (outside code blocks)
-      const finalSignal = detectFinal(responseText, codeBlocks);
-
-      if (finalSignal && codeBlocks.length === 0) {
-        const candidate =
-          finalSignal.type === "final"
-            ? finalSignal.value
-            // FINAL_VAR without code — get variable value before stopping REPL
-            : (await getVariableFromRepl(repl, finalSignal.value)) ?? finalSignal.value;
-        const settled = await settle(candidate, "retry-capable");
+        const settled = await settle(responseText, "retry-capable");
         if (settled) return settled;
-        // Otherwise a retry was granted: fall through with no code blocks to
-        // execute, so the iteration ends at the hint injection below.
       }
+
+      // Resolve text FINAL signals only after this turn's code has executed.
+      const finalSignal = isStructuredOutputMode(config) ? null : detectFinal(responseText, codeBlocks);
 
       // Execute code blocks in REPL
       const executions: ExecutionResult[] = [];
 
       for (const block of codeBlocks) {
+        if (budget.isExceeded()) break;
         if (opts.verbose) {
           logVerbose(iteration, `executing code (${block.code.length} chars)`);
         }
@@ -982,7 +1048,23 @@ export async function rlmLoop(
           args: block.code,
         }));
         const execStartMs = Date.now();
-        const execResult = await repl.execute(block.code);
+        let execResult: ExecuteResult;
+        let timedOut = false;
+        try {
+          execResult = await repl.execute(block.code);
+        } catch (error: unknown) {
+          const message = error instanceof Error ? error.message : String(error);
+          if (error instanceof REPLTimeoutError && !abortController.signal.aborted) {
+            timedOut = true;
+            execResult = { type: "execute_result", stdout: "", stderr: "", variables: [], error: message };
+          } else {
+            emitter.emit(makeEvent<ToolCallAfterEvent>("ToolCallAfter", {
+              sessionId: selfCorrelationId, ...selfTag, iteration, tool: "repl",
+              result: message, durationMs: Date.now() - execStartMs, ok: false,
+            }));
+            throw error;
+          }
+        }
         const execDurationMs = Date.now() - execStartMs;
         metrics.incrToolCalls();
         emitter.emit(makeEvent<ToolCallAfterEvent>("ToolCallAfter", {
@@ -990,7 +1072,7 @@ export async function rlmLoop(
           ...selfTag,
           iteration,
           tool: "repl",
-          result: execResult.stdout,
+          result: execResult.error ?? execResult.stdout,
           durationMs: execDurationMs,
           ok: !execResult.error,
         }));
@@ -1017,6 +1099,11 @@ export async function rlmLoop(
           // Retry granted: stop executing this turn's remaining blocks, but
           // keep the `executions` collected so far — `formatIterationResult`
           // below still shows the model what its code printed.
+          break;
+        }
+        if (timedOut) {
+          // Remaining blocks may depend on the lost namespace.
+          retryState.hint = execResult.error ?? "REPL timeout discarded all user-created variables; the block was not replayed.";
           break;
         }
       }
@@ -1046,27 +1133,29 @@ export async function rlmLoop(
       // that payload is the one being retried, and re-reading it here would
       // charge a second validate attempt for the same answer.
       if (finalSignal && retryState.hint === null) {
-        if (finalSignal.type === "final") {
+        if (finalSignal.type === "invalid") {
+          retryState.hint = finalSignal.value;
+        } else if (finalSignal.type === "final") {
           const settled = await settle(finalSignal.value, "retry-capable");
           if (settled) return settled;
         } else {
-          // FINAL_VAR — variable should now exist after code execution
-          const varExec = await repl.execute(
-            `__final_val = str(${finalSignal.value}) if '${finalSignal.value}' in dir() else "Variable '${finalSignal.value}' not found"`
-          );
-          if (varExec.final) {
-            const settled = await settle(varExec.final.value, "retry-capable");
-            if (settled) return settled;
-          } else {
-            const getResult = await repl.execute(
-              `FINAL_VAR("${finalSignal.value}")`
-            );
-            if (getResult.final) {
-              const settled = await settle(getResult.final.value, "retry-capable");
+          try {
+            const result = await repl.execute(`FINAL_VAR(${JSON.stringify(finalSignal.value)})`);
+            if (result.final) {
+              const settled = await settle(result.final.value, "retry-capable");
               if (settled) return settled;
+            } else {
+              retryState.hint = result.error || result.stdout.trim() ||
+                `Variable ${JSON.stringify(finalSignal.value)} not found; create it before FINAL.`;
             }
+          } catch (error: unknown) {
+            if (!(error instanceof REPLTimeoutError) || abortController.signal.aborted) throw error;
+            retryState.hint = error.message;
           }
         }
+      } else if (finalTurn && codeBlocks.length === 0 && retryState.hint === null && responseText.trim()) {
+        const settled = await settle(responseText, "flag-only");
+        if (settled) return settled;
       }
 
       // Format execution results and append to history
@@ -1152,6 +1241,7 @@ export async function rlmLoop(
         `mikro: 3 consecutive empty LLM responses — aborting. Context may exceed API limits.\n`
       );
       clearTimeout(timeoutHandle);
+      removeCallerAbort?.();
       if (recorder) recorder.recordError(EMPTY_RESPONSES_BUDGET_HIT);
       await repl.stop();
       if (storage) await storage.stop();
@@ -1176,25 +1266,25 @@ export async function rlmLoop(
       );
     }
 
-    // Force a final answer for normal loop exit
-    if (opts.verbose) {
-      const reason = budget.isExceeded() ? "budget exceeded" : abortController.signal.aborted ? "timeout" : "max iterations reached";
-      logVerbose(actualIterations, `${reason}, forcing final answer`);
-    }
-
-    const forcedResult = await forceFinalAnswer(messages, config, usage, abortController.signal, cacheConfig, langfuse, actualIterations);
-    // Flag-only: the budget that would pay for a retry is exactly what ran
-    // out to get here, so this payload is validated and flagged, never
-    // retried. Consumers disambiguate exhaustion from a shape miss with the
-    // `budgetHit` / `iterations` fields, which are unaffected.
-    const forcedDecision = finalizeWithValidation(forcedResult, actualIterations, "flag-only");
-    return finalize(
-      forcedResult,
+    // No completion is allowed outside the model-turn cap or after cost/token
+    // exhaustion. A run without a final remains a meaningful failure.
+    const reason = budget.getState().budgetHit ?? "maxIterations";
+    throw new RLMRunError(
+      `RLM ${reason} exhausted without a complete final answer (${actualIterations} model turns)`,
       actualIterations,
-      forcedDecision.kind === "finalize" && forcedDecision.validationFailed
+      budget.getState().budgetHit,
+      usage.llmCalls > 0 ? usage : undefined,
     );
   } catch (err: unknown) {
+    // The root failure packet has already been merged once. Preserve the
+    // cumulative run observations, including earlier root and IPC calls, at
+    // this terminal transition rather than exposing only the failed packet.
+    const terminalError = err instanceof LLMCompletionError
+      ? new RLMRunError(err.message, actualIterations, budget.getState().budgetHit,
+          usage.llmCalls > 0 ? usage : undefined, { cause: err })
+      : err;
     clearTimeout(timeoutHandle);
+    removeCallerAbort?.();
     if (recorder) recorder.recordError(err instanceof Error ? err.message : String(err));
     await repl.stop().catch(() => {});
     if (storage) await storage.stop().catch(() => {});
@@ -1208,6 +1298,8 @@ export async function rlmLoop(
         name: err instanceof Error ? err.name : "Error",
         message: err instanceof Error ? err.message : String(err),
         ...(err instanceof Error && err.stack ? { stack: err.stack } : {}),
+        ...(rootFailure ? { stopReason: rootFailure.stopReason } : {}),
+        ...(terminalError instanceof RLMRunError && terminalError.usage ? { usage: terminalError.usage } : {}),
       },
     }));
     closeEmitter(aborted ? "abort" : "error");
@@ -1216,7 +1308,7 @@ export async function rlmLoop(
       return buildResult(
         TIMEOUT_ANSWER,
         usage,
-        0,
+        actualIterations,
         config,
         budget.getState().budgetHit,
         geminiCounts,
@@ -1225,72 +1317,10 @@ export async function rlmLoop(
       );
     }
 
-    throw err;
+    throw terminalError;
   }
 }
 
-/**
- * Force the LLM to produce a final answer when max iterations are reached.
- */
-async function forceFinalAnswer(
-  messages: ChatMessage[],
-  config: MikroConfig,
-  usage: UsageStats,
-  signal?: AbortSignal,
-  cacheConfig?: CacheLLMConfig,
-  langfuse?: LangfuseTraceRecorder,
-  iteration = 0
-): Promise<string> {
-  const forceMessages: ChatMessage[] = [
-    ...messages,
-    {
-      role: "user",
-      content:
-        "You have reached the maximum number of iterations. Please provide your best final answer NOW based on what you've learned so far. Respond with just the answer, no FINAL() wrapper needed.",
-    },
-  ];
-
-  const generationId = langfuse?.rootGenerationStart({
-    name: "Model call — forced final answer",
-    input: forceMessages,
-    model: formatModelRef(config.model.provider, config.model.model),
-    iteration,
-  });
-  const llmStartMs = Date.now();
-  const response = await llmComplete(forceMessages, config.model, {
-    signal,
-    cacheConfig,
-    thinkingLevel: config.gemini.thinkingLevel,
-    temperature: config.temperature,
-    outputSchema: config.output.schema,
-    geminiConfig: config.gemini,
-  });
-  if (generationId) {
-    langfuse?.rootGenerationEnd(generationId, {
-      output: response.text,
-      durationMs: Date.now() - llmStartMs,
-      usage: response.usage,
-    });
-  }
-  mergeUsage(usage, response.usage);
-  return response.text;
-}
-
-/**
- * Try to get a variable value from the REPL (if still running).
- */
-async function getVariableFromRepl(
-  repl: REPL,
-  varName: string
-): Promise<string | null> {
-  if (!repl.isRunning()) return null;
-  try {
-    const result = await repl.execute(`FINAL_VAR("${varName}")`);
-    return result.final?.value ?? null;
-  } catch {
-    return null;
-  }
-}
 
 function buildUsageBreakdown(total: UsageStats, child: UsageStats): UsageBreakdown {
   return {

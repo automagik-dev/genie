@@ -4,13 +4,19 @@
  * Provides completeSimple wrapper, batched calls, IPC request handling
  * from the Python REPL, and rlm_query child process spawning.
  */
-import type { AssistantMessage as PiAssistantMessage, SimpleStreamOptions } from "@earendil-works/pi-ai";
+import type { Api, AssistantMessageEventStream, Context, Model, Models, AssistantMessage as PiAssistantMessage, SimpleStreamOptions, MutableModels } from "@earendil-works/pi-ai";
+import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { type CustomProviderConfig } from "./custom-providers.js";
 import type { MikroConfig, ModelConfig, GeminiConfig } from "./config.js";
 import type { LLMRequest } from "./ipc.js";
 import type { Logger } from "./logger.js";
 import type { PgStorage } from "./storage.js";
 import { type ThinkingLevel } from "./gemini.js";
+export declare function getModelRuntime(providers?: readonly CustomProviderConfig[]): MutableModels;
+/** Only the selected dynamic gateway may perform catalog discovery. */
+export declare function prepareModelRuntime(modelConfig: ModelConfig): Promise<MutableModels>;
+/** Fresh headless Pi session runtime: no operator files, ambient models config or auth writes. */
+export declare function createPiModelRuntime(modelConfig: ModelConfig): Promise<ModelRuntime>;
 /** Token usage tracking. */
 export interface UsageStats {
     inputTokens: number;
@@ -22,6 +28,25 @@ export interface UsageStats {
     /** Reasoning/thinking tokens (a subset of outputTokens), when the provider reports them. */
     reasoningTokens?: number;
 }
+export type LLMFailureStopReason = "error" | "aborted" | "length";
+/** Redact credentials and request bodies before provider diagnostics reach logs/callers. */
+export declare function secretSafeErrorMessage(message: string, modelConfig?: ModelConfig): string;
+/** `usage` belongs to this failed logical operation; merge it once, never also its partial response. */
+export declare class LLMCompletionError extends Error {
+    readonly stopReason: LLMFailureStopReason;
+    readonly usage?: UsageStats | undefined;
+    readonly errorMessage: string;
+    constructor(stopReason: LLMFailureStopReason, errorMessage?: string, usage?: UsageStats | undefined, modelConfig?: ModelConfig);
+}
+/**
+ * Public SDK stream boundary. Keeps the runtime's auth/provider/retry closure and caller observer.
+ * Provenance is attached only to terminal messages after an actual provider usage packet.
+ */
+export declare function streamLLMCompletion(runtime: Pick<Models, "streamSimple">, model: Model<Api>, context: Context, options?: SimpleStreamOptions): AssistantMessageEventStream;
+/** Provider token convention is unchanged, including cache tokens and reasoning subsets. */
+export declare function reportedUsage(response: PiAssistantMessage): UsageStats | undefined;
+/** Call on complete results or streaming terminal messages before consuming text/tools. */
+export declare function assertLLMCompletion(response: PiAssistantMessage, modelConfig?: ModelConfig): void;
 /** Create a fresh usage tracker. */
 export declare function createUsage(): UsageStats;
 /** Return a - b for usage accounting splits. */
@@ -84,12 +109,12 @@ export declare function formatModelRef(provider: string, modelId: string): strin
 /**
  * Resolve a pi-ai model for `<provider>/<modelId>`.
  *
- * `providers` are the config-declared providers riding on the model config;
- * they are registered on the shared runtime before lookup so a declared
- * `<id>/<model>` resolves exactly like a built-in. Exported so the MCP server
- * and `mikro doctor` can validate a pin without making a call.
+ * `providers` are registered only on their config-scoped catalog before lookup.
+ * A supplied runtime is used as-is, so isolated sessions reuse the same ID
+ * normalization and fallback without touching another catalog. Exported so
+ * MCP and `mikro doctor` can validate a pin without making a call.
  */
-export declare function resolveModel(provider: string, modelId: string, providers?: readonly CustomProviderConfig[]): import("@earendil-works/pi-ai").Model<import("@earendil-works/pi-ai").Api>;
+export declare function resolveModel(provider: string, modelId: string, providers?: readonly CustomProviderConfig[], runtime?: Models): Model<Api>;
 /**
  * Check that a model config resolves, without calling anything. Returns the
  * failure message, or null when the pin is good.
@@ -129,6 +154,8 @@ export interface LlmCompleteOptions {
  * call byte-for-byte as it was.
  */
 export declare function buildPiOptions(options?: LlmCompleteOptions): SimpleStreamOptions;
+/** Request controls shared by text completions, native tools and the Pi stream wrapper. */
+export declare function buildCompletionOptions(modelConfig: ModelConfig, options?: LlmCompleteOptions): SimpleStreamOptions;
 /**
  * Call pi/ai completeSimple with messages.
  * Tracks cost and time_ms per call. Optionally emits to a Logger.
@@ -138,11 +165,11 @@ export declare function llmComplete(messages: ChatMessage[], modelConfig: ModelC
  * Call pi/ai completeSimple for a single prompt (no conversation history).
  * Used for llm_query() sub-calls from the REPL.
  */
-export declare function llmCompleteSimple(prompt: string, modelConfig: ModelConfig, signal?: AbortSignal): Promise<LLMResponse>;
+export declare function llmCompleteSimple(prompt: string, modelConfig: ModelConfig, signal?: AbortSignal, options?: Omit<LlmCompleteOptions, "signal">): Promise<LLMResponse>;
 /**
  * Run multiple llm_query calls concurrently.
  */
-export declare function llmCompleteBatched(prompts: string[], modelConfig: ModelConfig, signal?: AbortSignal): Promise<{
+export declare function llmCompleteBatched(prompts: string[], modelConfig: ModelConfig, signal?: AbortSignal, options?: Omit<LlmCompleteOptions, "signal">): Promise<{
     results: string[];
     usage: UsageStats;
 }>;
@@ -255,6 +282,8 @@ export declare function resolveChildModelRef(config: MikroConfig, requestedModel
  * When geminiCounts is provided, increments Gemini-specific call counters.
  */
 export declare function handleLLMRequest(request: LLMRequest, config: MikroConfig, usage: UsageStats, signal?: AbortSignal, geminiCounts?: GeminiCallCounts, storage?: PgStorage, childUsage?: UsageStats, recursiveOptions?: RlmChildInvocationOptions & {
+    /** Ordinary transport retries for direct REPL model calls, not task retries. */
+    maxRetries?: number;
     logger?: Logger;
     parentRunId?: string;
     onChildStart?: (data: {

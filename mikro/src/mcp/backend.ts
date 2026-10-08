@@ -7,12 +7,6 @@
  * backend owns "what actually executes the turn", so a second engine can
  * slot in behind the same host-visible surface.
  *
- * Deliberately no `signal` parameter: the MCP server has no cancellation
- * wiring and `RLMOptions` (`src/rlm.ts`) has no `signal` field, so a signal
- * would have no producer and no legacy consumer. Each backend owns its own
- * stopping semantics — the legacy backend keeps its internal
- * `maxIterations`/`timeout` → `budgetHit` behavior; a future backend owns a
- * deadline/kill of its own.
  */
 
 import type { MikroConfig } from "../config.js";
@@ -37,6 +31,8 @@ export interface BackendRequest {
   readonly maxOutputTokens?: number;
   /** Provider transport retries per root model call. Zero disables retries. */
   readonly maxRetries?: number;
+  /** Optional host cancellation; each engine also owns its deadline. */
+  readonly signal?: AbortSignal;
   /**
    * Server working directory the turn runs against (`--dir` / the server's
    * cwd). The legacy backend has no use for it — context is already loaded
@@ -60,9 +56,9 @@ export interface BackendRequest {
  * `validationFailed`, and `usage.inputTokens` / `usage.outputTokens` /
  * `usage.totalCost`, and nothing else. A field beyond these would be dead
  * weight a backend must manufacture for nobody to read — which is why
- * `validationFailed` is listed here rather than merely tolerated: it has a
- * named reader (`formatFooter`'s footer segment), and a backend that cannot
- * produce it simply omits it.
+ * `validationFailed` is listed here rather than merely tolerated: it has
+ * named readers in the footer and failed-tool classification. A backend that
+ * cannot produce it simply omits it.
  */
 export interface MicroagentResult {
   readonly answer: string;
@@ -71,9 +67,9 @@ export interface MicroagentResult {
   readonly budgetHit?: string | null;
   /**
    * Mirrors `RLMResult.validation_failed` (camelCase here because this is an
-   * internal seam, not a serialized wire shape): the answer above does not
-   * match the pack's declared `VALIDATE.md` schema. This field is
-   * legacy-backend-only today: the prime backends neither read
+   * internal seam, not a serialized wire shape): the answer above failed a
+   * declared output schema or `VALIDATE.md` schema and is a failed MCP tool response.
+   * This field is legacy-backend-only today: the prime backends neither read
    * `config.validate` nor disclose it to the model, so they never set it —
    * not because they enforce that schema elsewhere. (`emit_done`'s parameter
    * schema comes from `config.output.schema`, a different declaration; a
@@ -81,11 +77,25 @@ export interface MicroagentResult {
    * Extending validation to the prime backends is out of scope per the wish.
    */
   readonly validationFailed?: boolean;
+  /** False means this receipt is only the observed subtotal; unreported totals remain unknown. */
+  readonly usageComplete?: boolean;
   readonly usage: {
     readonly inputTokens: number;
     readonly outputTokens: number;
     readonly totalCost: number;
   };
+}
+
+/** Failed backend operation carrying only actual observed receipts, never a fabricated zero. */
+export class BackendRunError extends Error {
+  constructor(
+    message: string,
+    readonly receipt?: Omit<MicroagentResult, "answer">,
+    options?: ErrorOptions,
+  ) {
+    super(message, options);
+    this.name = "BackendRunError";
+  }
 }
 
 /**
@@ -94,10 +104,10 @@ export interface MicroagentResult {
  * `agent` is the resolved microagent — `undefined` for the generic
  * `mikro_query` tool, which has no agent spec. `request` carries the resolved
  * config and query; `emit` reports progress messages (without the tool label —
- * the server prefixes it) while the run executes. A throw is a *failed run*
- * the server reports as a tool error; the two designed non-throwing aborts
- * (empty responses, wall-clock timeout) must return normally so the server's
- * `isFailedRun` classification keeps working.
+ * the server prefixes it) while the run executes. A throw is a failed run
+ * reported as a tool error; BackendRunError retains any observed partial receipt.
+ * Normal empty-response, timeout and validation-failed results also classify as
+ * failures. Legacy timeout uses BackendRunError so a subtotal is never a full bill.
  */
 export interface RuntimeBackend {
   run(

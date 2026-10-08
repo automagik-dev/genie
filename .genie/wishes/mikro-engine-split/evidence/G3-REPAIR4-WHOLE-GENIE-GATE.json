@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "createdAt": "2026-10-08T02:37:42.924950+00:00",
+  "job": "bg_108",
+  "actualExitCode": 0,
+  "actualSeconds": 504.78,
+  "rawOutputArtifact": "artifact://866",
+  "rawOutputSha256": "1aa57cac685f28d0d4d3e989b49631e0b4902e2240e872bd4b82ad3f9a1410ae",
+  "wholeOutputRead": true,
+  "explicitExitMarker": "G3_REPAIR4_WHOLE_GENIE_GATE_EXIT=0",
+  "actualCommand": "bun install --frozen-lockfile && env -u NO_COLOR TMPDIR=/var/tmp flock /var/tmp/genie-full-check.lock bun run check",
+  "actualStageChain": [
+    "typecheck root and both DSH plugins",
+    "Biome full lint",
+    "knip",
+    "skills lint",
+    "wishes lint",
+    "complexity budget",
+    "whole Bun tests"
+  ],
+  "actualSummary": {
+    "pass": 3215,
+    "skip": 2,
+    "fail": 0,
+    "assertions": 19183,
+    "files": 156,
+    "tests": 3217,
+    "testSeconds": 482.08
+  },
+  "warningsRetained": [
+    "Existing doctor codexPluginSurfaceChecks complexity26 warning, separately reviewed bounded classifier; not modified",
+    "Four knip configuration hints unchanged"
+  ],
+  "candidateManifestSha256": "423ab63772c9b93c2b86657f997a7b960acecc2bf63516d57f29b3dbc04212c5",
+  "attempts": "4/B4",
+  "quality": "1/cap1 unchanged",
+  "G8": "5/B5 unchanged",
+  "historicalPaidResultsNotRerun": true
+}

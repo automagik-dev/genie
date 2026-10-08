@@ -1,0 +1,896 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-10-06T18:53:41.351600Z",
+  "kind": "owner-authorized-cancelled-pre-repair-graded-cohort-preservation",
+  "ownerDecision": "G3-CAP-RECEIPT-OWNER-DECISION.json",
+  "job": "bg_67",
+  "actualCancellationToolResult": "Cancelled background job bg_67",
+  "noCohortCompletionClaim": true,
+  "oldEngineInput": {
+    "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/frozen-inputs/engine-manifest-utc.json",
+    "kind": "file",
+    "sha256": "f2da493a09de46e3686bfbfebc29a2bce8ca40478593aa5f6d30b0098b49691b"
+  },
+  "oldNativeInput": {
+    "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/frozen-inputs/native-manifest-contained-facts.json",
+    "kind": "file",
+    "sha256": "12d07cc27533b5d7831886523104814a4c240aacaa2ceb65b1d1ab2d4bef9957"
+  },
+  "actualPostCancellationDispatchCount": 53,
+  "actualPostCancellationCompleteResultCount": 52,
+  "unfinishedDispatchedIds": [
+    "g8-engine-brain-new-directory-glm-5-3-pi-r2"
+  ],
+  "notDispatchedCount": 55,
+  "dispatches": [
+    {
+      "id": "g8-engine-genie-existing-flash-control-rlm-unpatched-r1",
+      "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipts/scored-cohort/dispatch/g8-engine-genie-existing-flash-control-rlm-unpatched-r1.json",
+      "sha256": "5571af5aaa5cbca51522d1826a38054428c31f823c9647a7dc548e4258fc526f",
+      "fixtureId": "genie-existing",
+      "modelId": "flash-control",
+      "arm": "rlm-unpatched"
+    },
+    {
+      "id": "g8-engine-genie-existing-flash-control-rlm-unpatched-r2",
+      "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipts/scored-cohort/dispatch/g8-engine-genie-existing-flash-control-rlm-unpatched-r2.json",
+      "sha256": "d43ea89de7bec119a97533098b7bb0a0cdca3695557df06cea0b385f5e3cd294",
+      "fixtureId": "genie-existing",
+      "modelId": "flash-control",
+      "arm": "rlm-unpatched"
+    },
+    {
+      "id": "g8-engine-genie-existing-flash-control-rlm-unpatched-r3",
+      "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipts/scored-cohort/dispatch/g8-engine-genie-existing-flash-control-rlm-unpatched-r3.json",
+      "sha256": "0021095bde2720e5b625a1e0bb11873087ae9162c413528b8b9c7c3f2c2be170",
+      "fixtureId": "genie-existing",
+      "modelId": "flash-control",
+      "arm": "rlm-unpatched"
+    },
+    {
+      "id": "g8-engine-genie-existing-flash-control-rlm-patched-r1",
+      "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipts/scored-cohort/dispatch/g8-engine-genie-existing-flash-control-rlm-patched-r1.json",
+      "sha256": "45c6c540f2ee780071fb00e12520fb9a4796df2bc7d83ca79268a85b7639f2e4",
+      "fixtureId": "genie-existing",
+      "modelId": "flash-control",
+      "arm": "rlm-patched"
+    },
+    {
+      "id": "g8-engine-genie-existing-flash-control-rlm-patched-r2",
+      "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipts/scored-cohort/dispatch/g8-engine-genie-existing-flash-control-rlm-patched-r2.json",
+      "sha256": "02e2eccb78a8e25c190f863aded0233d178787a431d7ecf1b63de7d95bbf9469",
+      "fixtureId": "genie-existing",
+      "modelId": "flash-control",
+      "arm": "rlm-patched"
+    },
+    {
+      "id": "g8-engine-genie-existing-flash-control-rlm-patched-r3",
+      "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipts/scored-cohort/dispatch/g8-engine-genie-existing-flash-control-rlm-patched-r3.json",
+      "sha256": "e3d30f27719692713c9f232386d69d0955d2ddeafee151bb2d69f4edd87374d9",
+      "fixtureId": "genie-existing",
+      "modelId": "flash-control",
+      "arm": "rlm-patched"
+    },
+    {
+      "id": "g8-engine-genie-existing-flash-control-pi-r1",
+      "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipts/scored-cohort/dispatch/g8-engine-genie-existing-flash-control-pi-r1.json",
+      "sha256": "679a024ac4d17a5342ea76cd32c8a3dd011333f5ee587ef0bfd0464b0db499ce",
+      "fixtureId": "genie-existing",
+      "modelId": "flash-control",
+      "arm": "pi"
+    },
+    {
+      "id": "g8-engine-genie-existing-flash-control-pi-r2",
+      "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipts/scored-cohort/dispatch/g8-engine-genie-existing-flash-control-pi-r2.json",
+      "sha256": "fdc7601757e1b6685f4fa25291af2f2a195a00db75a75e3e799c05f07bdf98a7",
+      "fixtureId": "genie-existing",
+      "modelId": "flash-control",
+      "arm": "pi"
+    },
+    {
+      "id": "g8-engine-genie-existing-flash-control-pi-r3",
+      "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipts/scored-cohort/dispatch/g8-engine-genie-existing-flash-control-pi-r3.json",
+      "sha256": "f1017614fb88a2b9f2672ab6d9d224b48c662c565922ede68c2e30078b39e4db",
+      "fixtureId": "genie-existing",
+      "modelId": "flash-control",
+      "arm": "pi"
+    },
+    {
+      "id": "g8-engine-brain-existing-flash-control-rlm-unpatched-r1",
+      "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipts/scored-cohort/dispatch/g8-engine-brain-existing-flash-control-rlm-unpatched-r1.json",
+      "sha256": "4abfe744ce11e7c2c64b750e70f13c68a2f07e1a55ec4ff2c2feebaec3f0bfad",
+      "fixtureId": "brain-existing",
+      "modelId": "flash-control",
+      "arm": "rlm-unpatched"
+    },
+    {
+      "id": "g8-engine-brain-existing-flash-control-rlm-unpatched-r2",
+      "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipts/scored-cohort/dispatch/g8-engine-brain-existing-flash-control-rlm-unpatched-r2.json",
+      "sha256": "b741bcbdcadf4330e92e43783d9c266047f8e4c94241b7be9846f2ee0c764bee",
+      "fixtureId": "brain-existing",
+      "modelId": "flash-control",
+      "arm": "rlm-unpatched"
+    },
+    {
+      "id": "g8-engine-brain-existing-flash-control-rlm-unpatched-r3",
+      "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipts/scored-cohort/dispatch/g8-engine-brain-existing-flash-control-rlm-unpatched-r3.json",
+      "sha256": "2d7827d49d43537a8eb59b6353fc3c1c8c9c2f70da557a1564bed8579629fc72",
+      "fixtureId": "brain-existing",
+      "modelId": "flash-control",
+      "arm": "rlm-unpatched"
+    },
+    {
+      "id": "g8-engine-brain-existing-flash-control-rlm-patched-r1",
+      "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipts/scored-cohort/dispatch/g8-engine-brain-existing-flash-control-rlm-patched-r1.json",
+      "sha256": "862ed96f4171b2761fc29d2876d365e142d38e5ef912bf26bc77f422db2a7529",
+      "fixtureId": "brain-existing",
+      "modelId": "flash-control",
+      "arm": "rlm-patched"
+    },
+    {
+      "id": "g8-engine-brain-existing-flash-control-rlm-patched-r2",
+      "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipts/scored-cohort/dispatch/g8-engine-brain-existing-flash-control-rlm-patched-r2.json",
+      "sha256": "e255620aadc1428e1e14d3504a7455b1c323388d03b2450cc9e270bcdba482a8",
+      "fixtureId": "brain-existing",
+      "modelId": "flash-control",
+      "arm": "rlm-patched"
+    },
+    {
+      "id": "g8-engine-brain-existing-flash-control-rlm-patched-r3",
+      "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipts/scored-cohort/dispatch/g8-engine-brain-existing-flash-control-rlm-patched-r3.json",
+      "sha256": "0b601ca39c4a22fb473704403c04d72aa3591d37383227601656fbae1256d8e7",
+      "fixtureId": "brain-existing",
+      "modelId": "flash-control",
+      "arm": "rlm-patched"
+    },
+    {
+      "id": "g8-engine-brain-existing-flash-control-pi-r1",
+      "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipts/scored-cohort/dispatch/g8-engine-brain-existing-flash-control-pi-r1.json",
+      "sha256": "25cd8e8163c083ef4442da1a55409b2695ae631fcb54bddfb6710fb4e3492bbd",
+      "fixtureId": "brain-existing",
+      "modelId": "flash-control",
+      "arm": "pi"
+    },
+    {
+      "id": "g8-engine-brain-existing-flash-control-pi-r2",
+      "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipts/scored-cohort/dispatch/g8-engine-brain-existing-flash-control-pi-r2.json",
+      "sha256": "d79d71ca2a2c9bd6f2e607e3018e94c6a1ed4057b3c31fba01bed5e17ad2ca29",
+      "fixtureId": "brain-existing",
+      "modelId": "flash-control",
+      "arm": "pi"
+    },
+    {
+      "id": "g8-engine-brain-existing-flash-control-pi-r3",
+      "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipts/scored-cohort/dispatch/g8-engine-brain-existing-flash-control-pi-r3.json",
+      "sha256": "17e61342e3d8293e80939a6fd5efa79cf50b5b3bc6f5f9794b6b2cc476facbb3",
+      "fixtureId": "brain-existing",
+      "modelId": "flash-control",
+      "arm": "pi"
+    },
+    {
+      "id": "g8-engine-brain-new-directory-flash-control-rlm-unpatched-r1",
+      "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipts/scored-cohort/dispatch/g8-engine-brain-new-directory-flash-control-rlm-unpatched-r1.json",
+      "sha256": "31dbc5259b4a5fffdb71223a3e75832a43b9e6829c316b08be88bab3b51daa73",
+      "fixtureId": "brain-new-directory",
+      "modelId": "flash-control",
+      "arm": "rlm-unpatched"
+    },
+    {
+      "id": "g8-engine-brain-new-directory-flash-control-rlm-unpatched-r2",
+      "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipts/scored-cohort/dispatch/g8-engine-brain-new-directory-flash-control-rlm-unpatched-r2.json",
+      "sha256": "b1e1940e79e317cedbaf6d6f9b0b0fa49697893965ecd32819f4d94f080ac72c",
+      "fixtureId": "brain-new-directory",
+      "modelId": "flash-control",
+      "arm": "rlm-unpatched"
+    },
+    {
+      "id": "g8-engine-brain-new-directory-flash-control-rlm-unpatched-r3",
+      "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipts/scored-cohort/dispatch/g8-engine-brain-new-directory-flash-control-rlm-unpatched-r3.json",
+      "sha256": "aa7f1038a916113b5b5bbc5a47ee103f2005de665951bceb8a385842370ce54c",
+      "fixtureId": "brain-new-directory",
+      "modelId": "flash-control",
+      "arm": "rlm-unpatched"
+    },
+    {
+      "id": "g8-engine-brain-new-directory-flash-control-rlm-patched-r1",
+      "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipts/scored-cohort/dispatch/g8-engine-brain-new-directory-flash-control-rlm-patched-r1.json",
+      "sha256": "32ca7c98446c7b9482dad1026f75b68c98b0ecea134f5c785fb67791b6c0e827",
+      "fixtureId": "brain-new-directory",
+      "modelId": "flash-control",
+      "arm": "rlm-patched"
+    },
+    {
+      "id": "g8-engine-brain-new-directory-flash-control-rlm-patched-r2",
+      "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipts/scored-cohort/dispatch/g8-engine-brain-new-directory-flash-control-rlm-patched-r2.json",
+      "sha256": "ba2f78478905e5c87f19d801ae3bfb554b14cd53fb778a2e98ebb9379c5b6791",
+      "fixtureId": "brain-new-directory",
+      "modelId": "flash-control",
+      "arm": "rlm-patched"
+    },
+    {
+      "id": "g8-engine-brain-new-directory-flash-control-rlm-patched-r3",
+      "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipts/scored-cohort/dispatch/g8-engine-brain-new-directory-flash-control-rlm-patched-r3.json",
+      "sha256": "8f9116e8ac04a7db58c0b0b38b54060c1d8a82829102f9ca0742491bdcb82a0c",
+      "fixtureId": "brain-new-directory",
+      "modelId": "flash-control",
+      "arm": "rlm-patched"
+    },
+    {
+      "id": "g8-engine-brain-new-directory-flash-control-pi-r1",
+      "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipts/scored-cohort/dispatch/g8-engine-brain-new-directory-flash-control-pi-r1.json",
+      "sha256": "1a7f3b86e282ec2a669c8c12bbd15ea92c7d7089dd4947a96624af63a1f7016e",
+      "fixtureId": "brain-new-directory",
+      "modelId": "flash-control",
+      "arm": "pi"
+    },
+    {
+      "id": "g8-engine-brain-new-directory-flash-control-pi-r2",
+      "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipts/scored-cohort/dispatch/g8-engine-brain-new-directory-flash-control-pi-r2.json",
+      "sha256": "9a51839344cd98b0df5e4b800786fce70f0d36effd8d3208675cfef28231a884",
+      "fixtureId": "brain-new-directory",
+      "modelId": "flash-control",
+      "arm": "pi"
+    },
+    {
+      "id": "g8-engine-brain-new-directory-flash-control-pi-r3",
+      "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipts/scored-cohort/dispatch/g8-engine-brain-new-directory-flash-control-pi-r3.json",
+      "sha256": "82304e796b03c42088f45facac420a5611a99974fe71b6580b3498462d13c7c0",
+      "fixtureId": "brain-new-directory",
+      "modelId": "flash-control",
+      "arm": "pi"
+    },
+    {
+      "id": "g8-engine-genie-new-directory-flash-control-rlm-unpatched-r1",
+      "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipts/scored-cohort/dispatch/g8-engine-genie-new-directory-flash-control-rlm-unpatched-r1.json",
+      "sha256": "c8457e512eb9fdcedcca3320822ecc2beee15e73c133ca6182ca0a0c42922200",
+      "fixtureId": "genie-new-directory",
+      "modelId": "flash-control",
+      "arm": "rlm-unpatched"
+    },
+    {
+      "id": "g8-engine-genie-new-directory-flash-control-rlm-unpatched-r2",
+      "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipts/scored-cohort/dispatch/g8-engine-genie-new-directory-flash-control-rlm-unpatched-r2.json",
+      "sha256": "b221cd94998ba58cd4338b7c1487b38c4e584671c32d453d5031fbdade6afb92",
+      "fixtureId": "genie-new-directory",
+      "modelId": "flash-control",
+      "arm": "rlm-unpatched"
+    },
+    {
+      "id": "g8-engine-genie-new-directory-flash-control-rlm-unpatched-r3",
+      "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipts/scored-cohort/dispatch/g8-engine-genie-new-directory-flash-control-rlm-unpatched-r3.json",
+      "sha256": "00ccd73f30fff5b674a8500b39994f665284ba493b4432c8c5a02ef6780fe22a",
+      "fixtureId": "genie-new-directory",
+      "modelId": "flash-control",
+      "arm": "rlm-unpatched"
+    },
+    {
+      "id": "g8-engine-genie-new-directory-flash-control-rlm-patched-r1",
+      "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipts/scored-cohort/dispatch/g8-engine-genie-new-directory-flash-control-rlm-patched-r1.json",
+      "sha256": "05a0a79c2904e46601e879ebad86a9b471d4dae166c3ee7239ba877c27ca9439",
+      "fixtureId": "genie-new-directory",
+      "modelId": "flash-control",
+      "arm": "rlm-patched"
+    },
+    {
+      "id": "g8-engine-genie-new-directory-flash-control-rlm-patched-r2",
+      "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipts/scored-cohort/dispatch/g8-engine-genie-new-directory-flash-control-rlm-patched-r2.json",
+      "sha256": "5c1b0d3c907e38d00c147a1c06fca87479a1d79f497e5291472058dfe3c9c5bc",
+      "fixtureId": "genie-new-directory",
+      "modelId": "flash-control",
+      "arm": "rlm-patched"
+    },
+    {
+      "id": "g8-engine-genie-new-directory-flash-control-rlm-patched-r3",
+      "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipts/scored-cohort/dispatch/g8-engine-genie-new-directory-flash-control-rlm-patched-r3.json",
+      "sha256": "d3bddf5758f1d1f904020583e93a8354c07fe2726fdb129dc3314048d97196e8",
+      "fixtureId": "genie-new-directory",
+      "modelId": "flash-control",
+      "arm": "rlm-patched"
+    },
+    {
+      "id": "g8-engine-genie-new-directory-flash-control-pi-r1",
+      "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipts/scored-cohort/dispatch/g8-engine-genie-new-directory-flash-control-pi-r1.json",
+      "sha256": "abe7c0d672c8e78ee8bd6a14667bbb062ab9c43c310b519ecbab533343fd90ba",
+      "fixtureId": "genie-new-directory",
+      "modelId": "flash-control",
+      "arm": "pi"
+    },
+    {
+      "id": "g8-engine-genie-new-directory-flash-control-pi-r2",
+      "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipts/scored-cohort/dispatch/g8-engine-genie-new-directory-flash-control-pi-r2.json",
+      "sha256": "b4f7ab19d6054f42b1299e85d37d657e0376c0e56ca96861088d580c248f1439",
+      "fixtureId": "genie-new-directory",
+      "modelId": "flash-control",
+      "arm": "pi"
+    },
+    {
+      "id": "g8-engine-genie-new-directory-flash-control-pi-r3",
+      "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipts/scored-cohort/dispatch/g8-engine-genie-new-directory-flash-control-pi-r3.json",
+      "sha256": "d96abd6b033a523b9e0054016d83944b8d00c4cc48b1557e64af7c162ac588de",
+      "fixtureId": "genie-new-directory",
+      "modelId": "flash-control",
+      "arm": "pi"
+    },
+    {
+      "id": "g8-engine-genie-existing-glm-5-3-rlm-patched-r1",
+      "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipts/scored-cohort/dispatch/g8-engine-genie-existing-glm-5-3-rlm-patched-r1.json",
+      "sha256": "c6a9aa0d710f8815e48823bab0fdf493efcbb0da5f21fc80e35a74be5ce61227",
+      "fixtureId": "genie-existing",
+      "modelId": "glm-5-3",
+      "arm": "rlm-patched"
+    },
+    {
+      "id": "g8-engine-genie-existing-glm-5-3-rlm-patched-r2",
+      "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipts/scored-cohort/dispatch/g8-engine-genie-existing-glm-5-3-rlm-patched-r2.json",
+      "sha256": "7784d0452cd828740ea02c29afc26c911ad75c6717f03b68a381fb96d4ea0eda",
+      "fixtureId": "genie-existing",
+      "modelId": "glm-5-3",
+      "arm": "rlm-patched"
+    },
+    {
+      "id": "g8-engine-genie-existing-glm-5-3-rlm-patched-r3",
+      "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipts/scored-cohort/dispatch/g8-engine-genie-existing-glm-5-3-rlm-patched-r3.json",
+      "sha256": "220b64900165d7c02a98d7f3d40fa0c18918a1b0ee2fd1ac176c200a51fb4e8e",
+      "fixtureId": "genie-existing",
+      "modelId": "glm-5-3",
+      "arm": "rlm-patched"
+    },
+    {
+      "id": "g8-engine-genie-existing-glm-5-3-pi-r1",
+      "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipts/scored-cohort/dispatch/g8-engine-genie-existing-glm-5-3-pi-r1.json",
+      "sha256": "c21322e6d60684d4ecd76bd3033bc6104a67b9bb714e66e80c7cdfba9931eb43",
+      "fixtureId": "genie-existing",
+      "modelId": "glm-5-3",
+      "arm": "pi"
+    },
+    {
+      "id": "g8-engine-genie-existing-glm-5-3-pi-r2",
+      "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipts/scored-cohort/dispatch/g8-engine-genie-existing-glm-5-3-pi-r2.json",
+      "sha256": "b121dd70386cce902da78cd948baa179bac854580e1e5d4748bad0d8020e011c",
+      "fixtureId": "genie-existing",
+      "modelId": "glm-5-3",
+      "arm": "pi"
+    },
+    {
+      "id": "g8-engine-genie-existing-glm-5-3-pi-r3",
+      "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipts/scored-cohort/dispatch/g8-engine-genie-existing-glm-5-3-pi-r3.json",
+      "sha256": "62319ebf7d664ef62e903e27b634ebe7a8ea73f337493045376f2c51acc0de70",
+      "fixtureId": "genie-existing",
+      "modelId": "glm-5-3",
+      "arm": "pi"
+    },
+    {
+      "id": "g8-engine-brain-existing-glm-5-3-rlm-patched-r1",
+      "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipts/scored-cohort/dispatch/g8-engine-brain-existing-glm-5-3-rlm-patched-r1.json",
+      "sha256": "9de50a53008d6781ae31d1047b7cf4087722222492d4081e02baddfad2ea9521",
+      "fixtureId": "brain-existing",
+      "modelId": "glm-5-3",
+      "arm": "rlm-patched"
+    },
+    {
+      "id": "g8-engine-brain-existing-glm-5-3-rlm-patched-r2",
+      "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipts/scored-cohort/dispatch/g8-engine-brain-existing-glm-5-3-rlm-patched-r2.json",
+      "sha256": "76ba6cd5a6b93f0d9f6ece2288395d6a8a6a6d48b7884a1757256bacf80edf1a",
+      "fixtureId": "brain-existing",
+      "modelId": "glm-5-3",
+      "arm": "rlm-patched"
+    },
+    {
+      "id": "g8-engine-brain-existing-glm-5-3-rlm-patched-r3",
+      "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipts/scored-cohort/dispatch/g8-engine-brain-existing-glm-5-3-rlm-patched-r3.json",
+      "sha256": "f11e281e907ca91c6b7d6cf49ccac614b0cbb53693384f6a82a8962875880e56",
+      "fixtureId": "brain-existing",
+      "modelId": "glm-5-3",
+      "arm": "rlm-patched"
+    },
+    {
+      "id": "g8-engine-brain-existing-glm-5-3-pi-r1",
+      "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipts/scored-cohort/dispatch/g8-engine-brain-existing-glm-5-3-pi-r1.json",
+      "sha256": "58a2e96e1519957542470e4f7fa644a01ebf470f70c4d937166e7422fa8ee563",
+      "fixtureId": "brain-existing",
+      "modelId": "glm-5-3",
+      "arm": "pi"
+    },
+    {
+      "id": "g8-engine-brain-existing-glm-5-3-pi-r2",
+      "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipts/scored-cohort/dispatch/g8-engine-brain-existing-glm-5-3-pi-r2.json",
+      "sha256": "d8ee63c4260decc12dfb8a9fa8040dc6c64d5ee3cafe862f14016b40c48d8a26",
+      "fixtureId": "brain-existing",
+      "modelId": "glm-5-3",
+      "arm": "pi"
+    },
+    {
+      "id": "g8-engine-brain-existing-glm-5-3-pi-r3",
+      "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipts/scored-cohort/dispatch/g8-engine-brain-existing-glm-5-3-pi-r3.json",
+      "sha256": "0b3327d524633b0a0a3e716387f337fc42a970fcd259c0866138327e136ab10c",
+      "fixtureId": "brain-existing",
+      "modelId": "glm-5-3",
+      "arm": "pi"
+    },
+    {
+      "id": "g8-engine-brain-new-directory-glm-5-3-rlm-patched-r1",
+      "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipts/scored-cohort/dispatch/g8-engine-brain-new-directory-glm-5-3-rlm-patched-r1.json",
+      "sha256": "3f9997bf6daf6f6a43f9ed6bfa0722b071e20796e88609151cd663209de0a26b",
+      "fixtureId": "brain-new-directory",
+      "modelId": "glm-5-3",
+      "arm": "rlm-patched"
+    },
+    {
+      "id": "g8-engine-brain-new-directory-glm-5-3-rlm-patched-r2",
+      "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipts/scored-cohort/dispatch/g8-engine-brain-new-directory-glm-5-3-rlm-patched-r2.json",
+      "sha256": "d50fabec09ab56e8c7e24085ad7e8e3655e39378c70cf6e32fe5f03731f48fca",
+      "fixtureId": "brain-new-directory",
+      "modelId": "glm-5-3",
+      "arm": "rlm-patched"
+    },
+    {
+      "id": "g8-engine-brain-new-directory-glm-5-3-rlm-patched-r3",
+      "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipts/scored-cohort/dispatch/g8-engine-brain-new-directory-glm-5-3-rlm-patched-r3.json",
+      "sha256": "8a33dfb6b8e6ddfc4da96aa6b9eff290cd569a9ecc8aaab7b0d7c12575864ca5",
+      "fixtureId": "brain-new-directory",
+      "modelId": "glm-5-3",
+      "arm": "rlm-patched"
+    },
+    {
+      "id": "g8-engine-brain-new-directory-glm-5-3-pi-r1",
+      "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipts/scored-cohort/dispatch/g8-engine-brain-new-directory-glm-5-3-pi-r1.json",
+      "sha256": "69a67e41e5f18bc66c44ee3cf30edd9c72618e7abec38f3f53cd27d62f517922",
+      "fixtureId": "brain-new-directory",
+      "modelId": "glm-5-3",
+      "arm": "pi"
+    },
+    {
+      "id": "g8-engine-brain-new-directory-glm-5-3-pi-r2",
+      "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipts/scored-cohort/dispatch/g8-engine-brain-new-directory-glm-5-3-pi-r2.json",
+      "sha256": "f6cacf194c861cc8e01176d637c9ff4d9dec7de927f131c421748b736fb81c6b",
+      "fixtureId": "brain-new-directory",
+      "modelId": "glm-5-3",
+      "arm": "pi"
+    }
+  ],
+  "completedResults": [
+    {
+      "id": "g8-engine-genie-existing-flash-control-rlm-unpatched-r1",
+      "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipts/scored-cohort/runs/g8-engine-genie-existing-flash-control-rlm-unpatched-r1.json",
+      "sha256": "2b44422433a2043fbfd0135fe7c02cc9911b5569e48037c314fa83644753c4c5",
+      "fixtureId": "genie-existing",
+      "modelId": "flash-control",
+      "arm": "rlm-unpatched"
+    },
+    {
+      "id": "g8-engine-genie-existing-flash-control-rlm-unpatched-r2",
+      "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipts/scored-cohort/runs/g8-engine-genie-existing-flash-control-rlm-unpatched-r2.json",
+      "sha256": "c836c87650a261ee8ed1247eedf53ba6968c6e4be69fa6257a7a8e51e9ecd639",
+      "fixtureId": "genie-existing",
+      "modelId": "flash-control",
+      "arm": "rlm-unpatched"
+    },
+    {
+      "id": "g8-engine-genie-existing-flash-control-rlm-unpatched-r3",
+      "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipts/scored-cohort/runs/g8-engine-genie-existing-flash-control-rlm-unpatched-r3.json",
+      "sha256": "e1c195a9b2c867543e4c1a4e8c28f3f2ebcc5307eedca4031efab18589bb744c",
+      "fixtureId": "genie-existing",
+      "modelId": "flash-control",
+      "arm": "rlm-unpatched"
+    },
+    {
+      "id": "g8-engine-genie-existing-flash-control-rlm-patched-r1",
+      "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipts/scored-cohort/runs/g8-engine-genie-existing-flash-control-rlm-patched-r1.json",
+      "sha256": "d5f5ab35e8a97f9d8fc40936a11faad45d1cb30a7a045dbc2de444e76e9241a6",
+      "fixtureId": "genie-existing",
+      "modelId": "flash-control",
+      "arm": "rlm-patched"
+    },
+    {
+      "id": "g8-engine-genie-existing-flash-control-rlm-patched-r2",
+      "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipts/scored-cohort/runs/g8-engine-genie-existing-flash-control-rlm-patched-r2.json",
+      "sha256": "a22edb6f89bd021f169106842637d7b5b5fa0b6d9ded676a0d40290c85b64657",
+      "fixtureId": "genie-existing",
+      "modelId": "flash-control",
+      "arm": "rlm-patched"
+    },
+    {
+      "id": "g8-engine-genie-existing-flash-control-rlm-patched-r3",
+      "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipts/scored-cohort/runs/g8-engine-genie-existing-flash-control-rlm-patched-r3.json",
+      "sha256": "3593de3bb9f913d846fb39f18b4f8f7749509a1376383c1556c47d4fff126220",
+      "fixtureId": "genie-existing",
+      "modelId": "flash-control",
+      "arm": "rlm-patched"
+    },
+    {
+      "id": "g8-engine-genie-existing-flash-control-pi-r1",
+      "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipts/scored-cohort/runs/g8-engine-genie-existing-flash-control-pi-r1.json",
+      "sha256": "75471c632a4b3058ebbb00ead728655bf97da6aecfde469104c9538f4c610ae8",
+      "fixtureId": "genie-existing",
+      "modelId": "flash-control",
+      "arm": "pi"
+    },
+    {
+      "id": "g8-engine-genie-existing-flash-control-pi-r2",
+      "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipts/scored-cohort/runs/g8-engine-genie-existing-flash-control-pi-r2.json",
+      "sha256": "f0cb5831e302d64ea4161def80cecdf371c7732584cf704858f413ff5c09bc7c",
+      "fixtureId": "genie-existing",
+      "modelId": "flash-control",
+      "arm": "pi"
+    },
+    {
+      "id": "g8-engine-genie-existing-flash-control-pi-r3",
+      "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipts/scored-cohort/runs/g8-engine-genie-existing-flash-control-pi-r3.json",
+      "sha256": "513a6a31acad5b79eddf9c06868a44bd45fbd93f484355ac1bb2db0ffd1da59e",
+      "fixtureId": "genie-existing",
+      "modelId": "flash-control",
+      "arm": "pi"
+    },
+    {
+      "id": "g8-engine-brain-existing-flash-control-rlm-unpatched-r1",
+      "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipts/scored-cohort/runs/g8-engine-brain-existing-flash-control-rlm-unpatched-r1.json",
+      "sha256": "992519afd255737492936bbe99b680399b0459b5fccd647f55751ab3780a37a8",
+      "fixtureId": "brain-existing",
+      "modelId": "flash-control",
+      "arm": "rlm-unpatched"
+    },
+    {
+      "id": "g8-engine-brain-existing-flash-control-rlm-unpatched-r2",
+      "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipts/scored-cohort/runs/g8-engine-brain-existing-flash-control-rlm-unpatched-r2.json",
+      "sha256": "ec03c62ed84829dd68f1cf470e19298fb90755a7743090bfe35fc6a4b0e01a01",
+      "fixtureId": "brain-existing",
+      "modelId": "flash-control",
+      "arm": "rlm-unpatched"
+    },
+    {
+      "id": "g8-engine-brain-existing-flash-control-rlm-unpatched-r3",
+      "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipts/scored-cohort/runs/g8-engine-brain-existing-flash-control-rlm-unpatched-r3.json",
+      "sha256": "44c5c46df0277a9b54937f762592caecb4187ee6533f59a099f235fdea819a82",
+      "fixtureId": "brain-existing",
+      "modelId": "flash-control",
+      "arm": "rlm-unpatched"
+    },
+    {
+      "id": "g8-engine-brain-existing-flash-control-rlm-patched-r1",
+      "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipts/scored-cohort/runs/g8-engine-brain-existing-flash-control-rlm-patched-r1.json",
+      "sha256": "2bc5cd7680f5096fc2cafbdd35f191241803c6875d8b1722c08ecd71c948e99e",
+      "fixtureId": "brain-existing",
+      "modelId": "flash-control",
+      "arm": "rlm-patched"
+    },
+    {
+      "id": "g8-engine-brain-existing-flash-control-rlm-patched-r2",
+      "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipts/scored-cohort/runs/g8-engine-brain-existing-flash-control-rlm-patched-r2.json",
+      "sha256": "585ce80b90eeb589c451c2e7edfa3085e8da40c7ce3ddf0a5acdf4e9d1f007d0",
+      "fixtureId": "brain-existing",
+      "modelId": "flash-control",
+      "arm": "rlm-patched"
+    },
+    {
+      "id": "g8-engine-brain-existing-flash-control-rlm-patched-r3",
+      "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipts/scored-cohort/runs/g8-engine-brain-existing-flash-control-rlm-patched-r3.json",
+      "sha256": "7f36a37d2cfbc2b3f8fc1a2f7785fc92a6d3fe0edf0f2f7e2e5a07f979b7ae3b",
+      "fixtureId": "brain-existing",
+      "modelId": "flash-control",
+      "arm": "rlm-patched"
+    },
+    {
+      "id": "g8-engine-brain-existing-flash-control-pi-r1",
+      "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipts/scored-cohort/runs/g8-engine-brain-existing-flash-control-pi-r1.json",
+      "sha256": "eb5c7eb273f0354db2d9e0abb65698890996bd7f92712d043559c13eba2a9fe4",
+      "fixtureId": "brain-existing",
+      "modelId": "flash-control",
+      "arm": "pi"
+    },
+    {
+      "id": "g8-engine-brain-existing-flash-control-pi-r2",
+      "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipts/scored-cohort/runs/g8-engine-brain-existing-flash-control-pi-r2.json",
+      "sha256": "c89729a220b45bafb9abe9c2d3a2b193c286a6505241a65a4ebf37ca9c0a1720",
+      "fixtureId": "brain-existing",
+      "modelId": "flash-control",
+      "arm": "pi"
+    },
+    {
+      "id": "g8-engine-brain-existing-flash-control-pi-r3",
+      "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipts/scored-cohort/runs/g8-engine-brain-existing-flash-control-pi-r3.json",
+      "sha256": "c696a1b5258c677d0df829bcecd75313f43f6846821434612b45df5e0fa5aabd",
+      "fixtureId": "brain-existing",
+      "modelId": "flash-control",
+      "arm": "pi"
+    },
+    {
+      "id": "g8-engine-brain-new-directory-flash-control-rlm-unpatched-r1",
+      "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipts/scored-cohort/runs/g8-engine-brain-new-directory-flash-control-rlm-unpatched-r1.json",
+      "sha256": "79c6c9b2d583898e1f30c07303214fe857b9356b57be2091963b7495321d64ab",
+      "fixtureId": "brain-new-directory",
+      "modelId": "flash-control",
+      "arm": "rlm-unpatched"
+    },
+    {
+      "id": "g8-engine-brain-new-directory-flash-control-rlm-unpatched-r2",
+      "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipts/scored-cohort/runs/g8-engine-brain-new-directory-flash-control-rlm-unpatched-r2.json",
+      "sha256": "41cab223e27a1b39a74e2a6bebe8cd06964ac2e58c9c69f788baea55f7a09fda",
+      "fixtureId": "brain-new-directory",
+      "modelId": "flash-control",
+      "arm": "rlm-unpatched"
+    },
+    {
+      "id": "g8-engine-brain-new-directory-flash-control-rlm-unpatched-r3",
+      "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipts/scored-cohort/runs/g8-engine-brain-new-directory-flash-control-rlm-unpatched-r3.json",
+      "sha256": "8bc3dcf6853279ddfb892b889f3ac8e0dcc9c89f7af8327ac3a901c819741923",
+      "fixtureId": "brain-new-directory",
+      "modelId": "flash-control",
+      "arm": "rlm-unpatched"
+    },
+    {
+      "id": "g8-engine-brain-new-directory-flash-control-rlm-patched-r1",
+      "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipts/scored-cohort/runs/g8-engine-brain-new-directory-flash-control-rlm-patched-r1.json",
+      "sha256": "2e2b214c23a9d55abb792b0bc466d42e48684f23785febfbcab7479578e34850",
+      "fixtureId": "brain-new-directory",
+      "modelId": "flash-control",
+      "arm": "rlm-patched"
+    },
+    {
+      "id": "g8-engine-brain-new-directory-flash-control-rlm-patched-r2",
+      "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipts/scored-cohort/runs/g8-engine-brain-new-directory-flash-control-rlm-patched-r2.json",
+      "sha256": "dca9c2260750a038636a7a45449e0af63307bd0ad3f94ec401eb00268264232d",
+      "fixtureId": "brain-new-directory",
+      "modelId": "flash-control",
+      "arm": "rlm-patched"
+    },
+    {
+      "id": "g8-engine-brain-new-directory-flash-control-rlm-patched-r3",
+      "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipts/scored-cohort/runs/g8-engine-brain-new-directory-flash-control-rlm-patched-r3.json",
+      "sha256": "36916c716a95a2ae1cd0288f709dfe13664015048003eb6a8474f8fe9533b881",
+      "fixtureId": "brain-new-directory",
+      "modelId": "flash-control",
+      "arm": "rlm-patched"
+    },
+    {
+      "id": "g8-engine-brain-new-directory-flash-control-pi-r1",
+      "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipts/scored-cohort/runs/g8-engine-brain-new-directory-flash-control-pi-r1.json",
+      "sha256": "71a710d434e9405ca4b4f02f31b2b0b442744355d5e6758abf5b7810fe1dba49",
+      "fixtureId": "brain-new-directory",
+      "modelId": "flash-control",
+      "arm": "pi"
+    },
+    {
+      "id": "g8-engine-brain-new-directory-flash-control-pi-r2",
+      "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipts/scored-cohort/runs/g8-engine-brain-new-directory-flash-control-pi-r2.json",
+      "sha256": "884c0ba34b047693f8ece93b603a2d1eb447817404d8058a4ec578bcfe55c105",
+      "fixtureId": "brain-new-directory",
+      "modelId": "flash-control",
+      "arm": "pi"
+    },
+    {
+      "id": "g8-engine-brain-new-directory-flash-control-pi-r3",
+      "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipts/scored-cohort/runs/g8-engine-brain-new-directory-flash-control-pi-r3.json",
+      "sha256": "287f5d84b281a0fc16d39c5803335d95662cd854ea2b6b0c30ea23660e6dbeed",
+      "fixtureId": "brain-new-directory",
+      "modelId": "flash-control",
+      "arm": "pi"
+    },
+    {
+      "id": "g8-engine-genie-new-directory-flash-control-rlm-unpatched-r1",
+      "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipts/scored-cohort/runs/g8-engine-genie-new-directory-flash-control-rlm-unpatched-r1.json",
+      "sha256": "325521af4c648a8cf8e181caeab9e41ed219b70da02c59e13b9c0cfeb5bcebb4",
+      "fixtureId": "genie-new-directory",
+      "modelId": "flash-control",
+      "arm": "rlm-unpatched"
+    },
+    {
+      "id": "g8-engine-genie-new-directory-flash-control-rlm-unpatched-r2",
+      "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipts/scored-cohort/runs/g8-engine-genie-new-directory-flash-control-rlm-unpatched-r2.json",
+      "sha256": "a35d0d3f8c759472f7c3a2762539fa694ebe04c08e5f461beac67c1a2efd03bb",
+      "fixtureId": "genie-new-directory",
+      "modelId": "flash-control",
+      "arm": "rlm-unpatched"
+    },
+    {
+      "id": "g8-engine-genie-new-directory-flash-control-rlm-unpatched-r3",
+      "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipts/scored-cohort/runs/g8-engine-genie-new-directory-flash-control-rlm-unpatched-r3.json",
+      "sha256": "3ab31fc6eed35bc31df952faf3ac4807443a7734bc4972111f6cfd246f66bd8a",
+      "fixtureId": "genie-new-directory",
+      "modelId": "flash-control",
+      "arm": "rlm-unpatched"
+    },
+    {
+      "id": "g8-engine-genie-new-directory-flash-control-rlm-patched-r1",
+      "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipts/scored-cohort/runs/g8-engine-genie-new-directory-flash-control-rlm-patched-r1.json",
+      "sha256": "e076e9cfedae694c10a495bda026a1137cbd17d786bba9f782730fb5cb314aac",
+      "fixtureId": "genie-new-directory",
+      "modelId": "flash-control",
+      "arm": "rlm-patched"
+    },
+    {
+      "id": "g8-engine-genie-new-directory-flash-control-rlm-patched-r2",
+      "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipts/scored-cohort/runs/g8-engine-genie-new-directory-flash-control-rlm-patched-r2.json",
+      "sha256": "9d6aa0203e5899d5baa876329901d7e1892129664a8e7bae28e55fda942574ae",
+      "fixtureId": "genie-new-directory",
+      "modelId": "flash-control",
+      "arm": "rlm-patched"
+    },
+    {
+      "id": "g8-engine-genie-new-directory-flash-control-rlm-patched-r3",
+      "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipts/scored-cohort/runs/g8-engine-genie-new-directory-flash-control-rlm-patched-r3.json",
+      "sha256": "15a59fa63e0e7c3f46d8287651b8c125a17aff47b92f4284d5f8f2507aed5c77",
+      "fixtureId": "genie-new-directory",
+      "modelId": "flash-control",
+      "arm": "rlm-patched"
+    },
+    {
+      "id": "g8-engine-genie-new-directory-flash-control-pi-r1",
+      "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipts/scored-cohort/runs/g8-engine-genie-new-directory-flash-control-pi-r1.json",
+      "sha256": "e1eb3b44ee2e353976d6a5fe5b481021f86121aaccd7d799378f043b3b8f37d9",
+      "fixtureId": "genie-new-directory",
+      "modelId": "flash-control",
+      "arm": "pi"
+    },
+    {
+      "id": "g8-engine-genie-new-directory-flash-control-pi-r2",
+      "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipts/scored-cohort/runs/g8-engine-genie-new-directory-flash-control-pi-r2.json",
+      "sha256": "64b68bb9c801971580d69d94a8124028cbb6b9fb20836ef1bb1283868996ff14",
+      "fixtureId": "genie-new-directory",
+      "modelId": "flash-control",
+      "arm": "pi"
+    },
+    {
+      "id": "g8-engine-genie-new-directory-flash-control-pi-r3",
+      "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipts/scored-cohort/runs/g8-engine-genie-new-directory-flash-control-pi-r3.json",
+      "sha256": "35b77fa3e51b112553edfdd9ef58555e040e3de4bbc84d707ac3fc55b7e19814",
+      "fixtureId": "genie-new-directory",
+      "modelId": "flash-control",
+      "arm": "pi"
+    },
+    {
+      "id": "g8-engine-genie-existing-glm-5-3-rlm-patched-r1",
+      "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipts/scored-cohort/runs/g8-engine-genie-existing-glm-5-3-rlm-patched-r1.json",
+      "sha256": "aa36adb199350c63d49831b4cb721da611f86a19aca965c77d1a93097109e7cc",
+      "fixtureId": "genie-existing",
+      "modelId": "glm-5-3",
+      "arm": "rlm-patched"
+    },
+    {
+      "id": "g8-engine-genie-existing-glm-5-3-rlm-patched-r2",
+      "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipts/scored-cohort/runs/g8-engine-genie-existing-glm-5-3-rlm-patched-r2.json",
+      "sha256": "a8466df90d96a9a68d7aa2ad3f6959fe526628f6c999137166fb5ce5250cdebe",
+      "fixtureId": "genie-existing",
+      "modelId": "glm-5-3",
+      "arm": "rlm-patched"
+    },
+    {
+      "id": "g8-engine-genie-existing-glm-5-3-rlm-patched-r3",
+      "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipts/scored-cohort/runs/g8-engine-genie-existing-glm-5-3-rlm-patched-r3.json",
+      "sha256": "73aab36197759f5ffce00083cc94d62ad6e036c264ad1f201e52c9eb0345f59a",
+      "fixtureId": "genie-existing",
+      "modelId": "glm-5-3",
+      "arm": "rlm-patched"
+    },
+    {
+      "id": "g8-engine-genie-existing-glm-5-3-pi-r1",
+      "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipts/scored-cohort/runs/g8-engine-genie-existing-glm-5-3-pi-r1.json",
+      "sha256": "5a5ac6b8355cc45ff3e58104ee52fc738195953e843c5f58271eadb0109c2303",
+      "fixtureId": "genie-existing",
+      "modelId": "glm-5-3",
+      "arm": "pi"
+    },
+    {
+      "id": "g8-engine-genie-existing-glm-5-3-pi-r2",
+      "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipts/scored-cohort/runs/g8-engine-genie-existing-glm-5-3-pi-r2.json",
+      "sha256": "ba8a4c3f67b498f23e781918aee577250275ee68a696bf93171c45690ccb216b",
+      "fixtureId": "genie-existing",
+      "modelId": "glm-5-3",
+      "arm": "pi"
+    },
+    {
+      "id": "g8-engine-genie-existing-glm-5-3-pi-r3",
+      "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipts/scored-cohort/runs/g8-engine-genie-existing-glm-5-3-pi-r3.json",
+      "sha256": "cb5ed5e0c57fcdda6490636e558b34990d8a7029f5efb1de248bb2fdc178aa81",
+      "fixtureId": "genie-existing",
+      "modelId": "glm-5-3",
+      "arm": "pi"
+    },
+    {
+      "id": "g8-engine-brain-existing-glm-5-3-rlm-patched-r1",
+      "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipts/scored-cohort/runs/g8-engine-brain-existing-glm-5-3-rlm-patched-r1.json",
+      "sha256": "facde53cbbe3ece49b0c5b485cfbd40352a0faaba77a4358f513aff83826bc77",
+      "fixtureId": "brain-existing",
+      "modelId": "glm-5-3",
+      "arm": "rlm-patched"
+    },
+    {
+      "id": "g8-engine-brain-existing-glm-5-3-rlm-patched-r2",
+      "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipts/scored-cohort/runs/g8-engine-brain-existing-glm-5-3-rlm-patched-r2.json",
+      "sha256": "c09e34385aa6a278f38083b39acc15e44ebfc15b5c1c9ecac9bab8b0da5d13e9",
+      "fixtureId": "brain-existing",
+      "modelId": "glm-5-3",
+      "arm": "rlm-patched"
+    },
+    {
+      "id": "g8-engine-brain-existing-glm-5-3-rlm-patched-r3",
+      "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipts/scored-cohort/runs/g8-engine-brain-existing-glm-5-3-rlm-patched-r3.json",
+      "sha256": "2622b0b9fe56e93a8a628673cc75167c3eb9967a388f23ece88fffd4aada2387",
+      "fixtureId": "brain-existing",
+      "modelId": "glm-5-3",
+      "arm": "rlm-patched"
+    },
+    {
+      "id": "g8-engine-brain-existing-glm-5-3-pi-r1",
+      "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipts/scored-cohort/runs/g8-engine-brain-existing-glm-5-3-pi-r1.json",
+      "sha256": "6db6bb71239e8752c016b733130a6b7e084dd999143dd85c899eafd3a5c40a01",
+      "fixtureId": "brain-existing",
+      "modelId": "glm-5-3",
+      "arm": "pi"
+    },
+    {
+      "id": "g8-engine-brain-existing-glm-5-3-pi-r2",
+      "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipts/scored-cohort/runs/g8-engine-brain-existing-glm-5-3-pi-r2.json",
+      "sha256": "6c3e44c0992233559842ed0820afd8a25af732a45f5aac5c07c839b02f7ea165",
+      "fixtureId": "brain-existing",
+      "modelId": "glm-5-3",
+      "arm": "pi"
+    },
+    {
+      "id": "g8-engine-brain-existing-glm-5-3-pi-r3",
+      "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipts/scored-cohort/runs/g8-engine-brain-existing-glm-5-3-pi-r3.json",
+      "sha256": "5309ed21753b4d3501a943cd3e3145645f9a12ae330c1df31bd2ed66b247af62",
+      "fixtureId": "brain-existing",
+      "modelId": "glm-5-3",
+      "arm": "pi"
+    },
+    {
+      "id": "g8-engine-brain-new-directory-glm-5-3-rlm-patched-r1",
+      "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipts/scored-cohort/runs/g8-engine-brain-new-directory-glm-5-3-rlm-patched-r1.json",
+      "sha256": "7d5ef3dd483ee6c065915ca3d76aaedd1ee54adb83a0f855d3fc4e4ce764c84f",
+      "fixtureId": "brain-new-directory",
+      "modelId": "glm-5-3",
+      "arm": "rlm-patched"
+    },
+    {
+      "id": "g8-engine-brain-new-directory-glm-5-3-rlm-patched-r2",
+      "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipts/scored-cohort/runs/g8-engine-brain-new-directory-glm-5-3-rlm-patched-r2.json",
+      "sha256": "dcb5a84744f43ec73e858950a9943721f8c21314b962fa01f6d6c4ba57f6b3a1",
+      "fixtureId": "brain-new-directory",
+      "modelId": "glm-5-3",
+      "arm": "rlm-patched"
+    },
+    {
+      "id": "g8-engine-brain-new-directory-glm-5-3-rlm-patched-r3",
+      "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipts/scored-cohort/runs/g8-engine-brain-new-directory-glm-5-3-rlm-patched-r3.json",
+      "sha256": "c685a7a81fe205506e3b7b93bfe88e9fc069d72ffd94625a4dffd46dbc857403",
+      "fixtureId": "brain-new-directory",
+      "modelId": "glm-5-3",
+      "arm": "rlm-patched"
+    },
+    {
+      "id": "g8-engine-brain-new-directory-glm-5-3-pi-r1",
+      "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipts/scored-cohort/runs/g8-engine-brain-new-directory-glm-5-3-pi-r1.json",
+      "sha256": "5689117f820d41e9f426a8ba6841f0ef1cad718a209e3be64111d23fb1267206",
+      "fixtureId": "brain-new-directory",
+      "modelId": "glm-5-3",
+      "arm": "pi"
+    }
+  ],
+  "archives": [
+    {
+      "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/pre-repair-archives/mikro-sdk-before-g3-repair3.tar",
+      "kind": "file",
+      "sha256": "7a2f3722ad63d02f42d47d18cbcf8c8d93d5af53c550ab888239c005b87992ee",
+      "bytes": 638535680,
+      "mode": "0400"
+    },
+    {
+      "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/pre-repair-archives/original-engine-cohort-cancelled.tar",
+      "kind": "file",
+      "sha256": "edd346c615501d663d3a711217ceab3634d4bec910e7bb0cfb1db37a3277b7aa",
+      "bytes": 2918400,
+      "mode": "0400"
+    }
+  ],
+  "archiveCommandsActualExitCode": 0,
+  "archiveSeconds": {
+    "sdk": 1.58,
+    "cohort": 0.62
+  },
+  "allLiveOriginalInputsResultsAndPartialsPreserved": true,
+  "newCohortPolicy": "Separate newly frozen full108 fixed-code cohort, all original fixture/model/arm/repetition/control cases. No selective filtering/resampling/promoting old successful cells. Retain all pre-repair paid spend/outcomes outside replacement cohort with actual provenance.",
+  "nativeScoredJobsRemainUnstarted": true,
+  "sdkBeforeCodeEditsArchived": true,
+  "unknownMissingSDKCallsNotZero": true,
+  "sourceBudget": "G3 3/B3 owner-approved; G8 5/B5 unchanged"
+}

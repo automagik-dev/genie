@@ -96,25 +96,15 @@ export interface AgentSpec {
     readonly budget?: AgentBudget;
     /** System-prompt assembly overrides. `undefined` means "not declared". */
     readonly prompt?: AgentPrompt;
-    /**
-     * Internal, undocumented: which runtime backend executes this agent's
-     * turns (wish mikro-v2-prime-backend). Absent means `mikro` — the legacy
-     * engine, which stays the default. Deliberately NOT part of the
-     * documented `agent.yaml` schema: it is a gate/experiment selector that
-     * may change without notice.
-     *
-     * - `mikro` — the legacy in-process engine (`rlmLoop`). The default.
-     * - `prime` — one `prime-agent` subprocess per turn
-     *   (`src/mcp/backends/prime.ts`).
-     * - `prime-sdk` — the same agent driven in-process through prime's
-     *   programmatic SDK (`src/mcp/backends/prime-sdk.ts`): no per-turn cold
-     *   start, plus custom tools, structured output, custom providers, and
-     *   sub-call depth, which the subprocess flag surface cannot express.
-     */
-    readonly backend?: "mikro" | "prime" | "prime-sdk";
+    /** Public execution engine. Omission keeps the RLM default. */
+    readonly engine?: Engine;
     /** Preserved unrecognised keys — consumers layer their own schema. */
     readonly extras: Readonly<Record<string, unknown>>;
 }
+export type Engine = "rlm" | "pi" | "prime" | "prime-sdk";
+export declare const ENGINES: readonly Engine[];
+/** Explicit selectors never silently degrade to the default. */
+export declare function parseEngine(value: unknown): Engine;
 /**
  * Parse a raw YAML string into an `AgentSpec`. `dir` is the agent's
  * filesystem directory — used later by the tool loader to resolve

@@ -60,11 +60,7 @@
  * mandate added in the G2b review cycle; mikro#78 for the native
  * tool-dispatch loop that unblocks Tier 2 agents.
  */
-import { builtinModels } from "@earendil-works/pi-ai/providers/all";
-import { ensureStationModels, registerStationProvider, STATION_PROVIDER_ID, } from "../station-provider.js";
-import { ensureCustomProviders } from "../custom-providers.js";
-import { ensureKhalModels, registerKhalProvider, KHAL_PROVIDER_ID, } from "../khal-provider.js";
-import { llmCompleteSimple } from "../llm.js";
+import { assertLLMCompletion, buildCompletionOptions, createUsage, LLMCompletionError, llmCompleteSimple, mergeUsage, prepareModelRuntime, reportedUsage, resolveModel, streamLLMCompletion, } from "../llm.js";
 const DEFAULT_RETRY_FORMATTER = (hint) => `# Retry hint from the validator\n\n${hint}\n\n`;
 const DEFAULT_MAX_TOOL_ITERATIONS = 16;
 export class NoExposableToolsError extends Error {
@@ -102,35 +98,6 @@ export function formatRlmPrompt(config, req) {
         parts.push(`${label}: ${turn.content}`);
     }
     return parts.join("\n\n");
-}
-/**
- * Shared pi-ai Models runtime for the tool-dispatch path. `builtinModels()`
- * registers every built-in provider; provider auth resolution (env API keys)
- * replaces the old compat env-key injection the root `completeSimple` gave.
- */
-const piModels = builtinModels();
-// Register the local Lemonade gateway as a first-class `station/<model>`
-// provider at this resolution site (mirrored in src/llm.ts).
-registerStationProvider(piModels);
-// Same for the khal LiteLLM gateway (`khal/<model>`).
-registerKhalProvider(piModels);
-/**
- * Resolve a pi-ai Model using the same fallback strategy as llm.ts
- * (try exact id, then strip date suffix). Kept in-sync with `llm.ts`
- * `resolveModel` — when that helper goes public we'll import it.
- */
-function resolvePiModel(provider, modelId) {
-    let model = piModels.getModel(provider, modelId);
-    if (!model) {
-        const stripped = modelId.replace(/-\d{8}$/, "");
-        if (stripped !== modelId) {
-            model = piModels.getModel(provider, stripped);
-        }
-    }
-    if (!model) {
-        throw new Error(`rlmDriver: unknown model "${modelId}" for provider "${provider}".`);
-    }
-    return model;
 }
 /**
  * Turn a ToolRegistry + optional allowlist into pi-ai `Tool[]`. Tools
@@ -202,12 +169,14 @@ export function rlmDriver(config) {
  * step carrying `{answer, usage, iteration}`.
  */
 function buildLegacyDriver(config) {
-    const llm = config.llm ?? llmCompleteSimple;
+    const llm = config.llm ?? ((prompt, model, signal) => llmCompleteSimple(prompt, model, signal, config.completionOptions));
     return async function* (req, signal) {
         const prompt = formatRlmPrompt(config, req);
         let response;
         try {
             response = await llm(prompt, config.model, signal);
+            if (response.piMessage)
+                assertLLMCompletion(response.piMessage, config.model);
         }
         catch (err) {
             yield {
@@ -257,24 +226,9 @@ function buildToolDispatchDriver(config, toolsCfg) {
     const tools = buildPiTools(toolsCfg);
     const llm = config.toolsLlm ??
         (async (ctx, modelCfg, signal) => {
-            // Station's catalog is dynamic; apply the overlay before resolving so
-            // gateway-only model ids resolve here too (mirrors src/llm.ts).
-            if (modelCfg.provider === STATION_PROVIDER_ID) {
-                await ensureStationModels(piModels);
-            }
-            // khal's catalog is entirely dynamic, and the hook throws naming
-            // KHAL_API_KEY when the key is missing — before any model lookup, so
-            // a keyless run never reads as "unknown model" (mirrors src/llm.ts).
-            if (modelCfg.provider === KHAL_PROVIDER_ID) {
-                await ensureKhalModels(piModels);
-            }
-            // Config-declared providers (mikro.yaml / settings.json `providers`)
-            // ride on the model config; register them before lookup (mirrors
-            // src/llm.ts resolveModel).
-            ensureCustomProviders(piModels, modelCfg.providers);
-            const model = resolvePiModel(modelCfg.provider, modelCfg.model);
-            const opts = { signal };
-            return await piModels.completeSimple(model, ctx, opts);
+            const runtime = await prepareModelRuntime(modelCfg);
+            const model = resolveModel(modelCfg.provider, modelCfg.model, modelCfg.providers);
+            return streamLLMCompletion(runtime, model, ctx, buildCompletionOptions(modelCfg, { ...config.completionOptions, signal })).result();
         });
     return async function* (req, signal) {
         // Seed the conversation history from runAgent's `req.history`
@@ -322,7 +276,7 @@ function buildToolDispatchDriver(config, toolsCfg) {
         const systemPrompt = buildSystemPrompt(config, req);
         let aggregatedText = "";
         let toolCallsDispatched = 0;
-        let lastUsage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 };
+        const cumulativeUsage = createUsage();
         for (let loopIter = 0; loopIter < maxToolIterations; loopIter++) {
             if (signal.aborted)
                 return;
@@ -334,8 +288,16 @@ function buildToolDispatchDriver(config, toolsCfg) {
             let assistant;
             try {
                 assistant = await llm(ctx, config.model, signal);
+                assertLLMCompletion(assistant, config.model);
             }
             catch (err) {
+                if (err instanceof LLMCompletionError) {
+                    const usage = createUsage();
+                    mergeUsage(usage, cumulativeUsage);
+                    if (err.usage)
+                        mergeUsage(usage, err.usage);
+                    err = new LLMCompletionError(err.stopReason, err.errorMessage, usage.llmCalls ? usage : undefined);
+                }
                 yield {
                     kind: "error",
                     error: err instanceof Error ? err : new Error(String(err)),
@@ -345,16 +307,9 @@ function buildToolDispatchDriver(config, toolsCfg) {
             // Accumulate usage across tool loop iterations so the final
             // emit_done payload reflects the full turn, not just the
             // last LLM call.
-            if (assistant.usage) {
-                lastUsage = {
-                    input: lastUsage.input + (assistant.usage.input ?? 0),
-                    output: lastUsage.output + (assistant.usage.output ?? 0),
-                    cacheRead: lastUsage.cacheRead + (assistant.usage.cacheRead ?? 0),
-                    cacheWrite: lastUsage.cacheWrite + (assistant.usage.cacheWrite ?? 0),
-                    total: lastUsage.total +
-                        (assistant.usage.cost?.total ?? 0),
-                };
-            }
+            const usage = reportedUsage(assistant);
+            if (usage)
+                mergeUsage(cumulativeUsage, usage);
             // Append the assistant turn to history BEFORE yielding tool
             // results — pi-ai's next call expects the toolCall blocks
             // to reference the prior AssistantMessage, not floating
@@ -382,16 +337,6 @@ function buildToolDispatchDriver(config, toolsCfg) {
                 aggregatedText = text;
             }
             if (toolCalls.length === 0) {
-                // Pure text response → terminal. stopReason should be
-                // "stop" here; "length" / "error" get surfaced as
-                // errors.
-                if (assistant.stopReason === "error" || assistant.stopReason === "aborted") {
-                    yield {
-                        kind: "error",
-                        error: new Error(`rlmDriver: LLM stopped with reason "${assistant.stopReason}": ${assistant.errorMessage ?? "<no message>"}`),
-                    };
-                    return;
-                }
                 if (text.length === 0) {
                     yield {
                         kind: "error",
@@ -403,7 +348,13 @@ function buildToolDispatchDriver(config, toolsCfg) {
                     kind: "emit_done",
                     payload: {
                         answer: aggregatedText,
-                        usage: lastUsage,
+                        usage: {
+                            input: cumulativeUsage.inputTokens,
+                            output: cumulativeUsage.outputTokens,
+                            cacheRead: cumulativeUsage.cacheReadTokens,
+                            cacheWrite: cumulativeUsage.cacheWriteTokens,
+                            total: cumulativeUsage.totalCost,
+                        },
                         iteration: req.iteration,
                         toolCalls: toolCallsDispatched,
                     },

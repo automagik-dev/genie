@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { homedir } from "node:os";
 import { resolve } from "node:path";
-import { mkdir } from "node:fs/promises";
+import { mkdir, open } from "node:fs/promises";
 import { parseArgs } from "node:util";
 import { applyModelRef, applyTemperatureOverride, loadConfig, parseTemperatureFlag, } from "./config.js";
 import { isValidThinkingLevel, checkFutureFlags } from "./gemini.js";
@@ -17,6 +17,9 @@ import { loadSettings, saveSettings, injectApiKeysToEnv, formatValue, parseSetti
 import { printMikroCliSchema } from "./schema.js";
 import { checkModelConfig, formatModelRef } from "./llm.js";
 import { customProviderKeySource } from "./custom-providers.js";
+import { createHash } from "node:crypto";
+import { fetchJuiceCatalog, fetchKeeperSnapshot, parseJuiceProject, provisionJuiceProject, resolveKeyReference, JuiceError, } from "./juice.js";
+import { extractWithJev, JevExtractionError } from "./jev.js";
 /**
  * Apply model overrides from global settings (~/.mikro/settings.json).
  * Priority: CLI flags > settings.json > mikro.yaml > hardcoded defaults.
@@ -66,6 +69,8 @@ Usage:
                                   --rc also rewrites ~/.rlmx / RLMX_* in shell rc files
   mikro acp                       Run as a stdio ACP agent (EXPERIMENTAL)
   mikro mcp [--dir <path>]        Run as a stdio MCP server (agents as tools)
+  mikro juice <provision|catalog|usage|analyze> [--dir <path>]  Explicit project management/viewer aggregates
+  mikro jev --endpoint <url> --model <id> --key-file <path> --input <sanitized.json>
 
 Options:
   --context <path>        Path to context (directory or file)
@@ -922,12 +927,208 @@ async function runUpdate(args) {
         throw Object.assign(new Error("mikro update failed"), { exitCode: status });
     await repointLauncher(root);
 }
+const JUICE_HELP = `mikro juice <provision|catalog|usage|analyze>
+  --dir <path>                    Load explicit juice project from .mikro/mikro.yaml
+  OR --origin <https-origin> --project <id> --key-alias <id> --key-epoch <id> --key-file <absolute-path>
+  provision: --management-key-file <absolute-path> OR --management-key-env <variable-name>
+  usage/analyze: --range <today|yesterday|5h..24h|1d..30d|custom>
+                custom requires --unit <hour|day> --start <date-or-RFC3339-hour> --end <date-or-RFC3339-hour>
+Output is sanitized JSON. Credentials are references, never argument values. No admin or request export.
+`;
+async function runJuiceCommand(args) {
+    if (!args.length || args.includes("--help") || args.includes("-h")) {
+        console.log(JUICE_HELP);
+        return;
+    }
+    let parsed;
+    try {
+        parsed = parseArgs({ args, allowPositionals: true, strict: true, options: {
+                dir: { type: "string" }, origin: { type: "string" }, project: { type: "string" },
+                "key-alias": { type: "string" }, "key-epoch": { type: "string" }, "key-file": { type: "string" },
+                "management-key-file": { type: "string" }, "management-key-env": { type: "string" },
+                range: { type: "string" }, unit: { type: "string" }, start: { type: "string" }, end: { type: "string" },
+            } });
+    }
+    catch {
+        throw new JuiceError("config");
+    }
+    const { values, positionals } = parsed;
+    const command = positionals[0];
+    if (positionals.length !== 1 || !["provision", "catalog", "usage", "analyze"].includes(command))
+        throw new JuiceError("config");
+    const explicit = ["origin", "project", "key-alias", "key-epoch", "key-file"].some((name) => Object.hasOwn(values, name));
+    if (explicit && values.dir)
+        throw new JuiceError("config");
+    const project = explicit ? parseJuiceProject({
+        origin: values.origin, project: values.project, "key-alias": values["key-alias"],
+        "key-epoch": values["key-epoch"], "key-file": values["key-file"],
+    }) : (await loadConfig(resolve(values.dir ?? process.cwd()))).juice;
+    if (!project || (command !== "provision" && (values["management-key-file"] || values["management-key-env"]))
+        || ((command === "provision" || command === "catalog") && (values.range || values.unit || values.start || values.end))) {
+        throw new JuiceError("config");
+    }
+    let result;
+    if (command === "provision")
+        result = await provisionJuiceProject(project, {
+            keyFile: values["management-key-file"], keyEnv: values["management-key-env"],
+        });
+    else if (command === "catalog")
+        result = await fetchJuiceCatalog(project);
+    else {
+        if (!values.range || (values.unit !== undefined && values.unit !== "day" && values.unit !== "hour"))
+            throw new JuiceError("config");
+        const query = { range: values.range, ...(values.unit ? { unit: values.unit } : {}),
+            ...(values.start ? { start: values.start } : {}), ...(values.end ? { end: values.end } : {}) };
+        result = await fetchKeeperSnapshot(project, query, command === "analyze");
+    }
+    console.log(JSON.stringify(result, null, 2));
+}
+function manualRecord(value) {
+    if (!value || typeof value !== "object" || Array.isArray(value))
+        throw new JevExtractionError("request");
+    return value;
+}
+/** Inspect decoded JSON before either transport or local source reattachment. */
+function validateManualInput(value, apiKey) {
+    if (typeof value === "string") {
+        if (value.includes(apiKey) || /(?:sk-[A-Za-z0-9_-]{12,}|bearer\s+[A-Za-z0-9._-]+)/i.test(value)) {
+            throw new JevExtractionError("request");
+        }
+    }
+    else if (Array.isArray(value)) {
+        for (const entry of value)
+            validateManualInput(entry, apiKey);
+    }
+    else if (value !== null && typeof value === "object") {
+        const input = manualRecord(value);
+        for (const name in input) {
+            if (!Object.hasOwn(input, name))
+                continue;
+            if (/^(?:api[_-]?key|password|secret|cookie|authorization|session_token)$/i.test(name)) {
+                throw new JevExtractionError("request");
+            }
+            validateManualInput(name, apiKey);
+            validateManualInput(input[name], apiKey);
+        }
+    }
+}
+/** Manual CLI input is a caller-approved sanitized snapshot, not a Keeper upload hook. */
+async function runJevCommand(args) {
+    if (args.includes("--help") || args.includes("-h")) {
+        console.log("mikro jev --endpoint <sanctioned-/v1/systemone-url> --model <jev-version-or-alias> --key-file <absolute-path> OR --key-env <variable-name> --input <sanitized.json>");
+        return;
+    }
+    let values;
+    try {
+        ({ values } = parseArgs({ args, strict: true, allowPositionals: false, options: {
+                endpoint: { type: "string" }, model: { type: "string" }, "key-file": { type: "string" },
+                "key-env": { type: "string" }, input: { type: "string" },
+            } }));
+    }
+    catch {
+        throw new JevExtractionError("request");
+    }
+    if (!values.endpoint || !values.model || !values.input)
+        throw new JevExtractionError("request");
+    let endpoint;
+    try {
+        endpoint = new URL(values.endpoint);
+    }
+    catch {
+        throw new JevExtractionError("request");
+    }
+    const loopback = ["127.0.0.1", "localhost", "[::1]"].includes(endpoint.hostname);
+    if ((endpoint.protocol !== "https:" && !(loopback && endpoint.protocol === "http:"))
+        || endpoint.pathname !== "/v1/systemone" || endpoint.search || endpoint.hash || endpoint.username || endpoint.password) {
+        throw new JevExtractionError("request");
+    }
+    const apiKey = await resolveKeyReference({ keyFile: values["key-file"], keyEnv: values["key-env"] });
+    let inputText;
+    const sourceFile = resolve(values.input);
+    let handle;
+    try {
+        handle = await open(sourceFile, "r");
+        const stat = await handle.stat();
+        if (!stat.isFile() || stat.size > 1_048_576)
+            throw new JevExtractionError("request");
+        inputText = await handle.readFile({ encoding: "utf8" });
+    }
+    catch {
+        throw new JevExtractionError("request");
+    }
+    finally {
+        await handle?.close();
+    }
+    let input;
+    try {
+        input = manualRecord(JSON.parse(inputText));
+    }
+    catch {
+        throw new JevExtractionError("request");
+    }
+    validateManualInput(input, apiKey);
+    if (input.sanitized !== true || Object.keys(input).some((name) => !["sanitized", "state", "candidates", "noul", "score"].includes(name))
+        || !Array.isArray(input.candidates))
+        throw new JevExtractionError("request");
+    const candidates = input.candidates.map((entry) => {
+        const candidate = manualRecord(entry);
+        if (typeof candidate.id !== "string" || typeof candidate.text !== "string" || typeof candidate.source !== "string") {
+            throw new JevExtractionError("request");
+        }
+        return { id: candidate.id, text: candidate.text, source: candidate.source };
+    });
+    let noul;
+    if (input.noul !== undefined) {
+        const question = manualRecord(input.noul);
+        if (typeof question.instructions !== "string")
+            throw new JevExtractionError("request");
+        let criteria;
+        if (question.criteria !== undefined) {
+            const rawCriteria = manualRecord(question.criteria);
+            if (Object.keys(rawCriteria).some((name) => name !== "true" && name !== "false")
+                || Object.values(rawCriteria).some((value) => typeof value !== "string"))
+                throw new JevExtractionError("request");
+            criteria = { ...(typeof rawCriteria.true === "string" ? { true: rawCriteria.true } : {}),
+                ...(typeof rawCriteria.false === "string" ? { false: rawCriteria.false } : {}) };
+        }
+        noul = { instructions: question.instructions, ...(criteria ? { criteria } : {}) };
+    }
+    let score;
+    if (input.score !== undefined) {
+        const question = manualRecord(input.score);
+        if (typeof question.instructions !== "string" || !Array.isArray(question.criteria)
+            || !question.criteria.every((value) => typeof value === "string"))
+            throw new JevExtractionError("request");
+        score = { instructions: question.instructions, criteria: question.criteria };
+    }
+    const sourceSnapshot = { sourceFile, contentSha256: createHash("sha256").update(inputText).digest("hex"), state: input.state };
+    const result = await extractWithJev({ endpoint: endpoint.href, model: values.model, apiKey,
+        state: input.state, candidates, sourceSnapshot, noul, score, signal: AbortSignal.timeout(60_000) });
+    console.log(JSON.stringify({ version: 1, endpoint: endpoint.href, requestedModel: values.model,
+        credentialReference: values["key-file"] ? { keyFile: values["key-file"] } : { keyEnv: values["key-env"] },
+        fetchedAt: new Date().toISOString(), ...result }, null, 2));
+}
 // The launcher holds install ownership through startup, not command lifetime.
 // Updates delegate ownership to their mutation worker instead.
 export let installOperation = false;
 let signalCliReady;
 export const cliReady = new Promise((resolveReady) => { signalCliReady = resolveReady; });
 async function main() {
+    // Explicit manual commands bypass global settings injection and never mutate process.env.
+    if (process.argv[2] === "juice" || process.argv[2] === "jev") {
+        try {
+            if (process.argv[2] === "juice")
+                await runJuiceCommand(process.argv.slice(3));
+            else
+                await runJevCommand(process.argv.slice(3));
+        }
+        catch (error) {
+            console.error(error instanceof JuiceError || error instanceof JevExtractionError
+                ? error.message : "Manual command failed (configuration or input).");
+            process.exitCode = 1;
+        }
+        return;
+    }
     const opts = parseCliArgs(process.argv.slice(2));
     installOperation = opts.command === "update";
     // Load global settings and inject API keys before any command

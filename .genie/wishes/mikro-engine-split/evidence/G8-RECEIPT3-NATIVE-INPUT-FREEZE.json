@@ -1,0 +1,50 @@
+{
+  "schemaVersion": 1,
+  "nativeManifest": {
+    "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/frozen-inputs/native-manifest-receipt3.json",
+    "kind": "file",
+    "sha256": "1ab619049f6fa609cec61d0471dceb4ca61ad6fe57e7f2d3652a632c10f114e9"
+  },
+  "mode": "0400",
+  "frozenBeforeAnyNewNativeOutcome": true,
+  "expectedScoredCells": 18,
+  "sameExactNativeJobsClonesArgumentsControlsPreserved": true,
+  "new19RunRootsAndSdkAttemptChildrenAbsentAtFreeze": true,
+  "sourceSeals": [
+    {
+      "path": "/home/genie/orca/workspaces/genie/mikro-engine-split/.genie/wishes/mikro-engine-split/experiments/native-workflow-observer.mjs",
+      "kind": "file",
+      "sha256": "4912503a4031bf0ec4390ae8256b75d5711335843ceb914e69911ef1fecb4fb9"
+    },
+    {
+      "path": "/home/genie/orca/workspaces/genie/mikro-engine-split/.genie/wishes/mikro-engine-split/experiments/native-session-accounting.mjs",
+      "kind": "file",
+      "sha256": "2e7f64e64624865a90f0a3c6635ad8fa6d899e1e88e8d0a4f50c2ef3dcdf6002"
+    }
+  ],
+  "actualSchemaAndIndependentBindingExitCode": 0,
+  "actualValidationSeconds": 0.14763207198120654,
+  "actualValidationStdout": "{\"nativeWorkflowSchema\":true,\"independentExactEngineBinding\":true,\"expectedNativeCells\":18,\"modelCalls\":0}\n",
+  "actualValidationStderr": "",
+  "validationCode": "const fs = await import('node:fs/promises'); const {validateNativeManifestBinding} = await import('./scripts/mikro/engine-experiment.ts'); const {validateWorkflow} = await import('./.genie/wishes/mikro-engine-split/experiments/native-workflow-observer.mjs'); const native = JSON.parse(await fs.readFile(process.argv[1], 'utf8')); const binding = JSON.parse(await fs.readFile(process.argv[2], 'utf8')); validateWorkflow(native.workflow); validateNativeManifestBinding(binding, process.argv[3]); console.log(JSON.stringify({nativeWorkflowSchema:true,independentExactEngineBinding:true,expectedNativeCells:native.workflow.cells.length,modelCalls:0}));",
+  "engineBindingProbe": {
+    "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/native-receipt3-binding-probe.json",
+    "sha256": "e5b52d1276b083673994a758fd1651923203ebaa48409d586b5e8d22ce0d6cb1"
+  },
+  "nativePreparation": {
+    "resources": {
+      "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/prepared-native-receipt3-resources.json",
+      "sha256": "cbe1af934a32345a7db56e1f3f76c98398103ab81c03e1ec40730e136168aee7"
+    },
+    "workflow": {
+      "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/prepared-native-receipt3-workflow.json",
+      "sha256": "0f2b3138b36aa36ca3eb731cf493dbbc00e04fb0e327863ca7378c3fb17c1b29"
+    },
+    "first16CheckStdoutLimitation": "worker timeout; durable successful-check checkpoints only; Main actual all19publicchecks running to retain complete outputs"
+  },
+  "mainChecksAndMcpGuard": "running",
+  "genuineFixedCodeNativeSmoke": "not dispatched; requires actual Mainchecks/guard0",
+  "replacementFull108": "draft only, not frozen/dispatched",
+  "priorAllFailedPaidAttemptsPreserved": true,
+  "newScoredDispatches": 0
+}

@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "command": "env TMPDIR=/var/tmp bash scripts/smoke-install-update.sh",
+  "cwd": "/home/genie/orca/workspaces/genie/mikro-engine-split/mikro",
+  "job": "bg_74",
+  "successfulCompletion": true,
+  "actualSeconds": 67.18,
+  "observedTerminal": "Install/update smoke passed",
+  "installedVersion": "1.260907.1",
+  "initialSourceCommit": "84b0a632519334b13bc305cfd2d78e26777b97ab",
+  "updatedSourceCommit": "f22559301d5066a5e678fbe0aacf36daf67b5932",
+  "checks": [
+    "actual local fresh clone/npm ci/build/version",
+    "dirty tracked+untracked update refusal",
+    "actual advanced local origin forced update/npm ci/build/version",
+    "untracked target removed only in disposable install"
+  ],
+  "productionInstallChanged": false,
+  "sourceSnapshot": "G3-CAP-RECEIPT-REPAIR3-SNAPSHOT.json",
+  "limit": "Standalone local unsigned delivery smoke, not signed public release or complete G9"
+}

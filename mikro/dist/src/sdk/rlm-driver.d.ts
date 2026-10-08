@@ -62,7 +62,7 @@
  */
 import type { AssistantMessage as PiAssistantMessage, Context as PiContext } from "@earendil-works/pi-ai";
 import type { ModelConfig } from "../config.js";
-import { type LLMResponse } from "../llm.js";
+import type { LLMResponse, LlmCompleteOptions } from "../llm.js";
 import type { IterationDriver, IterationRequest } from "./agent.js";
 import type { ToolRegistry } from "./tool-registry.js";
 /**
@@ -93,6 +93,8 @@ export interface RlmDriverToolsConfig {
 export interface RlmDriverConfig {
     /** Model config — same shape rlm.ts uses. */
     readonly model: ModelConfig;
+    /** Sampling/cache/output controls and ordinary transport retries (default 3). */
+    readonly completionOptions?: LlmCompleteOptions;
     /** Optional SYSTEM.md contents; prepended to each turn's prompt. */
     readonly system?: string;
     /**

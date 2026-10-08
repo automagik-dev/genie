@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "createdAt": "2026-10-07T08:41:51.982285+00:00",
+  "baseline": "WAVE3-LIVE-VERIFICATION.json protectedOperatorReferences.beforeAndAfterSha256",
+  "references": [
+    {
+      "path": "/home/genie/.mikro/settings.json",
+      "beforeAndAfterSha256": "379be5e12e7321362b776390cb9ff36d019e105aebff7b206014f795f777e1e4",
+      "currentSha256": "379be5e12e7321362b776390cb9ff36d019e105aebff7b206014f795f777e1e4"
+    },
+    {
+      "path": "/home/genie/.mikro/gate-env.sh",
+      "beforeAndAfterSha256": "15fa26c639dc5d7b81313be54ada4f0a8ce4c5035b29288684a86a8eaa2c77fd",
+      "currentSha256": "15fa26c639dc5d7b81313be54ada4f0a8ce4c5035b29288684a86a8eaa2c77fd"
+    }
+  ],
+  "allRecordedReferencesUnchanged": true,
+  "scopeLimit": "Exact two previously recorded operator settings/helper fingerprints; no key values printed, no broader original Genie WIP/global install before fingerprint invented."
+}

@@ -1,6 +1,7 @@
 import type { ThinkingLevel } from "./gemini.js";
 import { type CustomProviderConfig } from "./custom-providers.js";
 import { type ValidateSchema } from "./sdk/validate.js";
+import { type JuiceProjectConfig } from "./juice.js";
 /** Parsed tool: name → Python code */
 export interface ToolDef {
     name: string;
@@ -143,6 +144,8 @@ export interface MikroConfig {
      * yaml wins per id). Also mirrored on `model.providers`.
      */
     providers: CustomProviderConfig[];
+    /** Explicit reference-only Juice project; absent disables all Juice management/viewer operations. */
+    juice?: JuiceProjectConfig;
     /** Config source: "yaml" | "defaults" */
     configSource: "yaml" | "defaults";
     /**

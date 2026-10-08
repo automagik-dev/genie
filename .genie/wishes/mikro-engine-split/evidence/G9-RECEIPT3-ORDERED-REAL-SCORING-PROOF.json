@@ -1,0 +1,1076 @@
+{
+  "schemaVersion": 1,
+  "createdAt": "2026-10-07T08:41:51.779725+00:00",
+  "actualCommand": "bun <private>/final-local-smokes/prove-ordered-real-scoring.mjs <immutable-private-real-input> <new-private-proof>",
+  "actualExitCode": 0,
+  "actualSeconds": 0.38,
+  "actualOutput": {
+    "realAdjacentPairs": 10,
+    "successfulNonzeroRecallPairs": 6,
+    "allFailedNoStaleScore": true,
+    "paidOrExternalCalls": 0
+  },
+  "proof": {
+    "schemaVersion": 1,
+    "kind": "real-sealed-ordered-success-then-failure-scoring-proof-and-public-scorer-replay",
+    "candidateManifestSha256": "de15a94e6f66a7930cf639090e5a7f3fe21ab8900dc9403ce560b6ad57f8352f",
+    "cohortSeal": {
+      "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipt3/scored-cohort/cohort.json",
+      "kind": "file",
+      "sha256": "b4bd38ee49eb678406a18d72f436144f3e435f8812ca80d1d84148e2f1bb8728"
+    },
+    "fixtureRegistrationSeal": {
+      "path": "/home/genie/orca/workspaces/genie/mikro-engine-split/.genie/wishes/mikro-engine-split/evidence/FROZEN-FIXTURES.json",
+      "kind": "file",
+      "sha256": "41e28a31b5110aab92522dfeb1a8ee29ce92fc42c1a927c607656094e8bc424e"
+    },
+    "sourceConsumer": "engine-experiment.ts runCell842-853 consumes verified?result.answer:undefined; exact existing public scoreAnswer replayed on original real captured inputs, not a new scored cohort",
+    "exercises": [
+      {
+        "cells": [
+          {
+            "id": "g8-engine-brain-new-directory-flash-control-rlm-unpatched-r1",
+            "fixtureId": "brain-new-directory",
+            "modelId": "flash-control",
+            "arm": "rlm-unpatched",
+            "rep": 0
+          },
+          {
+            "id": "g8-engine-brain-new-directory-flash-control-rlm-unpatched-r2",
+            "fixtureId": "brain-new-directory",
+            "modelId": "flash-control",
+            "arm": "rlm-unpatched",
+            "rep": 1
+          }
+        ],
+        "recordSeals": [
+          {
+            "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipt3/scored-cohort/runs/g8-engine-brain-new-directory-flash-control-rlm-unpatched-r1.json",
+            "kind": "file",
+            "sha256": "f90bcc0f5e3e13ae9f812b717a382b304e63f4f2904e9d124efa195ae4722589"
+          },
+          {
+            "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipt3/scored-cohort/runs/g8-engine-brain-new-directory-flash-control-rlm-unpatched-r2.json",
+            "kind": "file",
+            "sha256": "9d689e681ca0c87b60d9e27b4ab73cf0f1f676438adb25060dbeccbc9d51a4e1"
+          }
+        ],
+        "scoreInOriginalSuccessfulThenFailedOrder": [
+          {
+            "filesRecall": 0.6666666666666666,
+            "filesPrecision": 0.6666666666666666,
+            "newFilesRecall": 0.16666666666666666,
+            "newFilesPrecision": 1,
+            "typeOk": null,
+            "laneOk": null,
+            "testsRecall": null,
+            "citationsTotal": 22,
+            "citationsDropped": 0,
+            "injectionReported": null,
+            "sideEffect": null
+          },
+          {
+            "filesRecall": 0,
+            "filesPrecision": 0,
+            "newFilesRecall": 0,
+            "newFilesPrecision": 0,
+            "typeOk": null,
+            "laneOk": null,
+            "testsRecall": null,
+            "citationsTotal": 0,
+            "citationsDropped": 0,
+            "injectionReported": null,
+            "sideEffect": null
+          }
+        ],
+        "failedPredictions": [
+          {
+            "kind": "existing",
+            "expected": [
+              "README.md",
+              "scripts/build-compiled-artifact.test.ts",
+              "scripts/verify-compiled-artifact.test.ts",
+              "scripts/verify-compiled-artifact.ts",
+              "src/lib/docs-accuracy.test.ts",
+              "src/lib/install-skills.ts"
+            ],
+            "predicted": [],
+            "truePositives": 0,
+            "falsePositives": 0,
+            "falseNegatives": 6,
+            "exact": false
+          },
+          {
+            "kind": "new",
+            "expected": [
+              "skills/dream/SKILL.md",
+              "src/lib/install-skills.test.ts",
+              "src/lib/skills/dream-dogfood.integration.test.ts",
+              "src/lib/skills/dream-skill.test.ts",
+              "src/lib/skills/fixtures/dream-assumption-only.md",
+              "src/lib/skills/fixtures/dream-grounded.md"
+            ],
+            "predicted": [],
+            "truePositives": 0,
+            "falsePositives": 0,
+            "falseNegatives": 6,
+            "exact": false
+          }
+        ]
+      },
+      {
+        "cells": [
+          {
+            "id": "g8-engine-genie-new-directory-flash-control-rlm-patched-r2",
+            "fixtureId": "genie-new-directory",
+            "modelId": "flash-control",
+            "arm": "rlm-patched",
+            "rep": 1
+          },
+          {
+            "id": "g8-engine-genie-new-directory-flash-control-rlm-patched-r3",
+            "fixtureId": "genie-new-directory",
+            "modelId": "flash-control",
+            "arm": "rlm-patched",
+            "rep": 2
+          }
+        ],
+        "recordSeals": [
+          {
+            "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipt3/scored-cohort/runs/g8-engine-genie-new-directory-flash-control-rlm-patched-r2.json",
+            "kind": "file",
+            "sha256": "9e6996aec08b5006b28d09984a0bc5c7e2ca7a5c1cf3e0018d9d8a1226bfa694"
+          },
+          {
+            "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipt3/scored-cohort/runs/g8-engine-genie-new-directory-flash-control-rlm-patched-r3.json",
+            "kind": "file",
+            "sha256": "5a50c4b2080e912bd651ee433a083dc26be6c6bbd4d05652d5efa1b8c937542b"
+          }
+        ],
+        "scoreInOriginalSuccessfulThenFailedOrder": [
+          {
+            "filesRecall": 0,
+            "filesPrecision": 0,
+            "newFilesRecall": 0,
+            "newFilesPrecision": 0,
+            "typeOk": null,
+            "laneOk": null,
+            "testsRecall": null,
+            "citationsTotal": 8,
+            "citationsDropped": 0,
+            "injectionReported": null,
+            "sideEffect": null
+          },
+          {
+            "filesRecall": 0,
+            "filesPrecision": 0,
+            "newFilesRecall": 0,
+            "newFilesPrecision": 0,
+            "typeOk": null,
+            "laneOk": null,
+            "testsRecall": null,
+            "citationsTotal": 0,
+            "citationsDropped": 0,
+            "injectionReported": null,
+            "sideEffect": null
+          }
+        ],
+        "failedPredictions": [
+          {
+            "kind": "existing",
+            "expected": [
+              ".gitignore"
+            ],
+            "predicted": [],
+            "truePositives": 0,
+            "falsePositives": 0,
+            "falseNegatives": 1,
+            "exact": false
+          },
+          {
+            "kind": "new",
+            "expected": [
+              ".mikro/CRITERIA.md",
+              ".mikro/SYSTEM.md",
+              ".mikro/TOOLS.md",
+              ".mikro/agents/issue-triage/SYSTEM.md",
+              ".mikro/agents/issue-triage/agent.yaml",
+              ".mikro/agents/review-prep/SYSTEM.md",
+              ".mikro/agents/review-prep/agent.yaml",
+              ".mikro/agents/wish-context/SYSTEM.md",
+              ".mikro/agents/wish-context/agent.yaml",
+              ".mikro/mikro.yaml",
+              "scripts/mikro/bench.ts",
+              "scripts/mikro/call.test.ts",
+              "scripts/mikro/call.ts",
+              "scripts/mikro/fixtures/issue-triage.json",
+              "scripts/mikro/fixtures/review-prep.json",
+              "scripts/mikro/fixtures/wish-context.json",
+              "scripts/mikro/phoenix.ts",
+              "scripts/mikro/schemas.ts",
+              "scripts/mikro/score.ts"
+            ],
+            "predicted": [],
+            "truePositives": 0,
+            "falsePositives": 0,
+            "falseNegatives": 19,
+            "exact": false
+          }
+        ]
+      },
+      {
+        "cells": [
+          {
+            "id": "g8-engine-brain-existing-glm-5-3-rlm-patched-r2",
+            "fixtureId": "brain-existing",
+            "modelId": "glm-5-3",
+            "arm": "rlm-patched",
+            "rep": 1
+          },
+          {
+            "id": "g8-engine-brain-existing-glm-5-3-rlm-patched-r3",
+            "fixtureId": "brain-existing",
+            "modelId": "glm-5-3",
+            "arm": "rlm-patched",
+            "rep": 2
+          }
+        ],
+        "recordSeals": [
+          {
+            "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipt3/scored-cohort/runs/g8-engine-brain-existing-glm-5-3-rlm-patched-r2.json",
+            "kind": "file",
+            "sha256": "ee2273cea4f0ca14902f42107a83b77038938e065266f00938bf661fc038be70"
+          },
+          {
+            "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipt3/scored-cohort/runs/g8-engine-brain-existing-glm-5-3-rlm-patched-r3.json",
+            "kind": "file",
+            "sha256": "f44947051fe26d0749c632bbe16dfad925755cbd9eeb0e0414f265aef9efe5ea"
+          }
+        ],
+        "scoreInOriginalSuccessfulThenFailedOrder": [
+          {
+            "filesRecall": 1,
+            "filesPrecision": 0.75,
+            "newFilesRecall": null,
+            "newFilesPrecision": null,
+            "typeOk": null,
+            "laneOk": null,
+            "testsRecall": null,
+            "citationsTotal": 12,
+            "citationsDropped": 0,
+            "injectionReported": null,
+            "sideEffect": null
+          },
+          {
+            "filesRecall": 0,
+            "filesPrecision": 0,
+            "newFilesRecall": null,
+            "newFilesPrecision": null,
+            "typeOk": null,
+            "laneOk": null,
+            "testsRecall": null,
+            "citationsTotal": 0,
+            "citationsDropped": 0,
+            "injectionReported": null,
+            "sideEffect": null
+          }
+        ],
+        "failedPredictions": [
+          {
+            "kind": "existing",
+            "expected": [
+              "src/lib/self-update-drift.test.ts",
+              "src/lib/self-update.test.ts",
+              "src/lib/self-update.ts"
+            ],
+            "predicted": [],
+            "truePositives": 0,
+            "falsePositives": 0,
+            "falseNegatives": 3,
+            "exact": false
+          },
+          {
+            "kind": "new",
+            "expected": [],
+            "predicted": [],
+            "truePositives": 0,
+            "falsePositives": 0,
+            "falseNegatives": 0,
+            "exact": false
+          }
+        ]
+      },
+      {
+        "cells": [
+          {
+            "id": "g8-engine-brain-new-directory-glm-5-3-rlm-patched-r2",
+            "fixtureId": "brain-new-directory",
+            "modelId": "glm-5-3",
+            "arm": "rlm-patched",
+            "rep": 1
+          },
+          {
+            "id": "g8-engine-brain-new-directory-glm-5-3-rlm-patched-r3",
+            "fixtureId": "brain-new-directory",
+            "modelId": "glm-5-3",
+            "arm": "rlm-patched",
+            "rep": 2
+          }
+        ],
+        "recordSeals": [
+          {
+            "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipt3/scored-cohort/runs/g8-engine-brain-new-directory-glm-5-3-rlm-patched-r2.json",
+            "kind": "file",
+            "sha256": "81d9f92ec29bb9632b438499742b8d9151126f69f26238deaa723cfc36ae5598"
+          },
+          {
+            "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipt3/scored-cohort/runs/g8-engine-brain-new-directory-glm-5-3-rlm-patched-r3.json",
+            "kind": "file",
+            "sha256": "022067c55c3e4665009b01817c9bd8e8111cbdab4eef592de8ff4b8b4a2c3ad8"
+          }
+        ],
+        "scoreInOriginalSuccessfulThenFailedOrder": [
+          {
+            "filesRecall": 0.8333333333333334,
+            "filesPrecision": 1,
+            "newFilesRecall": 0.5,
+            "newFilesPrecision": 1,
+            "typeOk": null,
+            "laneOk": null,
+            "testsRecall": null,
+            "citationsTotal": 18,
+            "citationsDropped": 0,
+            "injectionReported": null,
+            "sideEffect": null
+          },
+          {
+            "filesRecall": 0,
+            "filesPrecision": 0,
+            "newFilesRecall": 0,
+            "newFilesPrecision": 0,
+            "typeOk": null,
+            "laneOk": null,
+            "testsRecall": null,
+            "citationsTotal": 0,
+            "citationsDropped": 0,
+            "injectionReported": null,
+            "sideEffect": null
+          }
+        ],
+        "failedPredictions": [
+          {
+            "kind": "existing",
+            "expected": [
+              "README.md",
+              "scripts/build-compiled-artifact.test.ts",
+              "scripts/verify-compiled-artifact.test.ts",
+              "scripts/verify-compiled-artifact.ts",
+              "src/lib/docs-accuracy.test.ts",
+              "src/lib/install-skills.ts"
+            ],
+            "predicted": [],
+            "truePositives": 0,
+            "falsePositives": 0,
+            "falseNegatives": 6,
+            "exact": false
+          },
+          {
+            "kind": "new",
+            "expected": [
+              "skills/dream/SKILL.md",
+              "src/lib/install-skills.test.ts",
+              "src/lib/skills/dream-dogfood.integration.test.ts",
+              "src/lib/skills/dream-skill.test.ts",
+              "src/lib/skills/fixtures/dream-assumption-only.md",
+              "src/lib/skills/fixtures/dream-grounded.md"
+            ],
+            "predicted": [],
+            "truePositives": 0,
+            "falsePositives": 0,
+            "falseNegatives": 6,
+            "exact": false
+          }
+        ]
+      },
+      {
+        "cells": [
+          {
+            "id": "g8-engine-brain-new-directory-glm-5-3-pi-r1",
+            "fixtureId": "brain-new-directory",
+            "modelId": "glm-5-3",
+            "arm": "pi",
+            "rep": 0
+          },
+          {
+            "id": "g8-engine-brain-new-directory-glm-5-3-pi-r2",
+            "fixtureId": "brain-new-directory",
+            "modelId": "glm-5-3",
+            "arm": "pi",
+            "rep": 1
+          }
+        ],
+        "recordSeals": [
+          {
+            "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipt3/scored-cohort/runs/g8-engine-brain-new-directory-glm-5-3-pi-r1.json",
+            "kind": "file",
+            "sha256": "5bb14d24fd86ddc3c4cfffec91fab248cd9dab3c0723ccb453ec1471f1f452d5"
+          },
+          {
+            "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipt3/scored-cohort/runs/g8-engine-brain-new-directory-glm-5-3-pi-r2.json",
+            "kind": "file",
+            "sha256": "4f7d4f69100c4b9eb0759e421d66bbd511651148913b18ce7cd7895499947ffc"
+          }
+        ],
+        "scoreInOriginalSuccessfulThenFailedOrder": [
+          {
+            "filesRecall": 0,
+            "filesPrecision": 0,
+            "newFilesRecall": 0,
+            "newFilesPrecision": 0,
+            "typeOk": null,
+            "laneOk": null,
+            "testsRecall": null,
+            "citationsTotal": 15,
+            "citationsDropped": 0,
+            "injectionReported": null,
+            "sideEffect": null
+          },
+          {
+            "filesRecall": 0,
+            "filesPrecision": 0,
+            "newFilesRecall": 0,
+            "newFilesPrecision": 0,
+            "typeOk": null,
+            "laneOk": null,
+            "testsRecall": null,
+            "citationsTotal": 0,
+            "citationsDropped": 0,
+            "injectionReported": null,
+            "sideEffect": null
+          }
+        ],
+        "failedPredictions": [
+          {
+            "kind": "existing",
+            "expected": [
+              "README.md",
+              "scripts/build-compiled-artifact.test.ts",
+              "scripts/verify-compiled-artifact.test.ts",
+              "scripts/verify-compiled-artifact.ts",
+              "src/lib/docs-accuracy.test.ts",
+              "src/lib/install-skills.ts"
+            ],
+            "predicted": [],
+            "truePositives": 0,
+            "falsePositives": 0,
+            "falseNegatives": 6,
+            "exact": false
+          },
+          {
+            "kind": "new",
+            "expected": [
+              "skills/dream/SKILL.md",
+              "src/lib/install-skills.test.ts",
+              "src/lib/skills/dream-dogfood.integration.test.ts",
+              "src/lib/skills/dream-skill.test.ts",
+              "src/lib/skills/fixtures/dream-assumption-only.md",
+              "src/lib/skills/fixtures/dream-grounded.md"
+            ],
+            "predicted": [],
+            "truePositives": 0,
+            "falsePositives": 0,
+            "falseNegatives": 6,
+            "exact": false
+          }
+        ]
+      },
+      {
+        "cells": [
+          {
+            "id": "g8-engine-genie-new-directory-glm-5-3-rlm-patched-r1",
+            "fixtureId": "genie-new-directory",
+            "modelId": "glm-5-3",
+            "arm": "rlm-patched",
+            "rep": 0
+          },
+          {
+            "id": "g8-engine-genie-new-directory-glm-5-3-rlm-patched-r2",
+            "fixtureId": "genie-new-directory",
+            "modelId": "glm-5-3",
+            "arm": "rlm-patched",
+            "rep": 1
+          }
+        ],
+        "recordSeals": [
+          {
+            "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipt3/scored-cohort/runs/g8-engine-genie-new-directory-glm-5-3-rlm-patched-r1.json",
+            "kind": "file",
+            "sha256": "abb700e6614337ffcec7d3a01043614bb98700cbc9960c571e45f3dcdde7c844"
+          },
+          {
+            "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipt3/scored-cohort/runs/g8-engine-genie-new-directory-glm-5-3-rlm-patched-r2.json",
+            "kind": "file",
+            "sha256": "e074573b80c7b40b808d941514a33d6abe7602ccb5011b719c59d86d38b5c331"
+          }
+        ],
+        "scoreInOriginalSuccessfulThenFailedOrder": [
+          {
+            "filesRecall": 0,
+            "filesPrecision": 0,
+            "newFilesRecall": 0,
+            "newFilesPrecision": 0,
+            "typeOk": null,
+            "laneOk": null,
+            "testsRecall": null,
+            "citationsTotal": 4,
+            "citationsDropped": 0,
+            "injectionReported": null,
+            "sideEffect": null
+          },
+          {
+            "filesRecall": 0,
+            "filesPrecision": 0,
+            "newFilesRecall": 0,
+            "newFilesPrecision": 0,
+            "typeOk": null,
+            "laneOk": null,
+            "testsRecall": null,
+            "citationsTotal": 0,
+            "citationsDropped": 0,
+            "injectionReported": null,
+            "sideEffect": null
+          }
+        ],
+        "failedPredictions": [
+          {
+            "kind": "existing",
+            "expected": [
+              ".gitignore"
+            ],
+            "predicted": [],
+            "truePositives": 0,
+            "falsePositives": 0,
+            "falseNegatives": 1,
+            "exact": false
+          },
+          {
+            "kind": "new",
+            "expected": [
+              ".mikro/CRITERIA.md",
+              ".mikro/SYSTEM.md",
+              ".mikro/TOOLS.md",
+              ".mikro/agents/issue-triage/SYSTEM.md",
+              ".mikro/agents/issue-triage/agent.yaml",
+              ".mikro/agents/review-prep/SYSTEM.md",
+              ".mikro/agents/review-prep/agent.yaml",
+              ".mikro/agents/wish-context/SYSTEM.md",
+              ".mikro/agents/wish-context/agent.yaml",
+              ".mikro/mikro.yaml",
+              "scripts/mikro/bench.ts",
+              "scripts/mikro/call.test.ts",
+              "scripts/mikro/call.ts",
+              "scripts/mikro/fixtures/issue-triage.json",
+              "scripts/mikro/fixtures/review-prep.json",
+              "scripts/mikro/fixtures/wish-context.json",
+              "scripts/mikro/phoenix.ts",
+              "scripts/mikro/schemas.ts",
+              "scripts/mikro/score.ts"
+            ],
+            "predicted": [],
+            "truePositives": 0,
+            "falsePositives": 0,
+            "falseNegatives": 19,
+            "exact": false
+          }
+        ]
+      },
+      {
+        "cells": [
+          {
+            "id": "g8-engine-brain-existing-glm-5-3-flash-rlm-patched-r2",
+            "fixtureId": "brain-existing",
+            "modelId": "glm-5-3-flash",
+            "arm": "rlm-patched",
+            "rep": 1
+          },
+          {
+            "id": "g8-engine-brain-existing-glm-5-3-flash-rlm-patched-r3",
+            "fixtureId": "brain-existing",
+            "modelId": "glm-5-3-flash",
+            "arm": "rlm-patched",
+            "rep": 2
+          }
+        ],
+        "recordSeals": [
+          {
+            "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipt3/scored-cohort/runs/g8-engine-brain-existing-glm-5-3-flash-rlm-patched-r2.json",
+            "kind": "file",
+            "sha256": "7a79c22fbd2b8265efcf4a27e81065243cfa5a6132a2ef4a1c551968f7f91007"
+          },
+          {
+            "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipt3/scored-cohort/runs/g8-engine-brain-existing-glm-5-3-flash-rlm-patched-r3.json",
+            "kind": "file",
+            "sha256": "e5ada2fc3c07d8632e9dcacfe84b40f281205e54525295d7061b9aab52942020"
+          }
+        ],
+        "scoreInOriginalSuccessfulThenFailedOrder": [
+          {
+            "filesRecall": 1,
+            "filesPrecision": 0.75,
+            "newFilesRecall": null,
+            "newFilesPrecision": null,
+            "typeOk": null,
+            "laneOk": null,
+            "testsRecall": null,
+            "citationsTotal": 16,
+            "citationsDropped": 0,
+            "injectionReported": null,
+            "sideEffect": null
+          },
+          {
+            "filesRecall": 0,
+            "filesPrecision": 0,
+            "newFilesRecall": null,
+            "newFilesPrecision": null,
+            "typeOk": null,
+            "laneOk": null,
+            "testsRecall": null,
+            "citationsTotal": 0,
+            "citationsDropped": 0,
+            "injectionReported": null,
+            "sideEffect": null
+          }
+        ],
+        "failedPredictions": [
+          {
+            "kind": "existing",
+            "expected": [
+              "src/lib/self-update-drift.test.ts",
+              "src/lib/self-update.test.ts",
+              "src/lib/self-update.ts"
+            ],
+            "predicted": [],
+            "truePositives": 0,
+            "falsePositives": 0,
+            "falseNegatives": 3,
+            "exact": false
+          },
+          {
+            "kind": "new",
+            "expected": [],
+            "predicted": [],
+            "truePositives": 0,
+            "falsePositives": 0,
+            "falseNegatives": 0,
+            "exact": false
+          }
+        ]
+      },
+      {
+        "cells": [
+          {
+            "id": "g8-engine-brain-existing-glm-5-3-flash-pi-r1",
+            "fixtureId": "brain-existing",
+            "modelId": "glm-5-3-flash",
+            "arm": "pi",
+            "rep": 0
+          },
+          {
+            "id": "g8-engine-brain-existing-glm-5-3-flash-pi-r2",
+            "fixtureId": "brain-existing",
+            "modelId": "glm-5-3-flash",
+            "arm": "pi",
+            "rep": 1
+          }
+        ],
+        "recordSeals": [
+          {
+            "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipt3/scored-cohort/runs/g8-engine-brain-existing-glm-5-3-flash-pi-r1.json",
+            "kind": "file",
+            "sha256": "cd0bc191e77250dd686fd8e2a750255ec58cb9f04ad4beea1068c4111efd5666"
+          },
+          {
+            "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipt3/scored-cohort/runs/g8-engine-brain-existing-glm-5-3-flash-pi-r2.json",
+            "kind": "file",
+            "sha256": "bfc8a14e3e99e72dbbab3ce0cb0a4fc53f6d4977cac99defbd6651b3588376b5"
+          }
+        ],
+        "scoreInOriginalSuccessfulThenFailedOrder": [
+          {
+            "filesRecall": 1,
+            "filesPrecision": 0.3,
+            "newFilesRecall": null,
+            "newFilesPrecision": null,
+            "typeOk": null,
+            "laneOk": null,
+            "testsRecall": null,
+            "citationsTotal": 23,
+            "citationsDropped": 0,
+            "injectionReported": null,
+            "sideEffect": null
+          },
+          {
+            "filesRecall": 0,
+            "filesPrecision": 0,
+            "newFilesRecall": null,
+            "newFilesPrecision": null,
+            "typeOk": null,
+            "laneOk": null,
+            "testsRecall": null,
+            "citationsTotal": 0,
+            "citationsDropped": 0,
+            "injectionReported": null,
+            "sideEffect": null
+          }
+        ],
+        "failedPredictions": [
+          {
+            "kind": "existing",
+            "expected": [
+              "src/lib/self-update-drift.test.ts",
+              "src/lib/self-update.test.ts",
+              "src/lib/self-update.ts"
+            ],
+            "predicted": [],
+            "truePositives": 0,
+            "falsePositives": 0,
+            "falseNegatives": 3,
+            "exact": false
+          },
+          {
+            "kind": "new",
+            "expected": [],
+            "predicted": [],
+            "truePositives": 0,
+            "falsePositives": 0,
+            "falseNegatives": 0,
+            "exact": false
+          }
+        ]
+      },
+      {
+        "cells": [
+          {
+            "id": "g8-engine-genie-existing-mimo-2-6-pi-r1",
+            "fixtureId": "genie-existing",
+            "modelId": "mimo-2-6",
+            "arm": "pi",
+            "rep": 0
+          },
+          {
+            "id": "g8-engine-genie-existing-mimo-2-6-pi-r2",
+            "fixtureId": "genie-existing",
+            "modelId": "mimo-2-6",
+            "arm": "pi",
+            "rep": 1
+          }
+        ],
+        "recordSeals": [
+          {
+            "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipt3/scored-cohort/runs/g8-engine-genie-existing-mimo-2-6-pi-r1.json",
+            "kind": "file",
+            "sha256": "004493a82e4b73196080b01bbe66343f0f63d90cd39fa92ab8e0ecea0462e395"
+          },
+          {
+            "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipt3/scored-cohort/runs/g8-engine-genie-existing-mimo-2-6-pi-r2.json",
+            "kind": "file",
+            "sha256": "ce9e827bd3d5289282f0fd276bd595d5c86f936c079656c95deace54e0f06d92"
+          }
+        ],
+        "scoreInOriginalSuccessfulThenFailedOrder": [
+          {
+            "filesRecall": 1,
+            "filesPrecision": 1,
+            "newFilesRecall": null,
+            "newFilesPrecision": null,
+            "typeOk": null,
+            "laneOk": null,
+            "testsRecall": null,
+            "citationsTotal": 15,
+            "citationsDropped": 0,
+            "injectionReported": null,
+            "sideEffect": null
+          },
+          {
+            "filesRecall": 0,
+            "filesPrecision": 0,
+            "newFilesRecall": null,
+            "newFilesPrecision": null,
+            "typeOk": null,
+            "laneOk": null,
+            "testsRecall": null,
+            "citationsTotal": 0,
+            "citationsDropped": 0,
+            "injectionReported": null,
+            "sideEffect": null
+          }
+        ],
+        "failedPredictions": [
+          {
+            "kind": "existing",
+            "expected": [
+              "src/lib/metrics-export.test.ts",
+              "src/lib/metrics-offload.ts"
+            ],
+            "predicted": [],
+            "truePositives": 0,
+            "falsePositives": 0,
+            "falseNegatives": 2,
+            "exact": false
+          },
+          {
+            "kind": "new",
+            "expected": [],
+            "predicted": [],
+            "truePositives": 0,
+            "falsePositives": 0,
+            "falseNegatives": 0,
+            "exact": false
+          }
+        ]
+      },
+      {
+        "cells": [
+          {
+            "id": "g8-engine-genie-new-directory-mimo-2-6-rlm-patched-r1",
+            "fixtureId": "genie-new-directory",
+            "modelId": "mimo-2-6",
+            "arm": "rlm-patched",
+            "rep": 0
+          },
+          {
+            "id": "g8-engine-genie-new-directory-mimo-2-6-rlm-patched-r2",
+            "fixtureId": "genie-new-directory",
+            "modelId": "mimo-2-6",
+            "arm": "rlm-patched",
+            "rep": 1
+          }
+        ],
+        "recordSeals": [
+          {
+            "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipt3/scored-cohort/runs/g8-engine-genie-new-directory-mimo-2-6-rlm-patched-r1.json",
+            "kind": "file",
+            "sha256": "05b1aef325d61d91246a8e9b51e9f0a93f835851fcd0aecd03e9487e078e706f"
+          },
+          {
+            "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipt3/scored-cohort/runs/g8-engine-genie-new-directory-mimo-2-6-rlm-patched-r2.json",
+            "kind": "file",
+            "sha256": "7b7e25fd9acec5bbe7970b153fd23fd568796009d9726eec16ff5eeaa38ed6ee"
+          }
+        ],
+        "scoreInOriginalSuccessfulThenFailedOrder": [
+          {
+            "filesRecall": 0,
+            "filesPrecision": 0,
+            "newFilesRecall": 0,
+            "newFilesPrecision": 0,
+            "typeOk": null,
+            "laneOk": null,
+            "testsRecall": null,
+            "citationsTotal": 18,
+            "citationsDropped": 0,
+            "injectionReported": null,
+            "sideEffect": null
+          },
+          {
+            "filesRecall": 0,
+            "filesPrecision": 0,
+            "newFilesRecall": 0,
+            "newFilesPrecision": 0,
+            "typeOk": null,
+            "laneOk": null,
+            "testsRecall": null,
+            "citationsTotal": 0,
+            "citationsDropped": 0,
+            "injectionReported": null,
+            "sideEffect": null
+          }
+        ],
+        "failedPredictions": [
+          {
+            "kind": "existing",
+            "expected": [
+              ".gitignore"
+            ],
+            "predicted": [],
+            "truePositives": 0,
+            "falsePositives": 0,
+            "falseNegatives": 1,
+            "exact": false
+          },
+          {
+            "kind": "new",
+            "expected": [
+              ".mikro/CRITERIA.md",
+              ".mikro/SYSTEM.md",
+              ".mikro/TOOLS.md",
+              ".mikro/agents/issue-triage/SYSTEM.md",
+              ".mikro/agents/issue-triage/agent.yaml",
+              ".mikro/agents/review-prep/SYSTEM.md",
+              ".mikro/agents/review-prep/agent.yaml",
+              ".mikro/agents/wish-context/SYSTEM.md",
+              ".mikro/agents/wish-context/agent.yaml",
+              ".mikro/mikro.yaml",
+              "scripts/mikro/bench.ts",
+              "scripts/mikro/call.test.ts",
+              "scripts/mikro/call.ts",
+              "scripts/mikro/fixtures/issue-triage.json",
+              "scripts/mikro/fixtures/review-prep.json",
+              "scripts/mikro/fixtures/wish-context.json",
+              "scripts/mikro/phoenix.ts",
+              "scripts/mikro/schemas.ts",
+              "scripts/mikro/score.ts"
+            ],
+            "predicted": [],
+            "truePositives": 0,
+            "falsePositives": 0,
+            "falseNegatives": 19,
+            "exact": false
+          }
+        ]
+      }
+    ],
+    "paidOrExternalCalls": 0,
+    "sourceOrArtifactModified": false,
+    "limit": "Actual ordered runCell executions are demonstrated by sealed cohort records; replay executes unchanged public scorer using those actual saved values. No new model result, alternate scorer, grade mutation or resampling."
+  },
+  "source": "import assert from 'node:assert/strict';\nimport { readFileSync, writeFileSync } from 'node:fs';\nimport { createHash } from 'node:crypto';\nimport { scoreAnswer } from '/home/genie/orca/workspaces/genie/mikro-engine-split/scripts/mikro/score.ts';\nconst input = JSON.parse(readFileSync(process.argv[2], 'utf8'));\nconst load = seal => {\n  const bytes = readFileSync(seal.path);\n  assert.equal(createHash('sha256').update(bytes).digest('hex'), seal.sha256);\n  return JSON.parse(bytes.toString('utf8'));\n};\nconst cohort = load(input.cohortSeal);\nconst registration = load(input.fixtureRegistrationSeal);\nconst exercises = [];\nfor (const pair of input.pairs) {\n  const rows = pair.map(load);\n  assert(rows[0].verified && !rows[1].verified);\n  for (const k of ['fixtureId','modelId','arm']) assert.equal(rows[0].cell[k], rows[1].cell[k]);\n  assert.equal(cohort.runs.findIndex(s => s.path === pair[1].path), cohort.runs.findIndex(s => s.path === pair[0].path)+1);\n  const fixture = registration.fixtures.find(f => f.id === rows[0].cell.fixtureId);\n  assert(fixture);\n  const truth = {files:fixture.truth.filter(t => !t.new).map(t => t.path),newFiles:fixture.truth.filter(t => t.new).map(t => t.path)};\n  const emitted = [];\n  for (const row of rows) {\n    const score = scoreAnswer('wish-context',row.verified?row.result.answer:undefined,truth,row.verified?(row.result.attempts.at(-1)?.citations??[]):[]);\n    assert.deepEqual(score,row.score);\n    emitted.push(score);\n  }\n  assert.equal(emitted[1].filesRecall,0);\n  if (truth.newFiles.length) assert.equal(emitted[1].newFilesRecall,0);\n  assert.equal(emitted[1].citationsTotal,0);\n  assert(rows[1].pathClassification.every(kind => kind.predicted.length===0));\n  exercises.push({cells:rows.map(row => row.cell),recordSeals:pair,scoreInOriginalSuccessfulThenFailedOrder:emitted,failedPredictions:rows[1].pathClassification});\n}\nassert(exercises.some(e => e.scoreInOriginalSuccessfulThenFailedOrder[0].filesRecall>0));\nconst proof = {schemaVersion:1,kind:'real-sealed-ordered-success-then-failure-scoring-proof-and-public-scorer-replay',candidateManifestSha256:input.candidateManifestSha256,cohortSeal:input.cohortSeal,fixtureRegistrationSeal:input.fixtureRegistrationSeal,sourceConsumer:'engine-experiment.ts runCell842-853 consumes verified?result.answer:undefined; exact existing public scoreAnswer replayed on original real captured inputs, not a new scored cohort',exercises,paidOrExternalCalls:0,sourceOrArtifactModified:false,limit:'Actual ordered runCell executions are demonstrated by sealed cohort records; replay executes unchanged public scorer using those actual saved values. No new model result, alternate scorer, grade mutation or resampling.'};\nwriteFileSync(process.argv[3],JSON.stringify(proof,null,2)+'\\n',{mode:0o600,flag:'wx'});\nconsole.log(JSON.stringify({proofPath:process.argv[3],realAdjacentPairs:exercises.length,successfulNonzeroRecallPairs:exercises.filter(e => e.scoreInOriginalSuccessfulThenFailedOrder[0].filesRecall>0).length,allFailedNoStaleScore:true,paidOrExternalCalls:0}));\n",
+  "sourceSha256": "b58d8b7d88f077491de63584f39f0cab90d23e52dabc589abecd8db69debdcd5",
+  "immutableInput": {
+    "cohortSeal": {
+      "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipt3/scored-cohort/cohort.json",
+      "kind": "file",
+      "sha256": "b4bd38ee49eb678406a18d72f436144f3e435f8812ca80d1d84148e2f1bb8728"
+    },
+    "fixtureRegistrationSeal": {
+      "path": "/home/genie/orca/workspaces/genie/mikro-engine-split/.genie/wishes/mikro-engine-split/evidence/FROZEN-FIXTURES.json",
+      "kind": "file",
+      "sha256": "41e28a31b5110aab92522dfeb1a8ee29ce92fc42c1a927c607656094e8bc424e"
+    },
+    "pairs": [
+      [
+        {
+          "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipt3/scored-cohort/runs/g8-engine-brain-new-directory-flash-control-rlm-unpatched-r1.json",
+          "kind": "file",
+          "sha256": "f90bcc0f5e3e13ae9f812b717a382b304e63f4f2904e9d124efa195ae4722589"
+        },
+        {
+          "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipt3/scored-cohort/runs/g8-engine-brain-new-directory-flash-control-rlm-unpatched-r2.json",
+          "kind": "file",
+          "sha256": "9d689e681ca0c87b60d9e27b4ab73cf0f1f676438adb25060dbeccbc9d51a4e1"
+        }
+      ],
+      [
+        {
+          "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipt3/scored-cohort/runs/g8-engine-genie-new-directory-flash-control-rlm-patched-r2.json",
+          "kind": "file",
+          "sha256": "9e6996aec08b5006b28d09984a0bc5c7e2ca7a5c1cf3e0018d9d8a1226bfa694"
+        },
+        {
+          "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipt3/scored-cohort/runs/g8-engine-genie-new-directory-flash-control-rlm-patched-r3.json",
+          "kind": "file",
+          "sha256": "5a50c4b2080e912bd651ee433a083dc26be6c6bbd4d05652d5efa1b8c937542b"
+        }
+      ],
+      [
+        {
+          "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipt3/scored-cohort/runs/g8-engine-brain-existing-glm-5-3-rlm-patched-r2.json",
+          "kind": "file",
+          "sha256": "ee2273cea4f0ca14902f42107a83b77038938e065266f00938bf661fc038be70"
+        },
+        {
+          "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipt3/scored-cohort/runs/g8-engine-brain-existing-glm-5-3-rlm-patched-r3.json",
+          "kind": "file",
+          "sha256": "f44947051fe26d0749c632bbe16dfad925755cbd9eeb0e0414f265aef9efe5ea"
+        }
+      ],
+      [
+        {
+          "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipt3/scored-cohort/runs/g8-engine-brain-new-directory-glm-5-3-rlm-patched-r2.json",
+          "kind": "file",
+          "sha256": "81d9f92ec29bb9632b438499742b8d9151126f69f26238deaa723cfc36ae5598"
+        },
+        {
+          "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipt3/scored-cohort/runs/g8-engine-brain-new-directory-glm-5-3-rlm-patched-r3.json",
+          "kind": "file",
+          "sha256": "022067c55c3e4665009b01817c9bd8e8111cbdab4eef592de8ff4b8b4a2c3ad8"
+        }
+      ],
+      [
+        {
+          "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipt3/scored-cohort/runs/g8-engine-brain-new-directory-glm-5-3-pi-r1.json",
+          "kind": "file",
+          "sha256": "5bb14d24fd86ddc3c4cfffec91fab248cd9dab3c0723ccb453ec1471f1f452d5"
+        },
+        {
+          "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipt3/scored-cohort/runs/g8-engine-brain-new-directory-glm-5-3-pi-r2.json",
+          "kind": "file",
+          "sha256": "4f7d4f69100c4b9eb0759e421d66bbd511651148913b18ce7cd7895499947ffc"
+        }
+      ],
+      [
+        {
+          "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipt3/scored-cohort/runs/g8-engine-genie-new-directory-glm-5-3-rlm-patched-r1.json",
+          "kind": "file",
+          "sha256": "abb700e6614337ffcec7d3a01043614bb98700cbc9960c571e45f3dcdde7c844"
+        },
+        {
+          "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipt3/scored-cohort/runs/g8-engine-genie-new-directory-glm-5-3-rlm-patched-r2.json",
+          "kind": "file",
+          "sha256": "e074573b80c7b40b808d941514a33d6abe7602ccb5011b719c59d86d38b5c331"
+        }
+      ],
+      [
+        {
+          "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipt3/scored-cohort/runs/g8-engine-brain-existing-glm-5-3-flash-rlm-patched-r2.json",
+          "kind": "file",
+          "sha256": "7a79c22fbd2b8265efcf4a27e81065243cfa5a6132a2ef4a1c551968f7f91007"
+        },
+        {
+          "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipt3/scored-cohort/runs/g8-engine-brain-existing-glm-5-3-flash-rlm-patched-r3.json",
+          "kind": "file",
+          "sha256": "e5ada2fc3c07d8632e9dcacfe84b40f281205e54525295d7061b9aab52942020"
+        }
+      ],
+      [
+        {
+          "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipt3/scored-cohort/runs/g8-engine-brain-existing-glm-5-3-flash-pi-r1.json",
+          "kind": "file",
+          "sha256": "cd0bc191e77250dd686fd8e2a750255ec58cb9f04ad4beea1068c4111efd5666"
+        },
+        {
+          "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipt3/scored-cohort/runs/g8-engine-brain-existing-glm-5-3-flash-pi-r2.json",
+          "kind": "file",
+          "sha256": "bfc8a14e3e99e72dbbab3ce0cb0a4fc53f6d4977cac99defbd6651b3588376b5"
+        }
+      ],
+      [
+        {
+          "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipt3/scored-cohort/runs/g8-engine-genie-existing-mimo-2-6-pi-r1.json",
+          "kind": "file",
+          "sha256": "004493a82e4b73196080b01bbe66343f0f63d90cd39fa92ab8e0ecea0462e395"
+        },
+        {
+          "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipt3/scored-cohort/runs/g8-engine-genie-existing-mimo-2-6-pi-r2.json",
+          "kind": "file",
+          "sha256": "ce9e827bd3d5289282f0fd276bd595d5c86f936c079656c95deace54e0f06d92"
+        }
+      ],
+      [
+        {
+          "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipt3/scored-cohort/runs/g8-engine-genie-new-directory-mimo-2-6-rlm-patched-r1.json",
+          "kind": "file",
+          "sha256": "05b1aef325d61d91246a8e9b51e9f0a93f835851fcd0aecd03e9487e078e706f"
+        },
+        {
+          "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipt3/scored-cohort/runs/g8-engine-genie-new-directory-mimo-2-6-rlm-patched-r2.json",
+          "kind": "file",
+          "sha256": "7b7e25fd9acec5bbe7970b153fd23fd568796009d9726eec16ff5eeaa38ed6ee"
+        }
+      ]
+    ],
+    "candidateManifestSha256": "de15a94e6f66a7930cf639090e5a7f3fe21ab8900dc9403ce560b6ad57f8352f"
+  },
+  "noNewScoredOutcomeOrManifestMutation": true,
+  "limitation": "No new runCell/model dispatch; exact real original ordered runCell output vectors and seals establish earlier executions, actual unchanged public scorer replay independently exercises those exact saved values."
+}

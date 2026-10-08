@@ -1,0 +1,369 @@
+{
+  "schemaVersion": 1,
+  "scope": "Actual non-inference public SDK proof; no permanent source repair authorized/applied",
+  "recordedAt": "2026-10-06T14:47:08.013911Z",
+  "originalProof": {
+    "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/native-header-proof-zXrc5d/proof.json",
+    "sha256": "fa6794251fa669027959914b9cb844f24ad458f626cbc3fa903aac96c6efecf1"
+  },
+  "proof": {
+    "schemaVersion": 1,
+    "kind": "native-root-header-non-inference-proof",
+    "root": "/home/genie/.local/share/mikro-engine-split/experiments-g8/native-header-proof-zXrc5d",
+    "runtime": "0.2.0-rc.1",
+    "nativeWorkflowLaunched": false,
+    "credentialsProvided": false,
+    "originalObservationRecovered": false,
+    "profileScope": "isolated public headless SDK; no experiment workflow loader or workflows installed",
+    "originalCauseStatus": "inference: original live header was not retained",
+    "rootCapture": {
+      "sessionId": "834ca607-7c07-4d15-8afd-411f6049dd6a",
+      "source": "live",
+      "liveHeader": {
+        "version": 4,
+        "id": "834ca607-7c07-4d15-8afd-411f6049dd6a",
+        "createdAt": 1791297847398,
+        "cwd": "/home/genie/.local/share/mikro-engine-split/experiments-g8/native-header-proof-zXrc5d/cwd",
+        "isSeeded": false
+      },
+      "durableHeader": {
+        "version": 4,
+        "id": "834ca607-7c07-4d15-8afd-411f6049dd6a",
+        "createdAt": 1791297847398,
+        "cwd": "/home/genie/.local/share/mikro-engine-split/experiments-g8/native-header-proof-zXrc5d/cwd",
+        "isSeeded": false,
+        "delegationDepth": 0
+      },
+      "inheritedEventCount": 0,
+      "observedInheritedEventCount": 0,
+      "eventCount": 3,
+      "rawHeaderEqual": false,
+      "exactSdkDefaultProjectionEqual": true,
+      "projection": {
+        "version": 4,
+        "id": "834ca607-7c07-4d15-8afd-411f6049dd6a",
+        "createdAt": 1791297847398,
+        "cwd": "/home/genie/.local/share/mikro-engine-split/experiments-g8/native-header-proof-zXrc5d/cwd",
+        "isSeeded": false,
+        "delegationDepth": 0
+      },
+      "sdkWireHeader": {
+        "type": "session",
+        "version": 4,
+        "id": "834ca607-7c07-4d15-8afd-411f6049dd6a",
+        "createdAt": 1791297847398,
+        "cwd": "/home/genie/.local/share/mikro-engine-split/experiments-g8/native-header-proof-zXrc5d/cwd",
+        "isSeeded": false,
+        "delegationDepth": 0
+      },
+      "sdkReadHeader": {
+        "status": "current",
+        "storedVersion": 4,
+        "targetVersion": 4,
+        "header": {
+          "version": 4,
+          "id": "834ca607-7c07-4d15-8afd-411f6049dd6a",
+          "createdAt": 1791297847398,
+          "cwd": "/home/genie/.local/share/mikro-engine-split/experiments-g8/native-header-proof-zXrc5d/cwd",
+          "isSeeded": false,
+          "delegationDepth": 0
+        }
+      }
+    },
+    "originalHelper": {
+      "sessions": [
+        {
+          "sessionId": "834ca607-7c07-4d15-8afd-411f6049dd6a",
+          "header": {
+            "version": 4,
+            "id": "834ca607-7c07-4d15-8afd-411f6049dd6a",
+            "createdAt": 1791297847398,
+            "cwd": "/home/genie/.local/share/mikro-engine-split/experiments-g8/native-header-proof-zXrc5d/cwd",
+            "isSeeded": false,
+            "delegationDepth": 0
+          },
+          "inheritedEventCount": 0,
+          "observation": {
+            "source": "live",
+            "cursor": 2,
+            "revision": null,
+            "synthesizedSuffix": []
+          },
+          "durableEventCount": 3,
+          "durableEventsSha256": "2300a71eb192073d033440405fcd8a5884641dae29b08853e7c4a9170a2e589f",
+          "ownEventCount": 3,
+          "events": [
+            {
+              "type": "permission/preset",
+              "seq": 0,
+              "time": 1791297847409,
+              "data": {
+                "preset": "workspace-write"
+              }
+            },
+            {
+              "type": "sandbox/mode",
+              "seq": 1,
+              "time": 1791297847412,
+              "data": {
+                "mode": "workspace-write"
+              }
+            },
+            {
+              "type": "approval/policy",
+              "seq": 2,
+              "time": 1791297847413,
+              "data": {
+                "policy": "ask"
+              }
+            }
+          ],
+          "accounting": {
+            "totals": {
+              "totalTokens": 0,
+              "uncachedInputTokens": 0,
+              "outputTokens": 0,
+              "cacheReadTokens": null,
+              "cacheWriteTokens": null,
+              "reasoningTokens": null
+            },
+            "turns": [],
+            "requests": [],
+            "servedRoutes": [],
+            "toolCalls": 0,
+            "modelToolCalls": [],
+            "attempts": [],
+            "retries": [],
+            "blockers": []
+          },
+          "blockers": [
+            "observation header differs from durable header"
+          ]
+        }
+      ],
+      "blockers": []
+    },
+    "explicitRootHelper": {
+      "sessions": [
+        {
+          "sessionId": "357765ea-d9d0-4e77-9ee8-9318f023c4ca",
+          "header": {
+            "version": 4,
+            "id": "357765ea-d9d0-4e77-9ee8-9318f023c4ca",
+            "createdAt": 1791297847503,
+            "cwd": "/home/genie/.local/share/mikro-engine-split/experiments-g8/native-header-proof-zXrc5d/cwd",
+            "isSeeded": false,
+            "delegationDepth": 0
+          },
+          "inheritedEventCount": 0,
+          "observation": {
+            "source": "live",
+            "cursor": 2,
+            "revision": null,
+            "synthesizedSuffix": []
+          },
+          "durableEventCount": 3,
+          "durableEventsSha256": "abd2a988c0d6d51bddf1d05a7409942308922e451571992a5e9244570372c5c2",
+          "ownEventCount": 3,
+          "events": [
+            {
+              "type": "permission/preset",
+              "seq": 0,
+              "time": 1791297847509,
+              "data": {
+                "preset": "workspace-write"
+              }
+            },
+            {
+              "type": "sandbox/mode",
+              "seq": 1,
+              "time": 1791297847509,
+              "data": {
+                "mode": "workspace-write"
+              }
+            },
+            {
+              "type": "approval/policy",
+              "seq": 2,
+              "time": 1791297847509,
+              "data": {
+                "policy": "ask"
+              }
+            }
+          ],
+          "accounting": {
+            "totals": {
+              "totalTokens": 0,
+              "uncachedInputTokens": 0,
+              "outputTokens": 0,
+              "cacheReadTokens": null,
+              "cacheWriteTokens": null,
+              "reasoningTokens": null
+            },
+            "turns": [],
+            "requests": [],
+            "servedRoutes": [],
+            "toolCalls": 0,
+            "modelToolCalls": [],
+            "attempts": [],
+            "retries": [],
+            "blockers": []
+          },
+          "blockers": []
+        }
+      ],
+      "blockers": []
+    },
+    "explicitRootCapture": {
+      "sessionId": "357765ea-d9d0-4e77-9ee8-9318f023c4ca",
+      "source": "live",
+      "liveHeader": {
+        "version": 4,
+        "id": "357765ea-d9d0-4e77-9ee8-9318f023c4ca",
+        "createdAt": 1791297847503,
+        "cwd": "/home/genie/.local/share/mikro-engine-split/experiments-g8/native-header-proof-zXrc5d/cwd",
+        "isSeeded": false,
+        "delegationDepth": 0
+      },
+      "durableHeader": {
+        "version": 4,
+        "id": "357765ea-d9d0-4e77-9ee8-9318f023c4ca",
+        "createdAt": 1791297847503,
+        "cwd": "/home/genie/.local/share/mikro-engine-split/experiments-g8/native-header-proof-zXrc5d/cwd",
+        "isSeeded": false,
+        "delegationDepth": 0
+      },
+      "inheritedEventCount": 0,
+      "observedInheritedEventCount": 0,
+      "eventCount": 3,
+      "rawHeaderEqual": true,
+      "exactSdkDefaultProjectionEqual": true,
+      "projection": {
+        "version": 4,
+        "id": "357765ea-d9d0-4e77-9ee8-9318f023c4ca",
+        "createdAt": 1791297847503,
+        "cwd": "/home/genie/.local/share/mikro-engine-split/experiments-g8/native-header-proof-zXrc5d/cwd",
+        "isSeeded": false,
+        "delegationDepth": 0
+      },
+      "sdkWireHeader": {
+        "type": "session",
+        "version": 4,
+        "id": "357765ea-d9d0-4e77-9ee8-9318f023c4ca",
+        "createdAt": 1791297847503,
+        "cwd": "/home/genie/.local/share/mikro-engine-split/experiments-g8/native-header-proof-zXrc5d/cwd",
+        "isSeeded": false,
+        "delegationDepth": 0
+      },
+      "sdkReadHeader": {
+        "status": "current",
+        "storedVersion": 4,
+        "targetVersion": 4,
+        "header": {
+          "version": 4,
+          "id": "357765ea-d9d0-4e77-9ee8-9318f023c4ca",
+          "createdAt": 1791297847503,
+          "cwd": "/home/genie/.local/share/mikro-engine-split/experiments-g8/native-header-proof-zXrc5d/cwd",
+          "isSeeded": false,
+          "delegationDepth": 0
+        }
+      }
+    },
+    "previousAttemptProofPaths": [
+      "/home/genie/.local/share/mikro-engine-split/experiments-g8/native-header-proof-aHbspb/proof.json",
+      "/home/genie/.local/share/mikro-engine-split/experiments-g8/native-header-proof-KxrU6f/proof.json",
+      "/home/genie/.local/share/mikro-engine-split/experiments-g8/native-header-proof-VenC1i/proof.json"
+    ],
+    "rawSessionStoreForkHeader": {
+      "version": 4,
+      "id": "b271bea3-61e6-40a4-8152-04b15fbd33bb",
+      "createdAt": 1791297847557,
+      "cwd": "/home/genie/.local/share/mikro-engine-split/experiments-g8/native-header-proof-zXrc5d/cwd",
+      "parentSession": "357765ea-d9d0-4e77-9ee8-9318f023c4ca",
+      "isSeeded": true
+    },
+    "inheritedCapture": {
+      "sessionId": "244aab6b-0c93-45f5-b8c5-9949044fce1d",
+      "source": "live",
+      "liveHeader": {
+        "version": 4,
+        "id": "244aab6b-0c93-45f5-b8c5-9949044fce1d",
+        "createdAt": 1791297847560,
+        "cwd": "/home/genie/.local/share/mikro-engine-split/experiments-g8/native-header-proof-zXrc5d/cwd",
+        "parentSession": "357765ea-d9d0-4e77-9ee8-9318f023c4ca",
+        "isSeeded": true,
+        "origin": "subagent",
+        "delegationDepth": 1
+      },
+      "durableHeader": {
+        "version": 4,
+        "id": "244aab6b-0c93-45f5-b8c5-9949044fce1d",
+        "createdAt": 1791297847560,
+        "cwd": "/home/genie/.local/share/mikro-engine-split/experiments-g8/native-header-proof-zXrc5d/cwd",
+        "parentSession": "357765ea-d9d0-4e77-9ee8-9318f023c4ca",
+        "isSeeded": true,
+        "origin": "subagent",
+        "delegationDepth": 1
+      },
+      "inheritedEventCount": 3,
+      "observedInheritedEventCount": 3,
+      "eventCount": 4,
+      "rawHeaderEqual": true,
+      "exactSdkDefaultProjectionEqual": true,
+      "projection": {
+        "version": 4,
+        "id": "244aab6b-0c93-45f5-b8c5-9949044fce1d",
+        "createdAt": 1791297847560,
+        "cwd": "/home/genie/.local/share/mikro-engine-split/experiments-g8/native-header-proof-zXrc5d/cwd",
+        "parentSession": "357765ea-d9d0-4e77-9ee8-9318f023c4ca",
+        "isSeeded": true,
+        "origin": "subagent",
+        "delegationDepth": 1
+      },
+      "sdkWireHeader": {
+        "type": "session",
+        "version": 4,
+        "id": "244aab6b-0c93-45f5-b8c5-9949044fce1d",
+        "createdAt": 1791297847560,
+        "cwd": "/home/genie/.local/share/mikro-engine-split/experiments-g8/native-header-proof-zXrc5d/cwd",
+        "parentSession": "357765ea-d9d0-4e77-9ee8-9318f023c4ca",
+        "isSeeded": true,
+        "origin": "subagent",
+        "delegationDepth": 1
+      },
+      "sdkReadHeader": {
+        "status": "current",
+        "storedVersion": 4,
+        "targetVersion": 4,
+        "header": {
+          "version": 4,
+          "id": "244aab6b-0c93-45f5-b8c5-9949044fce1d",
+          "createdAt": 1791297847560,
+          "cwd": "/home/genie/.local/share/mikro-engine-split/experiments-g8/native-header-proof-zXrc5d/cwd",
+          "parentSession": "357765ea-d9d0-4e77-9ee8-9318f023c4ca",
+          "isSeeded": true,
+          "origin": "subagent",
+          "delegationDepth": 1
+        }
+      }
+    },
+    "conflictFixtures": {
+      "matchingRealInheritedHeaderAccepted": true,
+      "inheritedDepthConflictRejected": true,
+      "parentSessionConflictRejected": true,
+      "sessionIdConflictRejected": true,
+      "cwdConflictRejected": true,
+      "createdAtConflictRejected": true,
+      "seededConflictRejected": true,
+      "unexpectedFieldConflictRejected": true
+    },
+    "requestCount": 0,
+    "rootModelAttempts": 0,
+    "explicitRootModelAttempts": 0,
+    "rootToolCalls": 0,
+    "success": true
+  },
+  "originalFailedNativeCause": "Source-backed hypothesis consistent with this actual minimal reproduction; discarded original live header cannot be recovered, failed native receipt not promoted",
+  "permanentSourceEdits": 0,
+  "additionalInferenceCalls": 0
+}

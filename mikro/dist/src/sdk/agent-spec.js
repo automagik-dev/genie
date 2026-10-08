@@ -14,16 +14,17 @@ import { readFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import yaml from "js-yaml";
 import { isValidThinkingLevel, THINKING_LEVELS } from "../gemini.js";
-/** Backends a spec may name. Pinned here so the error text can list them. */
-const VALID_BACKENDS = [
-    "mikro",
-    "prime",
-    "prime-sdk",
-];
+export const ENGINES = ["rlm", "pi", "prime", "prime-sdk"];
+/** Explicit selectors never silently degrade to the default. */
+export function parseEngine(value) {
+    if (value === "rlm" || value === "pi" || value === "prime" || value === "prime-sdk")
+        return value;
+    throw new Error(`engine must be one of ${ENGINES.join(" | ")}; got ${JSON.stringify(value)}`);
+}
 /**
  * Inclusive bounds for `temperature:`. Kept local rather than imported from
  * `src/config.ts` so this parser stays free of the project config loader —
- * the same reason `VALID_BACKENDS` is spelled out here. The canonical
+ * the same reason engine validation is local. The canonical
  * definition (and the reason the ceiling is 2) is `TEMPERATURE_MIN` /
  * `TEMPERATURE_MAX` in `src/config.ts`; keep the two in step.
  */
@@ -75,7 +76,7 @@ function parseBudget(raw) {
  * spellings are accepted the way `budget:` accepts both of its own.
  *
  * A non-boolean value throws rather than being ignored, for the same reason
- * `thinking:` and `backend:` throw: silently keeping the default here would
+ * `thinking:` and `engine:` throw: silently keeping the default here would
  * look exactly like a working opt-out.
  */
 function parsePrompt(raw) {
@@ -91,9 +92,17 @@ function parsePrompt(raw) {
     return { appendStopProtocol: value };
 }
 function parseScope(raw) {
-    if (!raw || typeof raw !== "object")
+    if (raw === undefined || raw === null)
         return undefined;
+    if (typeof raw !== "object" || Array.isArray(raw))
+        throw new Error("agent.yaml: scope must be a mapping");
     const s = raw;
+    for (const key of ["reads", "writes"]) {
+        const value = s[key];
+        if (Object.hasOwn(s, key) && (!Array.isArray(value) || value.some((item) => typeof item !== "string" || !item.trim()))) {
+            throw new Error(`agent.yaml: scope.${key} must be an array of non-empty strings`);
+        }
+    }
     const reads = asStringArray(s.reads);
     const writes = asStringArray(s.writes);
     if (!reads && !writes)
@@ -160,16 +169,10 @@ export function parseAgentSpec(yamlText, dir) {
         }
         temperature = parsed;
     }
-    // Same validate-don't-ignore rule as `thinking:`: a typo'd backend would
-    // silently fall back to the legacy engine and look like it worked, which
-    // is exactly the silent degradation a selection field must not allow.
-    const backendRaw = asString(r.backend);
-    if (backendRaw !== undefined &&
-        backendRaw !== "mikro" &&
-        backendRaw !== "prime" &&
-        backendRaw !== "prime-sdk") {
-        throw new Error(`agent.yaml: backend must be one of ${VALID_BACKENDS.join(" | ")}, got "${backendRaw}"`);
+    if (Object.hasOwn(r, "backend")) {
+        throw new Error("agent.yaml: obsolete backend field; use engine: rlm | pi | prime | prime-sdk");
     }
+    const engine = Object.hasOwn(r, "engine") ? parseEngine(r.engine) : undefined;
     // Build the "extras" bag by stripping the known keys from r.
     const known = new Set([
         "schema_version",
@@ -184,7 +187,7 @@ export function parseAgentSpec(yamlText, dir) {
         "temperature",
         "scope",
         "budget",
-        "backend",
+        "engine",
         "prompt",
     ]);
     const extras = {};
@@ -205,7 +208,7 @@ export function parseAgentSpec(yamlText, dir) {
         scope: parseScope(r.scope),
         budget: parseBudget(r.budget),
         prompt: parsePrompt(r.prompt),
-        backend: backendRaw,
+        engine,
         extras,
     };
 }

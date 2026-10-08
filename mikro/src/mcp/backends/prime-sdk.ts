@@ -4,7 +4,7 @@
  * (`createAgentSession`), instead of spawning its CLI once per turn.
  *
  * Default-off and additive: nothing selects this backend unless an agent
- * spec says `backend: prime-sdk`. `src/mcp/backends/prime.ts` is untouched.
+ * spec says `engine: prime-sdk`. `src/mcp/backends/prime.ts` is untouched.
  *
  * ## Why a second prime backend
  * `PrimeBackend` shells out to `prime-agent --mode json -p` per turn, which
@@ -133,7 +133,7 @@ import { loadPythonPlugins } from "../../sdk/python-plugin.js";
 import { loadPluginTools } from "../../sdk/tool-loader.js";
 import { createToolRegistry, type ToolRegistry } from "../../sdk/tool-registry.js";
 import type { Microagent } from "../agents.js";
-import type { BackendRequest, MicroagentResult, RuntimeBackend } from "../backend.js";
+import { BackendRunError, type BackendRequest, type MicroagentResult, type RuntimeBackend } from "../backend.js";
 import { DEFAULT_PRIME_DEADLINE_MS, EXPECTED_PRIME_VERSION } from "./prime.js";
 
 /** The shared prime-agent release whose SDK surface this module targets. */
@@ -336,6 +336,7 @@ export interface PrimeSdkRunLimits {
   readonly maxCost: number | null;
   readonly maxTokens: number | null;
   readonly maxTurns: number | null;
+  readonly signal?: AbortSignal;
 }
 
 /** The raw material of one run. Mirrors `PrimeRunResult`. */
@@ -382,8 +383,8 @@ export interface PrimeSdkBackendOptions {
   readonly providerPayloadTransform?: PrimeSdkProviderPayloadTransform;
 }
 
-/** Kill reasons this backend owns — each a designed, non-throwing abort. */
-type KillReason = "deadline" | "max-cost" | "max-tokens" | "max-turns";
+/** Deadline/budget stops return normally; host cancellation remains a failed call. */
+type KillReason = "deadline" | "max-cost" | "max-tokens" | "max-turns" | "cancelled";
 
 const num = (value: unknown): number =>
   typeof value === "number" && Number.isFinite(value) ? value : 0;
@@ -429,7 +430,7 @@ export function resolvePrimeRoot(): string {
     throw new Error(
       "prime-sdk backend: prime-agent is not on PATH, so its SDK cannot be located. " +
         `Install prime-agent ${EXPECTED_PRIME_SDK_VERSION}, set MIKRO_PRIME_AGENT_ROOT to the ` +
-        "installed package root, or switch the agent back to `backend: mikro`."
+        "installed package root, or switch the agent back to `engine: rlm`."
     );
   }
 
@@ -455,7 +456,7 @@ export function assertPinnedSdkVersion(root: string, expected: string): void {
     failWith(
       `prime-sdk backend: no package.json at "${manifestPath}" — "${root}" is not an installed ` +
         "prime-agent package root. Set MIKRO_PRIME_AGENT_ROOT to the right directory, or switch " +
-        "the agent back to `backend: mikro`."
+        "the agent back to `engine: rlm`."
     );
   }
 
@@ -477,7 +478,7 @@ export function assertPinnedSdkVersion(root: string, expected: string): void {
         "mikro pins this backend to an exact SDK version — upgrades are deliberate events. " +
         `(The subprocess backend pins ${EXPECTED_PRIME_VERSION}; the two are separate ` +
         "compatibility surfaces — the programmatic session API versus the CLI JSON stream.) " +
-        "Move the pin as a recorded decision, or switch the agent back to `backend: mikro`."
+        "Move the pin as a recorded decision, or switch the agent back to `engine: rlm`."
     );
   }
 }
@@ -497,7 +498,7 @@ export function createPrimeSdkLoader(options: PrimeSdkBackendOptions = {}): Prim
       if (!existsSync(entry)) {
         throw new Error(
           `prime-sdk backend: the installed prime-agent has no SDK entry point at "${entry}". ` +
-            "Reinstall prime-agent, or switch the agent back to `backend: mikro`."
+            "Reinstall prime-agent, or switch the agent back to `engine: rlm`."
         );
       }
       return (await import(pathToFileURL(entry).href)) as unknown as PrimeSdkModule;
@@ -517,7 +518,7 @@ export function assertSupportedConfig(config: MikroConfig, agentName: string | u
   const reject = (field: string, why: string): never => {
     throw new Error(
       `prime-sdk backend: ${who} declares ${field}, which the prime-sdk leg cannot honor (${why}). ` +
-        "Remove it from the agent/config or switch the agent back to `backend: mikro`."
+        "Remove it from the agent/config or switch the agent back to `engine: rlm`."
     );
   };
 
@@ -553,7 +554,7 @@ export function assertSupportedConfig(config: MikroConfig, agentName: string | u
       `prime-sdk backend: ${who} sets budget.max_cost on provider "${provider}", whose ` +
         "per-model pricing mikro cannot declare to prime — prime would compute every call as $0 " +
         "and the ceiling would never fire. Drop budget.max_cost, use budget.max_tokens instead, " +
-        "or switch the agent back to `backend: mikro`."
+        "or switch the agent back to `engine: rlm`."
     );
   }
 }
@@ -572,7 +573,7 @@ export function buildModelsJson(
       `prime-sdk backend: ${who} is pinned to model "${provider}/${modelId}", and "${provider}" is ` +
         `neither one of prime's built-in providers (${[...PRIME_BUILTIN_PROVIDERS].join(", ")}) ` +
         `nor one mikro can describe to prime (${Object.keys(CUSTOM_PROVIDERS).join(", ")}). ` +
-        "Re-pin the agent's model, or switch the agent back to `backend: mikro`."
+        "Re-pin the agent's model, or switch the agent back to `engine: rlm`."
     );
   }
   return {
@@ -723,7 +724,7 @@ async function planSpecTools(
         `${unresolved.map((n) => `"${n}"`).join(", ")} that resolve to no plugin under ` +
         `${join(agent!.spec.dir, "tools")} and name no prime built-in ` +
         `(${[...PRIME_BUILTIN_TOOLS].join(", ")}). Add the plugin file, remove the declaration, ` +
-        "or switch the agent back to `backend: mikro`. " +
+        "or switch the agent back to `engine: rlm`. " +
         `(loaded: ${[...mjs.loaded, ...py.loaded].join(", ") || "none"})`
     );
   }
@@ -837,7 +838,9 @@ export function runSdkSession(
   providerPayloadTransform?: PrimeSdkProviderPayloadTransform
 ): Promise<PrimeSdkRunResult> {
   return (async () => {
+    if (limits.signal?.aborted) throw new BackendRunError("Prime SDK run cancelled before session startup");
     const sdk = await load();
+    if (limits.signal?.aborted) throw new BackendRunError("Prime SDK run cancelled before session startup");
     materializePlan(plan);
     const primeAgentDir = configuredPrimeAgentDir ?? sdk.getAgentDir();
 
@@ -857,7 +860,7 @@ export function runSdkSession(
       throw new Error(
         `prime-sdk backend: prime cannot resolve model "${plan.provider}/${plan.modelId}". ` +
           (registryError ? `models.json error: ${registryError}. ` : "") +
-          "Re-pin the agent's model, or switch the agent back to `backend: mikro`."
+          "Re-pin the agent's model, or switch the agent back to `engine: rlm`."
       );
     }
     // Registry models are shared catalog values. Clone rather than mutate so
@@ -873,6 +876,7 @@ export function runSdkSession(
     let emitDoneArgs: Record<string, unknown> | null = null;
     let killed: KillReason | null = null;
     const usage = { inputTokens: 0, outputTokens: 0, totalCost: 0 };
+    let observedUsage: typeof usage | undefined;
 
     const customTools = plan.tools.map((tool) =>
       sdk.defineTool({
@@ -960,8 +964,10 @@ export function runSdkSession(
         // Already finishing — the prompt promise is the only resolver.
       }
     };
+    const cancel = (): void => breach("cancelled");
+    limits.signal?.addEventListener("abort", cancel, { once: true });
 
-    session.subscribe((event: PrimeSdkEvent) => {
+    const subscription = session.subscribe((event: PrimeSdkEvent) => {
       switch (event.type) {
         case "turn_start":
           // Turns are prime's analog of legacy iterations. Break when the
@@ -1003,6 +1009,16 @@ export function runSdkSession(
               usage.inputTokens += num(u.input);
               usage.outputTokens += num(u.output);
               usage.totalCost += num(u.cost?.total);
+              const { input, output } = u;
+              const cost = u.cost?.total;
+              if (typeof input === "number" && Number.isFinite(input) &&
+                  typeof output === "number" && Number.isFinite(output) &&
+                  typeof cost === "number" && Number.isFinite(cost)) {
+                observedUsage ??= { inputTokens: 0, outputTokens: 0, totalCost: 0 };
+                observedUsage.inputTokens += input;
+                observedUsage.outputTokens += output;
+                observedUsage.totalCost += cost;
+              }
             }
             if (limits.maxCost !== null && usage.totalCost >= limits.maxCost) {
               breach("max-cost");
@@ -1029,7 +1045,9 @@ export function runSdkSession(
       limits.deadlineMs
     );
     try {
-      await session.prompt(plan.query);
+      // Cancellation may have arrived during asynchronous session creation.
+      if (limits.signal?.aborted) cancel();
+      if (!killed) await session.prompt(plan.query);
     } catch (err) {
       // An abort we asked for is a designed stop, not a failure; anything
       // else is a real error and must reach the host.
@@ -1037,10 +1055,15 @@ export function runSdkSession(
     } finally {
       if (deadlineTimer) clearTimeout(deadlineTimer);
       deadlineTimer = undefined;
+      limits.signal?.removeEventListener("abort", cancel);
       try {
-        session.dispose();
-      } catch {
-        // Disposal is best-effort; the scratch dir is removed either way.
+        if (typeof subscription === "function") subscription();
+      } finally {
+        try {
+          session.dispose();
+        } catch {
+          // Disposal is best-effort; the scratch dir is removed either way.
+        }
       }
     }
 
@@ -1054,6 +1077,10 @@ export function runSdkSession(
 
     if (killed) {
       switch (killed) {
+        case "cancelled":
+          throw new BackendRunError("Prime SDK run cancelled", observedUsage ? {
+            iterations: turns, usage: observedUsage, usageComplete: false,
+          } : undefined);
         case "deadline":
           // Legacy's timeout answer, so isFailedRun classifies it as failed.
           return { answer: TIMEOUT_ANSWER, turns, budgetHit: null, usage: { ...usage } };
@@ -1091,7 +1118,7 @@ export function runSdkSession(
         throw new Error(
           `prime-sdk backend: the run finished without calling \`${EMIT_DONE_TOOL}\`, so it ` +
             "produced no structured output for the declared `output.schema`. Re-run, relax the " +
-            "schema, or switch the agent back to `backend: mikro`."
+            "schema, or switch the agent back to `engine: rlm`."
         );
       }
       // No schema: the final assistant text is exactly what the subprocess
@@ -1139,16 +1166,19 @@ export class PrimeSdkBackend implements RuntimeBackend {
     request: BackendRequest,
     emit: (message: string) => void
   ): Promise<MicroagentResult> {
+    if (request.signal?.aborted) throw new BackendRunError("Prime SDK run cancelled before session startup");
     const limits: PrimeSdkRunLimits = {
       deadlineMs: sdkDeadlineMs(),
       maxCost: request.config.budget?.maxCost ?? null,
       maxTokens: request.config.budget?.maxTokens ?? null,
       maxTurns: request.maxIterations !== undefined ? request.maxIterations : null,
+      signal: request.signal,
     };
 
     const scratchDir = createScratchDir();
     try {
       const plan = await buildPlan(scratchDir, agent, request);
+      if (request.signal?.aborted) throw new BackendRunError("Prime SDK run cancelled before session startup");
       const result = await this.engine(plan, emit, limits);
       return {
         answer: result.answer,

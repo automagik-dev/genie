@@ -1,0 +1,260 @@
+{
+  "schemaVersion": 1,
+  "scope": "first actual isolated native observer prerequisite failure, not scored or genuine workflow UUID",
+  "actualObserverExitCode": 2,
+  "actualPluginInstallExitCode": 127,
+  "actualPluginDiagnostic": "dsh: pnpm was not found; install pnpm and make it available on PATH.\ndsh: plugin command failed; diagnostics: /home/genie/.local/share/mikro-engine-split/experiments-g8/native-runs/g8-native-smoke/dsh/profiles/experiment-g8-native-smoke/.plugin-manager/logs/operation-hbTFak/pnpm.log\n",
+  "nativeInputSha256": "2564255ea6eba827b1c196a29cb372a3d900f44fad49c32129bb32f3c419e51a",
+  "receipt": {
+    "schemaVersion": 1,
+    "kind": "native-workflow-run",
+    "manifestSha256": "2564255ea6eba827b1c196a29cb372a3d900f44fad49c32129bb32f3c419e51a",
+    "id": "g8-native-smoke",
+    "objectiveId": null,
+    "variant": "unscored-smoke",
+    "repetition": null,
+    "scored": false,
+    "runId": null,
+    "parentSessionId": null,
+    "outcome": null,
+    "complete": false,
+    "blockers": [
+      "supported isolated plugin installation failed; retain install receipt"
+    ],
+    "startedAt": "2026-10-06T04:13:10.957Z",
+    "frozenArgs": {
+      "objective": "Intent: only a ledger file actually read counts as a mikro ledger",
+      "context": "fix(metrics): only a ledger file actually read counts as a mikro ledger\n\nRe-review of #3125: the collector counted ledger CANDIDATES (own\n.mikro/runs/*.jsonl names) as evidence, so a directory named\nwish-context.jsonl alone \u2014 which readRows correctly skips as EISDIR \u2014\nstill turned \"no ledger here\" into a measured 0 attempts / $0 (reproduced\nthrough the real CLI on 1e89eab69).\n\nreadRows now returns null for a file it did not read (absent, a directory,\nor a failed read), and the repository counts as measured only when at least\none of its own ledger files was actually read: a readable empty file is a\nmeasured 0; EISDIR or vanished candidates alone are no ledger (null); any\nother read failure stays unknown as #3125 made it.\n\nRegression: a directory-only ledger \u2192 null; a readable empty ledger beside\nit \u2192 measured 0. Fails on the previous code.\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>",
+      "base": "dev",
+      "repairBudget": 2,
+      "model": "deepseek-flash",
+      "gateModel": "deepseek-flash",
+      "publishModel": "deepseek-flash",
+      "check": "bun run check",
+      "install": "bun install --frozen-lockfile",
+      "validation": "bun test src/lib/metrics-export.test.ts",
+      "timestamp": "2026-10-06T00:00:00.000Z",
+      "slug": "g8-native-smoke",
+      "offload": true,
+      "offloadEngine": "rlm"
+    },
+    "confounds": [
+      "Native workflow uses installed public DSH 0.2.0-rc.1 and deployed loader6.261005.4; source wish is separately integration-saved stock bytes, not overlaid into frozen objective repositories.",
+      "Native orchestration provider deepseek-official/deepseek-flash uses Messages API; mikro offloads use built-in deepseek/deepseek-flash OpenAI completions; model labels do not prove equal transport/context/output/catalog semantics.",
+      "Micro caps remain context16/review14 iterations,0.3USD/depth0 and individual mikro timeout600000ms; native whole-workflow supervisor deadline fixed3600000ms for every cell by Main pre-outcome choice; native Agent stage costs are separately accounted by observer.",
+      "Scored cells publish only to exact two owner-authorized private GitHub dev repositories, max18PRs; unscored smoke origin is local bare Git and cannot establish a GitHub PR success.",
+      "Frozen objective parent snapshots retain original package/dependency/native-build and gate requirements; dependency installation/compiler availability and baseline full-check failures are real confounds, not silently bypassed.",
+      "GH_CONFIG_DIR references actual operator GitHub CLI configuration without reading or hashing credentials; live authorization/tool availability is not proven by preparation.",
+      "No native workflow, model inference, network call, branch/worktree/PR creation or graded outcome has been performed by this preparation.",
+      "Prepared native genie wrapper executes the byte-sealed real integration dist/genie.js under exact Bun and appends supported --agents-dir MIKRO_AGENTS_DIR only to literal mikro call, leaving every other argument unchanged. Caller trustedRoot/private ledger binding now comes from that explicit option; ledger collection includes each actual private caller-trust/.mikro/runs and clone/isolated-GENIE_HOME fallbacks. Source saved wish remains unmodified.",
+      "Offload process HOME is private mutable mode0700 and is not covered by a whole-HOME immutable-directory seal; exact profile-declared settings/auth absence guards remain enforced. No universal storage-never HOME-no-write claim is made."
+    ],
+    "provenance": {
+      "source": {
+        "path": "/home/genie/orca/workspaces/genie/mikro-engine-split/.claude/workflows/wish.js",
+        "sha256": "f0c62922cfc9e70d12df9c466fdfb1ccf8dc5e4df02cb7393df845c21cad47dc"
+      },
+      "runtime": {
+        "root": "/home/genie/.dsh/runtime/0.2.0-rc.1",
+        "version": "0.2.0-rc.1",
+        "treeSha256": "e0d57f8848982cd93e1611cbfaf197b8a69649661fec5afde348d186cc480a00"
+      },
+      "loader": {
+        "root": "/home/genie/.local/share/mikro-engine-split/experiments-g8/native-preparation/loader-6.261005.4",
+        "version": "6.261005.4",
+        "treeSha256": "2fcac9b071a9095a00beb840d1b7634007d3790b8ef1e2438ecd5a947deb1a80"
+      },
+      "remoteFacts": [
+        {
+          "name": "origin",
+          "direction": "fetch",
+          "url": "/home/genie/.local/share/mikro-engine-split/experiments-g8/native-smoke-origin.git"
+        },
+        {
+          "name": "origin",
+          "direction": "push",
+          "url": "/home/genie/.local/share/mikro-engine-split/experiments-g8/native-smoke-origin.git"
+        }
+      ],
+      "launchSeals": [
+        {
+          "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-profiles/native/g8-native-smoke/profile.json",
+          "kind": "file",
+          "sha256": "9e37ac31add4c7aa3d92e2450ad076e75eab74e5461347f2cbd7db5edd4eb667"
+        },
+        {
+          "path": "/home/genie/orca/workspaces/genie/mikro-engine-split/scripts/mikro/engine-experiment-runtime.mjs",
+          "kind": "file",
+          "sha256": "61962829324816413b745f4bcf1d2f36274066b2c5497d0aa547c155f91fe828"
+        },
+        {
+          "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/launchers/native/g8-native-smoke",
+          "kind": "directory",
+          "sha256": "958fc935a809f6320c54df8d47de6d340970e918fd5decd84fe3e270821b4155"
+        },
+        {
+          "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-profiles/native-shared/g8-native-smoke/controls/new/.mikro",
+          "kind": "directory",
+          "sha256": "b37cb849dd4f887e7789f80f735f13d2d932fa0523d9452b811813ed3e603127"
+        },
+        {
+          "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-profiles/native-shared/g8-native-smoke/controls/new/agents",
+          "kind": "directory",
+          "sha256": "6bbb4d369ebf01fe6f6e36a5e700a42da105d23e90f330246caaf25e67fd65ce"
+        },
+        {
+          "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/caller-trust/g8-native-smoke/.mikro/agents",
+          "kind": "directory",
+          "sha256": "6bbb4d369ebf01fe6f6e36a5e700a42da105d23e90f330246caaf25e67fd65ce"
+        },
+        {
+          "path": "/home/genie/orca/workspaces/genie/mikro-engine-split/mikro/dist",
+          "kind": "directory",
+          "sha256": "fab1ee8ec0f4292dffb519135a8f1dfa00ec2a53474df4c904b829957cbfdb86"
+        },
+        {
+          "path": "/home/genie/orca/workspaces/genie/mikro-engine-split/mikro/src",
+          "kind": "directory",
+          "sha256": "5862a2691de94aea6b86d8aaf4ca4ca90659af1a99a6842a64e419c5b9175ca2"
+        },
+        {
+          "path": "/home/genie/orca/workspaces/genie/mikro-engine-split/mikro/node_modules",
+          "kind": "directory",
+          "sha256": "d6a387809e39e6046ef1e3dbed7765317ee6f451d10f0551e5b3fd21acb5e56e"
+        },
+        {
+          "path": "/home/genie/orca/workspaces/genie/mikro-engine-split/mikro/python",
+          "kind": "directory",
+          "sha256": "dbb2aca7aefeec526f81225d7df771c638c36a2fba1f5292c361123cfad30754"
+        },
+        {
+          "path": "/home/genie/orca/workspaces/genie/mikro-engine-split/mikro/package.json",
+          "kind": "file",
+          "sha256": "3d02536770479260d3e4b5cb125047f5cbb05e03f29248a0154e67488f708c1e"
+        },
+        {
+          "path": "/home/genie/orca/workspaces/genie/mikro-engine-split/mikro/package-lock.json",
+          "kind": "file",
+          "sha256": "f6fea70cf2e05d9e53c85a027aeeb7dd8aa447440f998bfb13bd6772b1c169ce"
+        },
+        {
+          "path": "/home/genie/.hermes/node/bin/node",
+          "kind": "file",
+          "sha256": "ad19784f7e90ba789a099eccba77ede8dc90a778c424f1c10a70fed3ff903fdc"
+        },
+        {
+          "path": "/opt/nmstx/bun/1.3.14/bun",
+          "kind": "file",
+          "sha256": "9fd36f87e4b90b07632b987a2e4ec81ca15a62c81bf983190cea6d715be2ad74"
+        },
+        {
+          "path": "/usr/local/bin/git",
+          "kind": "file",
+          "sha256": "7cfbdf8cc61449f1601b395883b93c610deaccd0aed07366473064ffd1b601ae"
+        },
+        {
+          "path": "/usr/bin/gh",
+          "kind": "file",
+          "sha256": "141507c337e8b202ad398550c3b73d72f5af92e86f71665214538a81efd4c409"
+        },
+        {
+          "path": "/usr/bin/python3.14",
+          "kind": "file",
+          "sha256": "b8d8288faefdd300201f43fcf00f6f539a27218eeed3a3dff5ab10b9c4c99700"
+        },
+        {
+          "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/caller-trust/g8-native-smoke/.mikro/mikro.yaml",
+          "kind": "file",
+          "sha256": "9cacc464cfe24cbeb4ef934b1b2717c8733e0160c26ca73c83c8b0f94d10b92a"
+        },
+        {
+          "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/caller-trust/g8-native-smoke/.mikro/TOOLS.md",
+          "kind": "file",
+          "sha256": "4bcffe1ee75d1867925491915950b8020bce066455749b343602d820f00b0e9a"
+        },
+        {
+          "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/caller-trust/g8-native-smoke/.mikro/SYSTEM.md",
+          "kind": "file",
+          "sha256": "2cacba64e607d09625749937bf47dc4fe55ec32562d80a068bd32b1229ba1b03"
+        },
+        {
+          "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/caller-trust/g8-native-smoke/.mikro/CRITERIA.md",
+          "kind": "file",
+          "sha256": "6c63553e8f2e7fa04c406fbc15f680b77f0482d99c8ad911c69c1e093f829232"
+        },
+        {
+          "path": "/home/genie/orca/workspaces/genie/mikro-engine-split/dist/genie.js",
+          "kind": "file",
+          "sha256": "6e25ce61c74e660e47c963c628cdc2265d5b122c47fb1fa9746aa3f2b4ff5bf9"
+        },
+        {
+          "path": "/home/genie/orca/workspaces/genie/mikro-engine-split/src/genie.ts",
+          "kind": "file",
+          "sha256": "150be7bcc55e222b2c8055cc0b512949a1486ce0cd0a6722eecd40cbcafd1e55"
+        },
+        {
+          "path": "/home/genie/orca/workspaces/genie/mikro-engine-split/src/term-commands/mikro.ts",
+          "kind": "file",
+          "sha256": "b98e20bc4098a27d860408e993c9e49974fca8276d754d02cf8cb764ecc074fb"
+        },
+        {
+          "path": "/home/genie/orca/workspaces/genie/mikro-engine-split/scripts/mikro/call.ts",
+          "kind": "file",
+          "sha256": "577d4832e513194762dc92fe8e861e7ebfbf0803b0625367dc9de501a5838cdf"
+        },
+        {
+          "path": "/home/genie/orca/workspaces/genie/mikro-engine-split/scripts/mikro/schemas.ts",
+          "kind": "file",
+          "sha256": "b853149eb6ff7dcbd4aee835a178f1e64f6f6af307430c3c619f963a4d20028e"
+        },
+        {
+          "path": "/home/genie/orca/workspaces/genie/mikro-engine-split/scripts/mikro/trusted-source.ts",
+          "kind": "file",
+          "sha256": "a2903f4485bd02dfd6056d8632e9d898c504a33692ba4de2888d9dd3f1d0eade"
+        },
+        {
+          "path": "/home/genie/orca/workspaces/genie/mikro-engine-split/package.json",
+          "kind": "file",
+          "sha256": "516f3ab5b34e602e97f3b86dea113330ad8fbec7243f29f0c95ab796e5919d7a"
+        },
+        {
+          "path": "/home/genie/orca/workspaces/genie/mikro-engine-split/bun.lock",
+          "kind": "file",
+          "sha256": "28b1cbc1659b168035a9c82fe768ffb616dfd38db5bcb219f0d5f31886e0fd4a"
+        },
+        {
+          "path": "/home/genie/orca/workspaces/genie/mikro-engine-split/node_modules",
+          "kind": "directory",
+          "sha256": "b61a3a7bf0ff433e161f47e82abd0edcbb4d9ee09128cef5537177418b747fa3"
+        }
+      ]
+    },
+    "stateRoots": {
+      "dshHome": "/home/genie/.local/share/mikro-engine-split/experiments-g8/native-runs/g8-native-smoke/dsh",
+      "profileRoot": "/home/genie/.local/share/mikro-engine-split/experiments-g8/native-runs/g8-native-smoke/dsh/profiles/experiment-g8-native-smoke",
+      "genieHome": "/home/genie/.local/share/mikro-engine-split/experiments-g8/native-runs/g8-native-smoke/genie",
+      "sessions": "/home/genie/.local/share/mikro-engine-split/experiments-g8/native-runs/g8-native-smoke/sessions",
+      "journals": "/home/genie/.local/share/mikro-engine-split/experiments-g8/native-runs/g8-native-smoke/journals",
+      "sdkReceipts": "/home/genie/.local/share/mikro-engine-split/experiments-g8/caller-trust/g8-native-smoke/receipts/attempt"
+    },
+    "pluginInstall": {
+      "code": 127,
+      "signal": null,
+      "logPath": "/home/genie/.local/share/mikro-engine-split/experiments-g8/native-runs/g8-native-smoke/plugin-install.log"
+    },
+    "failure": {
+      "name": "Error",
+      "code": null
+    },
+    "finishedAt": "2026-10-06T04:14:31.147Z",
+    "cancelled": false
+  },
+  "nativeParentCreated": false,
+  "actualRunId": null,
+  "actualNativeWorkflowDispatchReached": false,
+  "modelBill": null,
+  "modelBillBasis": "No parent/workflow dispatch reached; no fabricated complete native bill or accounting record",
+  "originalFailurePreserved": true,
+  "configurationRepair": "Add actual existing pnpm to frozen nativePATH/seal public package dependencies; fresh unscored state root,18 scored roots unchanged and unlaunched",
+  "duplicatePaidSmoke": false
+}

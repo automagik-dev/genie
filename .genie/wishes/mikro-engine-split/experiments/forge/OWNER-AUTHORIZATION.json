@@ -1,0 +1,77 @@
+{
+  "schemaVersion": 1,
+  "kind": "native-workflow-forge-authorization",
+  "authorized": true,
+  "authorizedBy": "owner",
+  "approvalRef": "Current-session nativeForge answer: Two private experiment repositories; authorizes two private GitHub repositories and eighteen real experimental PRs, no production promotion",
+  "repositoryCount": 2,
+  "pullRequestLimit": 18,
+  "repositories": [
+    {
+      "objectiveId": "genie-existing",
+      "fullName": "automagik-genie/mikro-engine-split-genie-20261006",
+      "url": "https://github.com/automagik-genie/mikro-engine-split-genie-20261006.git",
+      "repositoryId": 1406603445,
+      "private": true,
+      "nonProduction": true,
+      "base": "dev",
+      "expectedParentSha": "a73db92d26ff99cb1cc91adbec1e0294c793bb2f",
+      "evidence": {
+        "path": "/home/genie/orca/workspaces/genie/mikro-engine-split/.genie/wishes/mikro-engine-split/experiments/forge/genie-repository.json",
+        "sha256": "155fb0873f116478c3b00bc6b2be7b1e793a3984785ed60153dcb96d2d838cf1"
+      }
+    },
+    {
+      "objectiveId": "brain-existing",
+      "fullName": "automagik-genie/mikro-engine-split-brain-20261006",
+      "url": "https://github.com/automagik-genie/mikro-engine-split-brain-20261006.git",
+      "repositoryId": 1406603438,
+      "private": true,
+      "nonProduction": true,
+      "base": "dev",
+      "expectedParentSha": "47e36743d643edc030a2a415155a683cb6692cae",
+      "evidence": {
+        "path": "/home/genie/orca/workspaces/genie/mikro-engine-split/.genie/wishes/mikro-engine-split/experiments/forge/brain-repository.json",
+        "sha256": "60e25ef0339f0bc6bf870a2632d8f17b405ae06c5c32fa9bb09fb34819bb29b7"
+      }
+    }
+  ],
+  "protectedRepositories": [
+    "automagik-dev/genie",
+    "automagik-dev/mikro"
+  ],
+  "protectedNonGithubOrigins": [
+    "https://git.labs.khal.ai/khal/brain.git"
+  ],
+  "protectedOriginEvidence": "Actual git remote get-url origin readbacks: integration Genie https://github.com/automagik-dev/genie.git; original Mikro https://github.com/automagik-dev/mikro; original Brain https://git.labs.khal.ai/khal/brain.git",
+  "recordedAt": "2026-10-06T03:12:53.378938+00:00",
+  "actualSeedReadbacks": [
+    {
+      "objectiveId": "genie-existing",
+      "repository": "automagik-genie/mikro-engine-split-genie-20261006",
+      "privateCreated": true,
+      "seedRepo": "/home/genie/.local/share/mikro-engine-split/experiments-g8/forge-seed/genie-existing",
+      "onlyPushedRef": "refs/heads/dev",
+      "actualRemoteParent": "a73db92d26ff99cb1cc91adbec1e0294c793bb2f",
+      "matchesFrozenParent": true,
+      "originalRepositoriesWritten": false,
+      "productionPushes": 0,
+      "pullRequestsCreated": 0,
+      "seededAt": "2026-10-06T02:53:42.892964+00:00"
+    },
+    {
+      "objectiveId": "brain-existing",
+      "repository": "automagik-genie/mikro-engine-split-brain-20261006",
+      "privateCreated": true,
+      "seedRepo": "/home/genie/.local/share/mikro-engine-split/experiments-g8/forge-seed/brain-existing",
+      "onlyPushedRef": "refs/heads/dev",
+      "actualRemoteParent": "47e36743d643edc030a2a415155a683cb6692cae",
+      "matchesFrozenParent": true,
+      "originalRepositoriesWritten": false,
+      "productionPushes": 0,
+      "pullRequestsCreated": 0,
+      "seededAt": "2026-10-06T02:53:52.101199+00:00"
+    }
+  ],
+  "initialRepositoryReadbacks": "Actual gh API selected public fields before dev seeding; initial default branch main and size0 are historical, not current default or empty status"
+}

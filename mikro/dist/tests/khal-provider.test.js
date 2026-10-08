@@ -557,11 +557,13 @@ describe("khalProvider — registration", () => {
         assert.ok(auth);
         // pi-ai resolves env through `ctx.env`, not process.env directly.
         const ctx = (env) => ({ env: async (name) => env[name] });
-        assert.equal(await auth.resolve({ ctx: ctx({}), credential: undefined }), undefined);
-        assert.deepEqual(await auth.resolve({ ctx: ctx({ KHAL_API_KEY: "sk-primary" }), credential: undefined }), { auth: { apiKey: "sk-primary" }, source: "KHAL_API_KEY" });
+        const signal = new AbortController().signal;
+        assert.equal(await auth.resolve({ ctx: ctx({}), credential: undefined, signal }), undefined);
+        assert.deepEqual(await auth.resolve({ ctx: ctx({ KHAL_API_KEY: "sk-primary" }), credential: undefined, signal }), { auth: { apiKey: "sk-primary" }, source: "KHAL_API_KEY" });
         assert.deepEqual(await auth.resolve({
             ctx: ctx({ MIKRO_KHAL_API_KEY: "sk-fallback" }),
             credential: undefined,
+            signal,
         }), { auth: { apiKey: "sk-fallback" }, source: "MIKRO_KHAL_API_KEY" });
     });
     it("serves a supplied catalog so gateway models resolve", () => {
@@ -570,36 +572,31 @@ describe("khalProvider — registration", () => {
         assert.ok(models.getModel(KHAL_PROVIDER_ID, "claude-sonnet"));
         assert.ok(models.getModel(KHAL_PROVIDER_ID, "deepseek-v4-flash"));
     });
-    it("sends the gateway alias on the wire, not the catalog id", async () => {
-        // The catalog must be keyed by the bare id (every mikro path strips the
-        // `khal/` prefix before lookup) but LiteLLM 400s on a bare model name, so
-        // the transport has to put the alias back. Regression guard for both.
+    it("completes requests when catalog ids resolve to the gateway's accepted alias", async () => {
         const realFetch = globalThis.fetch;
-        let sentModel;
         globalThis.fetch = (async (_input, init) => {
-            sentModel = JSON.parse(String(init?.body ?? "{}")).model;
-            return new Response("nope", { status: 503 });
+            const body = JSON.parse(String(init?.body ?? "{}"));
+            if (body.model !== "khal/deepseek-v4-flash") {
+                return new Response(JSON.stringify({ error: { message: "Unknown gateway model" } }), { status: 400 });
+            }
+            return new Response(`data: ${JSON.stringify({
+                id: "fixture",
+                choices: [{ index: 0, delta: { content: "gateway completed" }, finish_reason: "stop" }],
+                usage: { prompt_tokens: 2, completion_tokens: 1, total_tokens: 3 },
+            })}\n\ndata: [DONE]\n\n`, { headers: { "content-type": "text/event-stream" } });
         });
         try {
             const models = builtinModels();
             models.setProvider(khalProvider(parseModelInfo(MODEL_INFO_FIXTURE)));
             const model = models.getModel(KHAL_PROVIDER_ID, "deepseek-v4-flash");
             assert.ok(model);
-            const stream = models
-                .getProvider(KHAL_PROVIDER_ID)
-                ?.streamSimple(model, { messages: [{ role: "user", content: "hi", timestamp: 0 }] }, {
-                apiKey: "sk-test",
-            });
-            assert.ok(stream);
-            // Drain: the request fails (503), but the body was already captured.
-            for await (const _event of stream) {
-                // no-op
-            }
+            const result = await models.completeSimple(model, { messages: [{ role: "user", content: "hi", timestamp: 0 }] }, { apiKey: "sk-test", maxRetries: 0 });
+            assert.equal(result.stopReason, "stop");
+            assert.deepEqual(result.content, [{ type: "text", text: "gateway completed" }]);
         }
         finally {
             globalThis.fetch = realFetch;
         }
-        assert.equal(sentModel, "khal/deepseek-v4-flash");
     });
 });
 /**

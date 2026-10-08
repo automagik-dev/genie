@@ -1,0 +1,854 @@
+{
+  "schemaVersion": 1,
+  "scope": "Current frozen external resources: actual public Node26 --check/--describe path, no backend dispatch",
+  "actualJob": "bg_44",
+  "actualExitCode": 0,
+  "actualWallSeconds": 218.93,
+  "command": [
+    "/home/genie/.hermes/node/bin/node",
+    "/home/genie/.local/share/mikro-engine-split/experiments-g8/profile-checks/check.mjs",
+    "/home/genie/.local/share/mikro-engine-split/experiments-g8/prepared-engine-resources.json",
+    "/home/genie/.local/share/mikro-engine-split/experiments-g8/profile-checks/results"
+  ],
+  "checkerSource": "import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';\nimport { spawnSync } from 'node:child_process';\nconst preparation = JSON.parse(readFileSync(process.argv[2], 'utf8'));\nconst outputRoot = process.argv[3];\nmkdirSync(outputRoot, { recursive: true, mode: 0o700 });\nconst checks = [];\nfor (const binding of preparation.engine) {\n  const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => !/KEY|TOKEN|PASSWORD|SECRET|CREDENTIAL/.test(name.toUpperCase())));\n  const child = spawnSync('/home/genie/.hermes/node/bin/node', ['/home/genie/orca/workspaces/genie/mikro-engine-split/scripts/mikro/engine-experiment-runtime.mjs', '--profile', binding.profilePath, '--check'], { env, encoding: 'utf8', timeout: 120000, maxBuffer: 10000000 });\n  if (child.status !== 0) throw new Error(`Actual noninference profile check ${binding.id} failed: ${child.error?.message ?? child.stderr}`);\n  const description = JSON.parse(child.stdout);\n  if (description.profileSha256 !== binding.profileSha256) throw new Error(`Actual profile byte identity differs: ${binding.id}`);\n  const receipt = { id: binding.id, actualExitCode: child.status, profileSha256: description.profileSha256, effectiveConfigSha256: description.effectiveConfigSha256,\n    budgetBinding: description.budgetBinding, model: `${description.provider}/${description.model}`, sdkNominalRates: description.sdkNominalRates,\n    api: description.api, engine: description.engine, modelCalls: 0, actualCompletedAt: new Date().toISOString() };\n  writeFileSync(`${outputRoot}/${binding.id}.json`, JSON.stringify(receipt, null, 2) + '\\n', { flag: 'wx', mode: 0o600 });\n  checks.push(receipt);\n  console.log(JSON.stringify({ id: binding.id, actualExitCode: child.status, exactDepthZero: description.budgetBinding.maxDepth === 0, modelCalls: 0 }));\n}\nwriteFileSync(`${outputRoot}/complete.json`, JSON.stringify({ scope: 'actual Node26 public profile checks, no backend/model dispatch', checks }, null, 2) + '\\n', { flag: 'wx', mode: 0o600 });\n",
+  "completionFile": {
+    "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/profile-checks/results/complete.json",
+    "sha256": "e0005355238ad7aa261215f9d051c960ff800edcbfd8e5881be5ba039254a8f3"
+  },
+  "preparedResources": {
+    "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/prepared-engine-resources.json",
+    "sha256": "3a135bbd7a19c0c94626bcdb181fd4854d7fb43be23f57aa5fd438f1e0495eed"
+  },
+  "checks": [
+    {
+      "id": "genie-existing-flash-control-rlm-unpatched",
+      "actualExitCode": 0,
+      "profileSha256": "47d6466cee77d2bdcc98c91c4d86a166bf885498b887949b4cd834662fef43d6",
+      "effectiveConfigSha256": "995bd6a74c645a8a13282d64b1af125a82eff8b87b83790bed7d1387780291a0",
+      "budgetBinding": {
+        "maxDepth": 0,
+        "loadedMaxDepth": null,
+        "maxDepthSource": "agent.spec.budget.maxDepth",
+        "method": "programmatic-after-applyAgent"
+      },
+      "model": "deepseek-api/deepseek-flash",
+      "sdkNominalRates": {
+        "input": 0.3,
+        "output": 1.2,
+        "cacheRead": 0,
+        "cacheWrite": 0
+      },
+      "api": "openai-completions",
+      "engine": "rlm",
+      "modelCalls": 0,
+      "actualCompletedAt": "2026-10-06T04:32:15.817Z"
+    },
+    {
+      "id": "genie-existing-flash-control-rlm-patched",
+      "actualExitCode": 0,
+      "profileSha256": "3e6277460a764e02f62640302bdd9cd31520c9d325258d0dd19ce82e0ad20e3f",
+      "effectiveConfigSha256": "abea8b3e9a3aed26bf728f188595db8232da6e767955bdeb1f0dfbf5369c2ef0",
+      "budgetBinding": {
+        "maxDepth": 0,
+        "loadedMaxDepth": null,
+        "maxDepthSource": "agent.spec.budget.maxDepth",
+        "method": "programmatic-after-applyAgent"
+      },
+      "model": "deepseek/deepseek-flash",
+      "sdkNominalRates": {
+        "input": 0.3,
+        "output": 1.2,
+        "cacheRead": 0.006,
+        "cacheWrite": 0
+      },
+      "api": "openai-completions",
+      "engine": "rlm",
+      "modelCalls": 0,
+      "actualCompletedAt": "2026-10-06T04:32:22.289Z"
+    },
+    {
+      "id": "genie-existing-flash-control-pi",
+      "actualExitCode": 0,
+      "profileSha256": "303933d69268d050bfb193155c7055b3bb1fc05a64d85e8c7b0f5e44e9af2ef7",
+      "effectiveConfigSha256": "abea8b3e9a3aed26bf728f188595db8232da6e767955bdeb1f0dfbf5369c2ef0",
+      "budgetBinding": {
+        "maxDepth": 0,
+        "loadedMaxDepth": null,
+        "maxDepthSource": "agent.spec.budget.maxDepth",
+        "method": "programmatic-after-applyAgent"
+      },
+      "model": "deepseek/deepseek-flash",
+      "sdkNominalRates": {
+        "input": 0.3,
+        "output": 1.2,
+        "cacheRead": 0.006,
+        "cacheWrite": 0
+      },
+      "api": "openai-completions",
+      "engine": "pi",
+      "modelCalls": 0,
+      "actualCompletedAt": "2026-10-06T04:32:29.349Z"
+    },
+    {
+      "id": "brain-existing-flash-control-rlm-unpatched",
+      "actualExitCode": 0,
+      "profileSha256": "e07eb9198640f3d5e5d40ec526edbe1943e5152bbfc9f853e8b940ff5df83081",
+      "effectiveConfigSha256": "95f104fd57d6947277e0c7ccde9724306aa20feda01e2014da20f8e4afa958e8",
+      "budgetBinding": {
+        "maxDepth": 0,
+        "loadedMaxDepth": null,
+        "maxDepthSource": "agent.spec.budget.maxDepth",
+        "method": "programmatic-after-applyAgent"
+      },
+      "model": "deepseek-api/deepseek-flash",
+      "sdkNominalRates": {
+        "input": 0.3,
+        "output": 1.2,
+        "cacheRead": 0,
+        "cacheWrite": 0
+      },
+      "api": "openai-completions",
+      "engine": "rlm",
+      "modelCalls": 0,
+      "actualCompletedAt": "2026-10-06T04:32:34.547Z"
+    },
+    {
+      "id": "brain-existing-flash-control-rlm-patched",
+      "actualExitCode": 0,
+      "profileSha256": "885103c6843c8a2d05418fa1462a9f57793930507bbf4788ac35acf8fcfdfc39",
+      "effectiveConfigSha256": "b1a2689fea508c1cc579a2b7ef4a93f7d6d202b41d790b3382c0bcdc402be096",
+      "budgetBinding": {
+        "maxDepth": 0,
+        "loadedMaxDepth": null,
+        "maxDepthSource": "agent.spec.budget.maxDepth",
+        "method": "programmatic-after-applyAgent"
+      },
+      "model": "deepseek/deepseek-flash",
+      "sdkNominalRates": {
+        "input": 0.3,
+        "output": 1.2,
+        "cacheRead": 0.006,
+        "cacheWrite": 0
+      },
+      "api": "openai-completions",
+      "engine": "rlm",
+      "modelCalls": 0,
+      "actualCompletedAt": "2026-10-06T04:32:40.696Z"
+    },
+    {
+      "id": "brain-existing-flash-control-pi",
+      "actualExitCode": 0,
+      "profileSha256": "b95fcb4c32934b6b12676a05b7a9f2178201558f171dfba3f3d3c0c9c45224fd",
+      "effectiveConfigSha256": "b1a2689fea508c1cc579a2b7ef4a93f7d6d202b41d790b3382c0bcdc402be096",
+      "budgetBinding": {
+        "maxDepth": 0,
+        "loadedMaxDepth": null,
+        "maxDepthSource": "agent.spec.budget.maxDepth",
+        "method": "programmatic-after-applyAgent"
+      },
+      "model": "deepseek/deepseek-flash",
+      "sdkNominalRates": {
+        "input": 0.3,
+        "output": 1.2,
+        "cacheRead": 0.006,
+        "cacheWrite": 0
+      },
+      "api": "openai-completions",
+      "engine": "pi",
+      "modelCalls": 0,
+      "actualCompletedAt": "2026-10-06T04:32:47.102Z"
+    },
+    {
+      "id": "brain-new-directory-flash-control-rlm-unpatched",
+      "actualExitCode": 0,
+      "profileSha256": "3ffdd0434da5cf86a7e7f3556893f2ad6e4df321116b87b8446f842621393047",
+      "effectiveConfigSha256": "968c3bf68d70f2b1df72d25c75dd634f3a1bbcde88326f2f86a1d3b7cf8eaf06",
+      "budgetBinding": {
+        "maxDepth": 0,
+        "loadedMaxDepth": null,
+        "maxDepthSource": "agent.spec.budget.maxDepth",
+        "method": "programmatic-after-applyAgent"
+      },
+      "model": "deepseek-api/deepseek-flash",
+      "sdkNominalRates": {
+        "input": 0.3,
+        "output": 1.2,
+        "cacheRead": 0,
+        "cacheWrite": 0
+      },
+      "api": "openai-completions",
+      "engine": "rlm",
+      "modelCalls": 0,
+      "actualCompletedAt": "2026-10-06T04:32:52.383Z"
+    },
+    {
+      "id": "brain-new-directory-flash-control-rlm-patched",
+      "actualExitCode": 0,
+      "profileSha256": "66cd908173cbe065636f5fd188924c58eb0dc840d519de2c7cc926455fe757fb",
+      "effectiveConfigSha256": "2ce87256f415c7d20801ec93d368b34a75c3f9e4cc85e6db03887314a9e2c867",
+      "budgetBinding": {
+        "maxDepth": 0,
+        "loadedMaxDepth": null,
+        "maxDepthSource": "agent.spec.budget.maxDepth",
+        "method": "programmatic-after-applyAgent"
+      },
+      "model": "deepseek/deepseek-flash",
+      "sdkNominalRates": {
+        "input": 0.3,
+        "output": 1.2,
+        "cacheRead": 0.006,
+        "cacheWrite": 0
+      },
+      "api": "openai-completions",
+      "engine": "rlm",
+      "modelCalls": 0,
+      "actualCompletedAt": "2026-10-06T04:32:58.553Z"
+    },
+    {
+      "id": "brain-new-directory-flash-control-pi",
+      "actualExitCode": 0,
+      "profileSha256": "b25981279b249df8640b64ef5e8c718cde39b3deef395d9980998d30bf5324a8",
+      "effectiveConfigSha256": "2ce87256f415c7d20801ec93d368b34a75c3f9e4cc85e6db03887314a9e2c867",
+      "budgetBinding": {
+        "maxDepth": 0,
+        "loadedMaxDepth": null,
+        "maxDepthSource": "agent.spec.budget.maxDepth",
+        "method": "programmatic-after-applyAgent"
+      },
+      "model": "deepseek/deepseek-flash",
+      "sdkNominalRates": {
+        "input": 0.3,
+        "output": 1.2,
+        "cacheRead": 0.006,
+        "cacheWrite": 0
+      },
+      "api": "openai-completions",
+      "engine": "pi",
+      "modelCalls": 0,
+      "actualCompletedAt": "2026-10-06T04:33:04.607Z"
+    },
+    {
+      "id": "genie-new-directory-flash-control-rlm-unpatched",
+      "actualExitCode": 0,
+      "profileSha256": "b624e6784d35b9205c178d53a98c159eb3794564e526ab88f1597c7846795a65",
+      "effectiveConfigSha256": "69dcaa536851c93f5c60ef6550580ba2cc582d0d88e633bb007d752f2a2d1b54",
+      "budgetBinding": {
+        "maxDepth": 0,
+        "loadedMaxDepth": null,
+        "maxDepthSource": "agent.spec.budget.maxDepth",
+        "method": "programmatic-after-applyAgent"
+      },
+      "model": "deepseek-api/deepseek-flash",
+      "sdkNominalRates": {
+        "input": 0.3,
+        "output": 1.2,
+        "cacheRead": 0,
+        "cacheWrite": 0
+      },
+      "api": "openai-completions",
+      "engine": "rlm",
+      "modelCalls": 0,
+      "actualCompletedAt": "2026-10-06T04:33:09.820Z"
+    },
+    {
+      "id": "genie-new-directory-flash-control-rlm-patched",
+      "actualExitCode": 0,
+      "profileSha256": "a09fb1462c059e65db904417c125253a666aa1e3ea7efc191b37750cd9cb7356",
+      "effectiveConfigSha256": "d822b585b445743e0f48630c25ac225027a86f30fea65e405a90b0c81643428f",
+      "budgetBinding": {
+        "maxDepth": 0,
+        "loadedMaxDepth": null,
+        "maxDepthSource": "agent.spec.budget.maxDepth",
+        "method": "programmatic-after-applyAgent"
+      },
+      "model": "deepseek/deepseek-flash",
+      "sdkNominalRates": {
+        "input": 0.3,
+        "output": 1.2,
+        "cacheRead": 0.006,
+        "cacheWrite": 0
+      },
+      "api": "openai-completions",
+      "engine": "rlm",
+      "modelCalls": 0,
+      "actualCompletedAt": "2026-10-06T04:33:15.666Z"
+    },
+    {
+      "id": "genie-new-directory-flash-control-pi",
+      "actualExitCode": 0,
+      "profileSha256": "ffde261341910fec3a3cf2c128500d0c6941a2b6cf75e86bf1c27009fc2f2784",
+      "effectiveConfigSha256": "d822b585b445743e0f48630c25ac225027a86f30fea65e405a90b0c81643428f",
+      "budgetBinding": {
+        "maxDepth": 0,
+        "loadedMaxDepth": null,
+        "maxDepthSource": "agent.spec.budget.maxDepth",
+        "method": "programmatic-after-applyAgent"
+      },
+      "model": "deepseek/deepseek-flash",
+      "sdkNominalRates": {
+        "input": 0.3,
+        "output": 1.2,
+        "cacheRead": 0.006,
+        "cacheWrite": 0
+      },
+      "api": "openai-completions",
+      "engine": "pi",
+      "modelCalls": 0,
+      "actualCompletedAt": "2026-10-06T04:33:21.774Z"
+    },
+    {
+      "id": "genie-existing-glm-5-3-rlm-patched",
+      "actualExitCode": 0,
+      "profileSha256": "4f391fd902e32d452848f83c4eeaf72d8b23b169575c59b05312aede6df91c7e",
+      "effectiveConfigSha256": "4912b7b2a449cf932f9cafee852e7e1014a84584dce91e9fdd941d5f82b335ea",
+      "budgetBinding": {
+        "maxDepth": 0,
+        "loadedMaxDepth": null,
+        "maxDepthSource": "agent.spec.budget.maxDepth",
+        "method": "programmatic-after-applyAgent"
+      },
+      "model": "juice/glm-5.3-juiced",
+      "sdkNominalRates": {
+        "input": 1.4,
+        "output": 4.4,
+        "cacheRead": 0.26,
+        "cacheWrite": 0
+      },
+      "api": "openai-responses",
+      "engine": "rlm",
+      "modelCalls": 0,
+      "actualCompletedAt": "2026-10-06T04:33:27.815Z"
+    },
+    {
+      "id": "genie-existing-glm-5-3-pi",
+      "actualExitCode": 0,
+      "profileSha256": "c7ab13920c0d9c963a3947273c7227d6ab2b7bc71a5ea3add1a8b6788526c11d",
+      "effectiveConfigSha256": "4912b7b2a449cf932f9cafee852e7e1014a84584dce91e9fdd941d5f82b335ea",
+      "budgetBinding": {
+        "maxDepth": 0,
+        "loadedMaxDepth": null,
+        "maxDepthSource": "agent.spec.budget.maxDepth",
+        "method": "programmatic-after-applyAgent"
+      },
+      "model": "juice/glm-5.3-juiced",
+      "sdkNominalRates": {
+        "input": 1.4,
+        "output": 4.4,
+        "cacheRead": 0.26,
+        "cacheWrite": 0
+      },
+      "api": "openai-responses",
+      "engine": "pi",
+      "modelCalls": 0,
+      "actualCompletedAt": "2026-10-06T04:33:33.880Z"
+    },
+    {
+      "id": "genie-existing-glm-5-3-flash-rlm-patched",
+      "actualExitCode": 0,
+      "profileSha256": "16906553061fc9cd9a058dc5d9dc877c19f7e79b62673a746e6ad0aedc7c24e6",
+      "effectiveConfigSha256": "4f8d2893317ef1b78d077437580f1c02dea642c0e52e85ceec4952ad8af0e602",
+      "budgetBinding": {
+        "maxDepth": 0,
+        "loadedMaxDepth": null,
+        "maxDepthSource": "agent.spec.budget.maxDepth",
+        "method": "programmatic-after-applyAgent"
+      },
+      "model": "juice/glm-5.3-flash-juiced",
+      "sdkNominalRates": {
+        "input": 0.15,
+        "output": 0.5,
+        "cacheRead": 0.03,
+        "cacheWrite": 0
+      },
+      "api": "openai-responses",
+      "engine": "rlm",
+      "modelCalls": 0,
+      "actualCompletedAt": "2026-10-06T04:33:39.884Z"
+    },
+    {
+      "id": "genie-existing-glm-5-3-flash-pi",
+      "actualExitCode": 0,
+      "profileSha256": "a2ccdbf07c2aae7917d3c5a3c5002b82198067eec1889f385ee251a34b9dd1c7",
+      "effectiveConfigSha256": "4f8d2893317ef1b78d077437580f1c02dea642c0e52e85ceec4952ad8af0e602",
+      "budgetBinding": {
+        "maxDepth": 0,
+        "loadedMaxDepth": null,
+        "maxDepthSource": "agent.spec.budget.maxDepth",
+        "method": "programmatic-after-applyAgent"
+      },
+      "model": "juice/glm-5.3-flash-juiced",
+      "sdkNominalRates": {
+        "input": 0.15,
+        "output": 0.5,
+        "cacheRead": 0.03,
+        "cacheWrite": 0
+      },
+      "api": "openai-responses",
+      "engine": "pi",
+      "modelCalls": 0,
+      "actualCompletedAt": "2026-10-06T04:33:45.990Z"
+    },
+    {
+      "id": "genie-existing-mimo-2-6-rlm-patched",
+      "actualExitCode": 0,
+      "profileSha256": "455745473df05f5454b778c2c95731215580053bffe0ef634d93c7b1acc6fc11",
+      "effectiveConfigSha256": "f1b698cffcff4ee8fdff1c28c44a5d2c842a06c9d90f2d7e74a56841599ea207",
+      "budgetBinding": {
+        "maxDepth": 0,
+        "loadedMaxDepth": null,
+        "maxDepthSource": "agent.spec.budget.maxDepth",
+        "method": "programmatic-after-applyAgent"
+      },
+      "model": "juice/mimo-v2.6-flash",
+      "sdkNominalRates": {
+        "input": 0.14,
+        "output": 0.28,
+        "cacheRead": 0.0028,
+        "cacheWrite": 0
+      },
+      "api": "openai-responses",
+      "engine": "rlm",
+      "modelCalls": 0,
+      "actualCompletedAt": "2026-10-06T04:33:52.180Z"
+    },
+    {
+      "id": "genie-existing-mimo-2-6-pi",
+      "actualExitCode": 0,
+      "profileSha256": "ea02647f49d656b5ba6a50cf13a89be8148a82f60c051eefd6719472e7b5a6a8",
+      "effectiveConfigSha256": "f1b698cffcff4ee8fdff1c28c44a5d2c842a06c9d90f2d7e74a56841599ea207",
+      "budgetBinding": {
+        "maxDepth": 0,
+        "loadedMaxDepth": null,
+        "maxDepthSource": "agent.spec.budget.maxDepth",
+        "method": "programmatic-after-applyAgent"
+      },
+      "model": "juice/mimo-v2.6-flash",
+      "sdkNominalRates": {
+        "input": 0.14,
+        "output": 0.28,
+        "cacheRead": 0.0028,
+        "cacheWrite": 0
+      },
+      "api": "openai-responses",
+      "engine": "pi",
+      "modelCalls": 0,
+      "actualCompletedAt": "2026-10-06T04:33:58.423Z"
+    },
+    {
+      "id": "brain-existing-glm-5-3-rlm-patched",
+      "actualExitCode": 0,
+      "profileSha256": "98c23dddda50c09367d2548c1919c00738e273c7bac7f68fe2f906379cf64d80",
+      "effectiveConfigSha256": "2f2f2f46f1342099a5a16331d3c8fe5ce279b24c893045d764919ebb544c0283",
+      "budgetBinding": {
+        "maxDepth": 0,
+        "loadedMaxDepth": null,
+        "maxDepthSource": "agent.spec.budget.maxDepth",
+        "method": "programmatic-after-applyAgent"
+      },
+      "model": "juice/glm-5.3-juiced",
+      "sdkNominalRates": {
+        "input": 1.4,
+        "output": 4.4,
+        "cacheRead": 0.26,
+        "cacheWrite": 0
+      },
+      "api": "openai-responses",
+      "engine": "rlm",
+      "modelCalls": 0,
+      "actualCompletedAt": "2026-10-06T04:34:04.669Z"
+    },
+    {
+      "id": "brain-existing-glm-5-3-pi",
+      "actualExitCode": 0,
+      "profileSha256": "564e2f2fb4f3e19dae90fc51624932834f28eb6d6e69016dca00d367480ae09e",
+      "effectiveConfigSha256": "2f2f2f46f1342099a5a16331d3c8fe5ce279b24c893045d764919ebb544c0283",
+      "budgetBinding": {
+        "maxDepth": 0,
+        "loadedMaxDepth": null,
+        "maxDepthSource": "agent.spec.budget.maxDepth",
+        "method": "programmatic-after-applyAgent"
+      },
+      "model": "juice/glm-5.3-juiced",
+      "sdkNominalRates": {
+        "input": 1.4,
+        "output": 4.4,
+        "cacheRead": 0.26,
+        "cacheWrite": 0
+      },
+      "api": "openai-responses",
+      "engine": "pi",
+      "modelCalls": 0,
+      "actualCompletedAt": "2026-10-06T04:34:10.741Z"
+    },
+    {
+      "id": "brain-existing-glm-5-3-flash-rlm-patched",
+      "actualExitCode": 0,
+      "profileSha256": "49f1643d659462d8510aa5ee7dd0b20d197e90f99e2ce666c37c6639f3d96048",
+      "effectiveConfigSha256": "5dd65083c365d7c2d6263459265f98f4c94d5521aba13ba5d5bcf42ff456fc6d",
+      "budgetBinding": {
+        "maxDepth": 0,
+        "loadedMaxDepth": null,
+        "maxDepthSource": "agent.spec.budget.maxDepth",
+        "method": "programmatic-after-applyAgent"
+      },
+      "model": "juice/glm-5.3-flash-juiced",
+      "sdkNominalRates": {
+        "input": 0.15,
+        "output": 0.5,
+        "cacheRead": 0.03,
+        "cacheWrite": 0
+      },
+      "api": "openai-responses",
+      "engine": "rlm",
+      "modelCalls": 0,
+      "actualCompletedAt": "2026-10-06T04:34:16.644Z"
+    },
+    {
+      "id": "brain-existing-glm-5-3-flash-pi",
+      "actualExitCode": 0,
+      "profileSha256": "828c102f3f8dbd3d626da1a24197aa5354d74649054d0f84c449324d6c3e88a4",
+      "effectiveConfigSha256": "5dd65083c365d7c2d6263459265f98f4c94d5521aba13ba5d5bcf42ff456fc6d",
+      "budgetBinding": {
+        "maxDepth": 0,
+        "loadedMaxDepth": null,
+        "maxDepthSource": "agent.spec.budget.maxDepth",
+        "method": "programmatic-after-applyAgent"
+      },
+      "model": "juice/glm-5.3-flash-juiced",
+      "sdkNominalRates": {
+        "input": 0.15,
+        "output": 0.5,
+        "cacheRead": 0.03,
+        "cacheWrite": 0
+      },
+      "api": "openai-responses",
+      "engine": "pi",
+      "modelCalls": 0,
+      "actualCompletedAt": "2026-10-06T04:34:22.740Z"
+    },
+    {
+      "id": "brain-existing-mimo-2-6-rlm-patched",
+      "actualExitCode": 0,
+      "profileSha256": "40a441a2b93291cba6790b4575b15d3f45ea4fd8fad406cbde0167992ab14cd3",
+      "effectiveConfigSha256": "8360e3217082532cb6111512c896d8a6700bdafea9c4ad8594ab6b6e2024b69a",
+      "budgetBinding": {
+        "maxDepth": 0,
+        "loadedMaxDepth": null,
+        "maxDepthSource": "agent.spec.budget.maxDepth",
+        "method": "programmatic-after-applyAgent"
+      },
+      "model": "juice/mimo-v2.6-flash",
+      "sdkNominalRates": {
+        "input": 0.14,
+        "output": 0.28,
+        "cacheRead": 0.0028,
+        "cacheWrite": 0
+      },
+      "api": "openai-responses",
+      "engine": "rlm",
+      "modelCalls": 0,
+      "actualCompletedAt": "2026-10-06T04:34:29.048Z"
+    },
+    {
+      "id": "brain-existing-mimo-2-6-pi",
+      "actualExitCode": 0,
+      "profileSha256": "a9f8f8f6c48420117180a0b6504c87d700b7be4c4348c554ec128cfd019b3ab1",
+      "effectiveConfigSha256": "8360e3217082532cb6111512c896d8a6700bdafea9c4ad8594ab6b6e2024b69a",
+      "budgetBinding": {
+        "maxDepth": 0,
+        "loadedMaxDepth": null,
+        "maxDepthSource": "agent.spec.budget.maxDepth",
+        "method": "programmatic-after-applyAgent"
+      },
+      "model": "juice/mimo-v2.6-flash",
+      "sdkNominalRates": {
+        "input": 0.14,
+        "output": 0.28,
+        "cacheRead": 0.0028,
+        "cacheWrite": 0
+      },
+      "api": "openai-responses",
+      "engine": "pi",
+      "modelCalls": 0,
+      "actualCompletedAt": "2026-10-06T04:34:35.217Z"
+    },
+    {
+      "id": "brain-new-directory-glm-5-3-rlm-patched",
+      "actualExitCode": 0,
+      "profileSha256": "beca2892d23f3e8a0e82fa81a4dc662673760b380322a84a9f704c5f8f2eb16a",
+      "effectiveConfigSha256": "b05dd90bf1ab1aecc2b71534d244969946861d2e4c03ecbee852ad5ce20db7fc",
+      "budgetBinding": {
+        "maxDepth": 0,
+        "loadedMaxDepth": null,
+        "maxDepthSource": "agent.spec.budget.maxDepth",
+        "method": "programmatic-after-applyAgent"
+      },
+      "model": "juice/glm-5.3-juiced",
+      "sdkNominalRates": {
+        "input": 1.4,
+        "output": 4.4,
+        "cacheRead": 0.26,
+        "cacheWrite": 0
+      },
+      "api": "openai-responses",
+      "engine": "rlm",
+      "modelCalls": 0,
+      "actualCompletedAt": "2026-10-06T04:34:41.445Z"
+    },
+    {
+      "id": "brain-new-directory-glm-5-3-pi",
+      "actualExitCode": 0,
+      "profileSha256": "4ac99facb91cde2399cb90dc041a31e73fd15bc4f40bb17ca808b292fddc4245",
+      "effectiveConfigSha256": "b05dd90bf1ab1aecc2b71534d244969946861d2e4c03ecbee852ad5ce20db7fc",
+      "budgetBinding": {
+        "maxDepth": 0,
+        "loadedMaxDepth": null,
+        "maxDepthSource": "agent.spec.budget.maxDepth",
+        "method": "programmatic-after-applyAgent"
+      },
+      "model": "juice/glm-5.3-juiced",
+      "sdkNominalRates": {
+        "input": 1.4,
+        "output": 4.4,
+        "cacheRead": 0.26,
+        "cacheWrite": 0
+      },
+      "api": "openai-responses",
+      "engine": "pi",
+      "modelCalls": 0,
+      "actualCompletedAt": "2026-10-06T04:34:47.394Z"
+    },
+    {
+      "id": "brain-new-directory-glm-5-3-flash-rlm-patched",
+      "actualExitCode": 0,
+      "profileSha256": "ceffa2970932bd1a88083222b5b10fb09071990a965504a7bd3dcccd4ee9b9fa",
+      "effectiveConfigSha256": "6eed7f318fa65ba2f1ee1534379e3ddcad09690dbfe6a931e23f176d49451d1e",
+      "budgetBinding": {
+        "maxDepth": 0,
+        "loadedMaxDepth": null,
+        "maxDepthSource": "agent.spec.budget.maxDepth",
+        "method": "programmatic-after-applyAgent"
+      },
+      "model": "juice/glm-5.3-flash-juiced",
+      "sdkNominalRates": {
+        "input": 0.15,
+        "output": 0.5,
+        "cacheRead": 0.03,
+        "cacheWrite": 0
+      },
+      "api": "openai-responses",
+      "engine": "rlm",
+      "modelCalls": 0,
+      "actualCompletedAt": "2026-10-06T04:34:53.370Z"
+    },
+    {
+      "id": "brain-new-directory-glm-5-3-flash-pi",
+      "actualExitCode": 0,
+      "profileSha256": "329a76097ed8b5012b73d9aae7c018d4b477a0b6ba40e50650fc43293d1095ee",
+      "effectiveConfigSha256": "6eed7f318fa65ba2f1ee1534379e3ddcad09690dbfe6a931e23f176d49451d1e",
+      "budgetBinding": {
+        "maxDepth": 0,
+        "loadedMaxDepth": null,
+        "maxDepthSource": "agent.spec.budget.maxDepth",
+        "method": "programmatic-after-applyAgent"
+      },
+      "model": "juice/glm-5.3-flash-juiced",
+      "sdkNominalRates": {
+        "input": 0.15,
+        "output": 0.5,
+        "cacheRead": 0.03,
+        "cacheWrite": 0
+      },
+      "api": "openai-responses",
+      "engine": "pi",
+      "modelCalls": 0,
+      "actualCompletedAt": "2026-10-06T04:34:59.517Z"
+    },
+    {
+      "id": "brain-new-directory-mimo-2-6-rlm-patched",
+      "actualExitCode": 0,
+      "profileSha256": "4630604ea68d25435a724f759e5d14d800ab06aa2c661ddff7ebf8930151ae41",
+      "effectiveConfigSha256": "6f5cd7e8b8e702b40109b84a60b00260d5e0d9067d94ffbc77c19bdfe7b6f4e7",
+      "budgetBinding": {
+        "maxDepth": 0,
+        "loadedMaxDepth": null,
+        "maxDepthSource": "agent.spec.budget.maxDepth",
+        "method": "programmatic-after-applyAgent"
+      },
+      "model": "juice/mimo-v2.6-flash",
+      "sdkNominalRates": {
+        "input": 0.14,
+        "output": 0.28,
+        "cacheRead": 0.0028,
+        "cacheWrite": 0
+      },
+      "api": "openai-responses",
+      "engine": "rlm",
+      "modelCalls": 0,
+      "actualCompletedAt": "2026-10-06T04:35:05.810Z"
+    },
+    {
+      "id": "brain-new-directory-mimo-2-6-pi",
+      "actualExitCode": 0,
+      "profileSha256": "861424919c84b0e60ef996bf7e03e019c1717033e848ef8f88fba64bf2ee8416",
+      "effectiveConfigSha256": "6f5cd7e8b8e702b40109b84a60b00260d5e0d9067d94ffbc77c19bdfe7b6f4e7",
+      "budgetBinding": {
+        "maxDepth": 0,
+        "loadedMaxDepth": null,
+        "maxDepthSource": "agent.spec.budget.maxDepth",
+        "method": "programmatic-after-applyAgent"
+      },
+      "model": "juice/mimo-v2.6-flash",
+      "sdkNominalRates": {
+        "input": 0.14,
+        "output": 0.28,
+        "cacheRead": 0.0028,
+        "cacheWrite": 0
+      },
+      "api": "openai-responses",
+      "engine": "pi",
+      "modelCalls": 0,
+      "actualCompletedAt": "2026-10-06T04:35:11.968Z"
+    },
+    {
+      "id": "genie-new-directory-glm-5-3-rlm-patched",
+      "actualExitCode": 0,
+      "profileSha256": "0d16c9e0a3f6d435ca8c52659eb2dd30db3b8bef03a3e39bcfcff00a7a573216",
+      "effectiveConfigSha256": "e5b621aec7e3f038005dfbac76d4297f0faea14fd57b8a66b9d357ac591217ef",
+      "budgetBinding": {
+        "maxDepth": 0,
+        "loadedMaxDepth": null,
+        "maxDepthSource": "agent.spec.budget.maxDepth",
+        "method": "programmatic-after-applyAgent"
+      },
+      "model": "juice/glm-5.3-juiced",
+      "sdkNominalRates": {
+        "input": 1.4,
+        "output": 4.4,
+        "cacheRead": 0.26,
+        "cacheWrite": 0
+      },
+      "api": "openai-responses",
+      "engine": "rlm",
+      "modelCalls": 0,
+      "actualCompletedAt": "2026-10-06T04:35:17.911Z"
+    },
+    {
+      "id": "genie-new-directory-glm-5-3-pi",
+      "actualExitCode": 0,
+      "profileSha256": "23d4096fa3ea6dd8575c45acfb036f3630ef02a5a10734fa966f6f4b3faace53",
+      "effectiveConfigSha256": "e5b621aec7e3f038005dfbac76d4297f0faea14fd57b8a66b9d357ac591217ef",
+      "budgetBinding": {
+        "maxDepth": 0,
+        "loadedMaxDepth": null,
+        "maxDepthSource": "agent.spec.budget.maxDepth",
+        "method": "programmatic-after-applyAgent"
+      },
+      "model": "juice/glm-5.3-juiced",
+      "sdkNominalRates": {
+        "input": 1.4,
+        "output": 4.4,
+        "cacheRead": 0.26,
+        "cacheWrite": 0
+      },
+      "api": "openai-responses",
+      "engine": "pi",
+      "modelCalls": 0,
+      "actualCompletedAt": "2026-10-06T04:35:23.973Z"
+    },
+    {
+      "id": "genie-new-directory-glm-5-3-flash-rlm-patched",
+      "actualExitCode": 0,
+      "profileSha256": "08ca1215f414b3839473b0172900518476eb44a0fcdf8d588cea02a5bc06373d",
+      "effectiveConfigSha256": "f37be007ff69aa44acc7232ecc9d3f339629cb6aac0a19f5e018191360d8d2e8",
+      "budgetBinding": {
+        "maxDepth": 0,
+        "loadedMaxDepth": null,
+        "maxDepthSource": "agent.spec.budget.maxDepth",
+        "method": "programmatic-after-applyAgent"
+      },
+      "model": "juice/glm-5.3-flash-juiced",
+      "sdkNominalRates": {
+        "input": 0.15,
+        "output": 0.5,
+        "cacheRead": 0.03,
+        "cacheWrite": 0
+      },
+      "api": "openai-responses",
+      "engine": "rlm",
+      "modelCalls": 0,
+      "actualCompletedAt": "2026-10-06T04:35:30.076Z"
+    },
+    {
+      "id": "genie-new-directory-glm-5-3-flash-pi",
+      "actualExitCode": 0,
+      "profileSha256": "0cfa2582a1e5e187e40380dc289680abfc02d6f14a973fb7164986d4a1f1490e",
+      "effectiveConfigSha256": "f37be007ff69aa44acc7232ecc9d3f339629cb6aac0a19f5e018191360d8d2e8",
+      "budgetBinding": {
+        "maxDepth": 0,
+        "loadedMaxDepth": null,
+        "maxDepthSource": "agent.spec.budget.maxDepth",
+        "method": "programmatic-after-applyAgent"
+      },
+      "model": "juice/glm-5.3-flash-juiced",
+      "sdkNominalRates": {
+        "input": 0.15,
+        "output": 0.5,
+        "cacheRead": 0.03,
+        "cacheWrite": 0
+      },
+      "api": "openai-responses",
+      "engine": "pi",
+      "modelCalls": 0,
+      "actualCompletedAt": "2026-10-06T04:35:36.164Z"
+    },
+    {
+      "id": "genie-new-directory-mimo-2-6-rlm-patched",
+      "actualExitCode": 0,
+      "profileSha256": "68b2982b618d4e383c63deadd27a84ab27cf8e40328003204f02f7e7e050cc44",
+      "effectiveConfigSha256": "b7a1c0255a61c8cb92cc8ec537246e598b573d4d86f58a1ef29e48a472588244",
+      "budgetBinding": {
+        "maxDepth": 0,
+        "loadedMaxDepth": null,
+        "maxDepthSource": "agent.spec.budget.maxDepth",
+        "method": "programmatic-after-applyAgent"
+      },
+      "model": "juice/mimo-v2.6-flash",
+      "sdkNominalRates": {
+        "input": 0.14,
+        "output": 0.28,
+        "cacheRead": 0.0028,
+        "cacheWrite": 0
+      },
+      "api": "openai-responses",
+      "engine": "rlm",
+      "modelCalls": 0,
+      "actualCompletedAt": "2026-10-06T04:35:42.058Z"
+    },
+    {
+      "id": "genie-new-directory-mimo-2-6-pi",
+      "actualExitCode": 0,
+      "profileSha256": "bc45f2ce35534fb9e6bc5ad41d1621d9fef045597c06af3a98c1e4de787cb6bf",
+      "effectiveConfigSha256": "b7a1c0255a61c8cb92cc8ec537246e598b573d4d86f58a1ef29e48a472588244",
+      "budgetBinding": {
+        "maxDepth": 0,
+        "loadedMaxDepth": null,
+        "maxDepthSource": "agent.spec.budget.maxDepth",
+        "method": "programmatic-after-applyAgent"
+      },
+      "model": "juice/mimo-v2.6-flash",
+      "sdkNominalRates": {
+        "input": 0.14,
+        "output": 0.28,
+        "cacheRead": 0.0028,
+        "cacheWrite": 0
+      },
+      "api": "openai-responses",
+      "engine": "pi",
+      "modelCalls": 0,
+      "actualCompletedAt": "2026-10-06T04:35:48.189Z"
+    }
+  ],
+  "modelCalls": 0,
+  "scoredEngineCells": 0
+}

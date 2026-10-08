@@ -13,6 +13,7 @@
  *
  * Spec source: `.genie/wishes/rlmx-sdk-upgrade/WISH.md` L21.
  */
+import type { LLMFailureStopReason, UsageStats } from "../llm.js";
 export type AgentEventType = "AgentStart" | "IterationStart" | "IterationOutput" | "ToolCallBefore" | "ToolCallAfter" | "Recurse" | "Validation" | "Message" | "EmitDone" | "Error" | "SessionOpen" | "SessionClose" | "ToolCallObservation";
 /** Base shape — every event carries a timestamp + discriminant. */
 interface BaseEvent {
@@ -152,6 +153,9 @@ export interface ErrorEvent extends BaseEvent {
         readonly name: string;
         readonly message: string;
         readonly stack?: string;
+        readonly stopReason?: LLMFailureStopReason;
+        /** Cumulative provider-reported usage owned by this terminal failure; consume once. */
+        readonly usage?: UsageStats;
     };
 }
 /**

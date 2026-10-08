@@ -1,0 +1,128 @@
+{
+  "schema": 1,
+  "sealedAt": "2026-10-05T20:18:58.650241+00:00",
+  "integrationHead": "0fe62de3e2292fe1cc3eeb7f80068c0ee17918c7",
+  "groups": {
+    "G3": {
+      "mikro/src/parser.ts": "aeba7674edff7b56062d9148c44c98cf2472ec2c84e9069f043e92567e34d806",
+      "mikro/src/repl.ts": "1ea3150d1995dd3b89a4c01ccd608fb1db80c8fac7cab42354e558a8a65e3fb9",
+      "mikro/src/rlm.ts": "41c140cd9365d51e0c3f6db8a453447026dcd4162476750e0325a358a6a5c694",
+      "mikro/src/index.ts": "36d8ba6c5f67e2edd6046782d0103db91bbb20cf6a70f3da0c2ff64050ddc11d",
+      "mikro/tests/parser.test.ts": "efbd241ce103d0756034e913ad217411734f195dd69a496bfa9cf09a4c6c4e34",
+      "mikro/tests/repl-tool-bridge.test.ts": "d971e63fe5bc1b9ea03d06310f28113f7a8548eac59418fe0169b4a40f0c99a7",
+      "mikro/tests/validate-loop.test.ts": "0ba6acb06f00c9a432aca72306cd80d9abb8be01d385290235228f7c76157ee9",
+      "mikro/src/llm.ts": "9f9225e369a22bdfd39fb5ba4c162270dd7439a837ca34113fd37c2c1abb00d1",
+      "mikro/tests/recursive-trace.test.ts": "0dd342909e879410ddd936660304eae769b06506f6f1709459933b3a8d3bd093"
+    },
+    "G4": {
+      "mikro/src/sdk/agent-spec.ts": "6c14c0e672865cb56d91c5f475a947db88d49b766d8fa49b374c73c309df7aae",
+      "mikro/src/sdk/index.ts": "3fddebfd39558541691efbdd225998a4dde69e72507a5f02aced64f8e88b9866",
+      "mikro/src/mcp/backend.ts": "eaaf8aadf5aa1f3abd4d3260d6e28cde069b3020e442e761ff7070f2218e0f0d",
+      "mikro/src/mcp/server.ts": "4b78a0bdce7e4498024f67e4b978819f834d52352d6788c95596be66397fee90",
+      "mikro/src/mcp/backends/legacy.ts": "45d24ae82f456059ea707438861b8c7ca1a297325a21de55d20cda55b11e00d3",
+      "mikro/src/mcp/backends/prime.ts": "0825f86ae3955ad7ef3026fa27e2475f8de3d10f44f28c577b95e09e6a81f665",
+      "mikro/src/mcp/backends/prime-sdk.ts": "f5a59918640536a7c371fb3e36a133a81aa5772e7ac3a6b2a009e8840e050c81",
+      "mikro/src/mcp/backends/pi.ts": "0cf278eb1bdd3020c08517ac8ff98f7ab70e4cce6bef3e8e9224a3a4a1d4c15a",
+      "mikro/src/mcp/backends/pi-tools.ts": "8f138859e12441bcd8659e1c25fa09c2fee7a1aaa3ada61598b1531c790f9d2c",
+      "mikro/tests/backend-contract.test.ts": "3c92c94682af418dbf60ed361b6a3eddeae66552be2e9a33eacccccc30189665",
+      "mikro/tests/mcp-agents.test.ts": "c45d6c0a96b32a006136c7c9bfcadc70648e74c288570a10b1cb5505c5b15b49",
+      "mikro/tests/legacy-backend-tools.test.ts": "fed25388e75dc502eb926cd9ad1e86e987703392722e662e651ded9873868e4c",
+      "mikro/tests/prime-backend.test.ts": "c57b4ef7a5ab4729f16ae89c8117c4724b3d93bc83a068882bbc68f8bf2f4aff",
+      "mikro/tests/prime-sdk-backend.test.ts": "7c5e30e22e92c13db2e7e99ba48503e678b7491754986a82922b103c0bfe6bb0",
+      "mikro/tests/pi-backend.test.ts": "74c00b4548759386c04239c95b375c6d8900bf8909de33904fa484e952359015",
+      "mikro/tests/prime-runtime-benchmark.test.ts": "5eee84723f98637c554f8d225d498fcff28f3c3cbe06c66ad784c04cc2b3a4a7",
+      "mikro/tests/runtime-benchmark-v2.test.ts": "f6ad55296535600ed98a3dbf9e02cbbda1f4f749b1ed49c8877cec3c801cd759",
+      "mikro/scripts/benchmark-models-sdk-v2.mjs": "5370db4522a57cb27cd9c375b53f2d87cfa4281cceddd014b53da8aac7123375",
+      "mikro/scripts/benchmark-prime-runtimes.mjs": "c0f0cdfccd9e41c33577d6ac185b12f22fdb9a78f09d7f6d1b120602b1a6a885",
+      "mikro/scripts/benchmark-runtimes-v2.mjs": "3c8d84e25dcbb211d7a5d6a81942309b14e62d59d10539f2b66427e49d107ac6",
+      "mikro/docs/agent-yaml-schema.md": "1dfdfe1f19d87f0d79b2214f723709f83ee917eb756f78ccd9ab7f07fa563516",
+      "mikro/src/custom-providers.ts": "d312d95230c30e00a1d8ca6c8b7c283b71e2cacd9a26cf45a588d8e8ccb17fee",
+      "mikro/tests/custom-providers.test.ts": "281d5a4c6fbdec02ad9af690d9b7630ccd64a46499ae2dd742a99ecaf7693a12"
+    },
+    "G6": {
+      "mikro/src/juice.ts": "aec556d3ab37f59d0dd719d91d077582fcc0a4d98bdcd75e2e9c788ebc37f688",
+      "mikro/src/cli.ts": "fc001cbd7567994dbea8535ee7ab4849930c108ec3ea752935db35f95624c686",
+      "mikro/src/config.ts": "6e7246349a4c949f35df48facbb5d269d3337f8f74eae905384a8d1bda783b0d",
+      "mikro/src/custom-providers.ts": "d312d95230c30e00a1d8ca6c8b7c283b71e2cacd9a26cf45a588d8e8ccb17fee",
+      "mikro/src/llm.ts": "9f9225e369a22bdfd39fb5ba4c162270dd7439a837ca34113fd37c2c1abb00d1",
+      "mikro/src/schema.ts": "0fc892c0bee51c1906cebc3d79cb5a499c8e56a36dd1091a1dd7c560c4906ea5",
+      "mikro/tests/juice.test.ts": "7dab42cea4c745b0c788a06bcb3fd449dc5e0e30031b96031bda30cb582a1289",
+      "mikro/tests/custom-providers.test.ts": "281d5a4c6fbdec02ad9af690d9b7630ccd64a46499ae2dd742a99ecaf7693a12",
+      "mikro/docs/juice.md": "cde0e269b2bcb60b6f3cd81cafeee53d632fa05cb87aebf7fe885231b775bfd6"
+    },
+    "packageAndDocs": {
+      "mikro/package.json": "3d02536770479260d3e4b5cb125047f5cbb05e03f29248a0154e67488f708c1e",
+      "mikro/package-lock.json": "f6fea70cf2e05d9e53c85a027aeeb7dd8aa447440f998bfb13bd6772b1c169ce",
+      "mikro/docs/sdk-overview.md": "8fbbc8548e336b40d7c63186c62341059678a2e39486657a604d636ae7c76d1b",
+      "mikro/CHANGELOG.md": "6fb2144e52dc70cb7580516e265f5503baec42a3c1f4e61503934cd3a547bcf0"
+    },
+    "parentDocCleanup": {
+      "scripts/mikro/fixtures-from-commits.ts": "c6155f0af63a4e11f2a1e0137cf49bb50ea1533a333628918288ef83ccc2d5d7",
+      "scripts/mikro/fixtures-from-commits.test.ts": "ecb5cea35098995813cc4f1c3d2139e57e69bd3b639f0a6c4be5cc7dc5ae647a"
+    }
+  },
+  "budget": {
+    "perGroup": {
+      "correctnessRepairsUsed": 1,
+      "correctnessCap": 2,
+      "qualityLoopsUsed": 1,
+      "qualityCap": 1,
+      "effortEscalations": 0
+    },
+    "scope": "Initial blocking findings only; no signed-criteria change"
+  },
+  "sourceHandoffs": {
+    "G3": "G3LifecycleRepair1",
+    "G4": "G4BoundaryRepair1 final refinement",
+    "G6": "G6SecretRepair1"
+  },
+  "beforeProofs": {
+    "G3": [
+      "Actual stop during detached Python retirement resurrected child: startup2/block1",
+      "Real recursive batches launched4 queued requests after abort; pre-aborted query dispatched1"
+    ],
+    "G4": [
+      "Actual configured credential content reached next provider request",
+      "Git core.worktree read outside root",
+      "Explicit facts denied",
+      "Actual MCP paid Pi/RLM failures missing host parseFooter",
+      "Absent/empty/partial pricing permitted requests",
+      "Prime cancellation ignored active/preaborted signals"
+    ],
+    "G6": [
+      "Escaped credential values/keys reached endpoint",
+      "Viewer cookie/token exposed in provenance/version",
+      "-h nonzero instead of help"
+    ]
+  },
+  "verification": {
+    "sealedBaseline": "artifact://174 1201pass0fail exit0 before repair1",
+    "currentFocused": "Running bg_17 build/check/12 owning files after coordinator replaced three unsupported ES2024 Promise.withResolvers test fixtures with equivalent synchronous Promise constructors; prior compilation exited2, no tests executed.",
+    "actualFixtureCli": {
+      "surface": "Compiled dist/genie.js mikro fixtures",
+      "exitCode": 0,
+      "truth": {
+        "files": [
+          "README.md"
+        ],
+        "newFiles": [
+          "src/new-boundary.ts"
+        ]
+      },
+      "evaluationIsParent": true,
+      "implementationAbsentOnEvaluationTree": true,
+      "sourceAndParentTreesDistinct": true,
+      "inferenceCalls": 0,
+      "originalRepositoriesMutated": false,
+      "generatorNotesTruthAccurate": false
+    }
+  },
+  "pending": [
+    "Current focused/full gates",
+    "Independent repaired correctness/quality verdicts",
+    "Repaired public/API smokes",
+    "Actual Flash/Genie/Juice/JEV proofs",
+    "Frozen experiments/genuine native workflows"
+  ],
+  "completionClaim": false
+}

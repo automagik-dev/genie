@@ -10,7 +10,7 @@
  */
 import type { MikroConfig, ValidateConfig } from "./config.js";
 import type { LoadedContext } from "./context.js";
-import { type ChatMessage } from "./llm.js";
+import { type ChatMessage, type UsageStats } from "./llm.js";
 import { type RLMResult } from "./output.js";
 import type { Logger } from "./logger.js";
 import { type EmitterAndStream } from "./sdk/emitter.js";
@@ -20,6 +20,14 @@ import { type ValidateResult } from "./sdk/validate.js";
 export declare const EMPTY_RESPONSES_BUDGET_HIT = "empty_responses";
 /** Exact `answer` returned by the wall-clock-timeout abort. */
 export declare const TIMEOUT_ANSWER = "Error: RLM query timed out";
+/** Terminal run failure carrying observed cumulative subtotals, not inferred totals. */
+export declare class RLMRunError extends Error {
+    readonly iterations: number;
+    readonly budgetHit: string | null;
+    readonly usage?: UsageStats;
+    readonly usageComplete = false;
+    constructor(message: string, iterations: number, budgetHit: string | null, usage?: UsageStats, options?: ErrorOptions);
+}
 /** Options for the RLM loop. */
 export interface RLMOptions {
     maxIterations: number;
@@ -46,12 +54,14 @@ export interface RLMOptions {
     emitter?: EmitterAndStream;
     /** Declared-tool resolver exposed to Python through the REPL bridge. */
     tools?: ToolResolver;
+    /** Caller cancellation; combined with the existing wall-clock deadline. */
+    signal?: AbortSignal;
 }
 /**
  * Add live SDK events and run-scoped cancellation to REPL tool dispatch.
  *
- * The REPL supplies its own signal to a ToolResolver. Declared plugins instead
- * receive the enclosing run's signal so the loop timeout can interrupt them.
+ * Declared plugins receive combined generation and run cancellation, so a
+ * timed-out block cannot keep a bridge dispatch alive in the replacement.
  */
 export declare function bridgeToolResolver(resolver: ToolResolver, emitter: EmitterAndStream, options: {
     readonly sessionId: string;
@@ -106,13 +116,12 @@ export interface ValidationGate {
     readonly validate: ValidateConfig | null;
     /** Validate attempts spent INCLUDING this one (1 on the first check). */
     readonly attempt: number;
-    /** False at the forced-final site: validate and flag, but never retry. */
+    /** False when a terminal-only candidate may be validated but not retried. */
     readonly retryCapable: boolean;
     /**
      * True when another iteration is actually available — the caller mirrors
      * the loop's own top-of-loop tests (iteration budget, wall-clock abort,
-     * cost/token budget) so a granted retry can never hang or silently become
-     * the forced-final path.
+     * cost/token budget) so a granted retry never consumes an extra model turn.
      */
     readonly roomForRetry: boolean;
 }

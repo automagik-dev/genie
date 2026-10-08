@@ -1,0 +1,76 @@
+{
+  "schemaVersion": 1,
+  "createdAt": "2026-10-08T02:16:31.371791+00:00",
+  "actualExitCode": 0,
+  "combinedActualSeconds": 4.61,
+  "combinedRawOutput": "artifact://842",
+  "proof": {
+    "schemaVersion": 1,
+    "kind": "actual-compiled-RLM-and-MCP-failure-receipt-after-smoke",
+    "externalModelCalls": 0,
+    "realPython": true,
+    "realCompiledLoop": true,
+    "sourceOrArtifactModified": false,
+    "requests": 3,
+    "observedPacketUsage": {
+      "inputTokens": 11,
+      "outputTokens": 7,
+      "totalTokens": 18,
+      "fixtureCatalogCostUsd": 2.5e-05,
+      "costKind": "local-fixture-not-paid-inference"
+    },
+    "failure": {
+      "name": "RLMRunError",
+      "message": "RLM maxIterations exhausted without a complete final answer (1 model turns)",
+      "receipt": null,
+      "usage": {
+        "inputTokens": 11,
+        "outputTokens": 7,
+        "cacheReadTokens": 0,
+        "cacheWriteTokens": 0,
+        "totalCost": 2.4999999999999998e-05,
+        "llmCalls": 1,
+        "reasoningTokens": 0
+      },
+      "iterations": 1,
+      "budgetHit": null,
+      "usageComplete": false
+    },
+    "reproduced": false,
+    "knownSubtotalPreserved": true,
+    "actualLegacyMcpFailure": {
+      "answer": "mikro receipt-fixture failed: RLM maxIterations exhausted without a complete final answer (1 model turns)",
+      "text": "mikro receipt-fixture failed: RLM maxIterations exhausted without a complete final answer (1 model turns)\n\n---\nmikro \u00b7 receipt-fixture \u00b7 receipt-fixture/control \u00b7 usage coverage: partial; unreported totals unknown \u00b7 0.1s \u00b7 session isolated-session\nobserved_usage: {\"coverage\":\"partial\",\"iterations\":1,\"subtotal\":{\"inputTokens\":22,\"outputTokens\":14,\"totalCost\":0.000049999999999999996},\"totals\":null}",
+      "failed": true
+    },
+    "actualZeroCallFailure": {
+      "answer": "mikro receipt-fixture failed: RLM max-tokens exhausted without a complete final answer (0 model turns)",
+      "text": "mikro receipt-fixture failed: RLM max-tokens exhausted without a complete final answer (0 model turns)",
+      "failed": true
+    },
+    "observedFailureFooter": {
+      "coverage": "partial",
+      "iterations": 1,
+      "subtotal": {
+        "inputTokens": 22,
+        "outputTokens": 14,
+        "totalCost": 4.9999999999999996e-05
+      },
+      "totals": null
+    },
+    "compiled": {
+      "path": "/home/genie/orca/workspaces/genie/mikro-engine-split/mikro/dist/src/rlm.js",
+      "sha256": "1c2fa7eb94f52531005df25e400ebd6c5dafd4e3284585f74c2fc093d68194b4"
+    },
+    "proofRoot": "/home/genie/.local/share/mikro-engine-split/experiments-g8/rlm-cap-receipt-proof-7XhT3T"
+  },
+  "source": "import assert from 'node:assert/strict';\nimport { createServer } from 'node:http';\nimport { mkdtemp, writeFile, readFile } from 'node:fs/promises';\nimport { join } from 'node:path';\nimport { createHash } from 'node:crypto';\nimport { rlmLoop } from '/home/genie/orca/workspaces/genie/mikro-engine-split/mikro/dist/src/rlm.js';\nimport { parseCustomProviders } from '/home/genie/orca/workspaces/genie/mikro-engine-split/mikro/dist/src/custom-providers.js';\nimport { LegacyMikroBackend } from '/home/genie/orca/workspaces/genie/mikro-engine-split/mikro/dist/src/mcp/backends/legacy.js';\nimport { runTurn } from '/home/genie/orca/workspaces/genie/mikro-engine-split/mikro/dist/src/mcp/server.js';\nconst verifyPreserved = process.argv.includes('--verify-preserved');\nconst proofRoot = await mkdtemp('/home/genie/.local/share/mikro-engine-split/experiments-g8/rlm-cap-receipt-proof-');\nlet requests = 0;\nconst server = createServer(async (req, res) => {\n  for await (const _chunk of req) {}\n  requests++;\n  res.writeHead(200, { 'Content-Type': 'text/event-stream' });\n  const text = verifyPreserved && requests === 2 ? '```repl\\nprint(llm_query(\"bounded local subcall\"))\\n```' : verifyPreserved && requests === 3 ? 'subcall answer' : \"```repl\\nprint('not final')\\n```\";\n  res.end(`data: ${JSON.stringify({ id: 'isolated-packet-fixture', object: 'chat.completion.chunk', model: 'control', choices: [{ index: 0, delta: { role: 'assistant', content: text }, finish_reason: 'stop' }], usage: { prompt_tokens: 11, completion_tokens: 7, total_tokens: 18 } })}\\n\\ndata: [DONE]\\n\\n`);\n});\nawait new Promise(resolve => server.listen(0, '127.0.0.1', resolve));\nconst address = server.address();\nassert(address && typeof address !== 'string');\nconst providers = parseCustomProviders({ 'receipt-fixture': { 'base-url': `http://127.0.0.1:${address.port}/v1`, 'api-key-env': 'MIKRO_RLM_RECEIPT_FIXTURE_KEY', models: { control: { cost: { input: 1, output: 2 } } } } }, 'isolated receipt diagnostic');\nprocess.env.MIKRO_RLM_RECEIPT_FIXTURE_KEY = 'fixture-only-not-a-credential';\nconst config = { system: null, tools: [], criteria: null, model: { provider: 'receipt-fixture', model: 'control', providers }, configDir: proofRoot, budget: { maxCost: null, maxTokens: null, maxDepth: 0 }, contextConfig: { extensions: ['.md'], exclude: ['node_modules'] }, toolsLevel: 'core', cache: { enabled: false, strategy: 'full', retention: 'long' }, gemini: { thinkingLevel: null, googleSearch: false, urlContext: false, codeExecution: false, computerUse: false, mapsGrounding: false, fileSearch: false, mediaResolution: null }, output: { schema: null }, storage: { enabled: 'never', mode: 'persistent', dataDir: join(proofRoot, 'data'), port: 0, chunkSize: null, chunkUtilization: 0.6, charsPerToken: 4 }, prompt: { appendStopProtocol: true }, validate: null, providers, configSource: 'yaml' };\nlet failure;\nlet outcome;\nlet zeroCallOutcome;\ntry {\n  try { await rlmLoop('isolated no-external-inference receipt diagnostic', null, config, { maxIterations: 1, maxRetries: 0, output: 'json' }); }\n  catch (error) { failure = { name: error.name, message: error.message, receipt: error.receipt ?? null, usage: error.usage ?? null, iterations: error.iterations ?? null, budgetHit: error.budgetHit ?? null, usageComplete: error.usageComplete ?? null }; }\n  if (verifyPreserved) {\n    config.budget.maxDepth = null;\n    outcome = await runTurn(new LegacyMikroBackend(), undefined, config, 'receipt-fixture', 'bounded root and IPC receipt smoke', 'isolated-session', undefined, proofRoot, undefined, 1);\n    config.budget.maxTokens = 0;\n    zeroCallOutcome = await runTurn(new LegacyMikroBackend(), undefined, config, 'receipt-fixture', 'zero-call budget smoke', 'isolated-zero-session', undefined, proofRoot, undefined, 1);\n  }\n} finally { delete process.env.MIKRO_RLM_RECEIPT_FIXTURE_KEY; server.closeAllConnections(); await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve())); }\nassert.equal(requests, verifyPreserved ? 3 : 1);\nassert(failure && /maxIterations exhausted/.test(failure.message));\nconst reproduced = failure.receipt === null && failure.usage === null;\nlet observed;\nif (verifyPreserved) {\n  assert.equal(failure.iterations, 1);\n  assert.equal(failure.usage.inputTokens, 11);\n  assert.equal(failure.usage.outputTokens, 7);\n  assert.equal(failure.usage.llmCalls, 1);\n  assert.equal(failure.usageComplete, false);\n  assert(outcome.failed && /failed: RLM maxIterations exhausted/.test(outcome.answer));\n  const line = outcome.text.split('\\n').find(text => text.startsWith('observed_usage: '));\n  assert(line);\n  observed = JSON.parse(line.slice('observed_usage: '.length));\n  assert.equal(observed.coverage, 'partial');\n  assert.equal(observed.iterations, 1);\n  assert.equal(observed.totals, null);\n  assert.equal(observed.subtotal.inputTokens, 22);\n  assert.equal(observed.subtotal.outputTokens, 14);\n  assert(Math.abs(observed.subtotal.totalCost - 0.00005) < 1e-12);\n  assert(zeroCallOutcome.failed && zeroCallOutcome.text === zeroCallOutcome.answer);\n}\nconst compiledPath = '/home/genie/orca/workspaces/genie/mikro-engine-split/mikro/dist/src/rlm.js';\nconst proof = { schemaVersion: 1, kind: verifyPreserved ? 'actual-compiled-RLM-and-MCP-failure-receipt-after-smoke' : 'actual-compiled-RLM-local-packet-accounting-loss-diagnosis', externalModelCalls: 0, realPython: true, realCompiledLoop: true, sourceOrArtifactModified: false, requests, observedPacketUsage: { inputTokens: 11, outputTokens: 7, totalTokens: 18, fixtureCatalogCostUsd: 0.000025, costKind: 'local-fixture-not-paid-inference' }, failure, reproduced, knownSubtotalPreserved: verifyPreserved && !reproduced, actualLegacyMcpFailure: outcome, actualZeroCallFailure: zeroCallOutcome, observedFailureFooter: observed, compiled: { path: compiledPath, sha256: createHash('sha256').update(await readFile(compiledPath)).digest('hex') }, proofRoot };\nawait writeFile(join(proofRoot, 'proof.json'), JSON.stringify(proof, null, 2) + '\\n', { mode: 0o600, flag: 'wx' });\nconsole.log(JSON.stringify({ proofPath: join(proofRoot, 'proof.json'), reproduced, knownSubtotalPreserved: verifyPreserved && !reproduced, requests, externalModelCalls: 0, failure, observedFailureFooter: observed }));\nprocess.exitCode = (verifyPreserved ? !reproduced : reproduced) ? 0 : 2;\n",
+  "sourceSha256": "7fcaefab346f7159c13effbf3384c64cab91902e7b5f233a90fa457f0c432006",
+  "attempts": "4/B4",
+  "quality": "1/cap1 unchanged",
+  "G8": "5/B5 unchanged",
+  "historicalPaidResultsNotRegradedOrRerun": true,
+  "externalModelOrJevCalls": 0,
+  "actualKind": "Local compiled/Python fixture observations, not provider invoice or complete comparison",
+  "originalRedProof": "G9-RECEIPT3-TERMINAL-ACCOUNTING-RED-PROOF.json"
+}

@@ -40,7 +40,7 @@ import { join } from "node:path";
 import type { MikroConfig } from "../src/config.js";
 import type { LoadedContext } from "../src/context.js";
 import type { Microagent } from "../src/mcp/agents.js";
-import type { BackendRequest } from "../src/mcp/backend.js";
+import { BackendRunError, type BackendRequest } from "../src/mcp/backend.js";
 import {
   EMIT_DONE_TOOL,
   EXPECTED_PRIME_SDK_VERSION,
@@ -147,6 +147,7 @@ interface FakeRecord {
   contextFiles: Array<{ path: string; content: string; mode: number }>;
   abortCalls: number;
   disposeCalls: number;
+  unsubscribeCalls: number;
   /** Args each tool's execute() received. */
   executed: Array<{ tool: string; args: Record<string, unknown> }>;
 }
@@ -167,7 +168,7 @@ function readTree(root: string): Array<{ path: string; content: string; mode: nu
 }
 
 function fakeSdk(script: Script): { module: PrimeSdkModule; record: FakeRecord } {
-  const record: FakeRecord = { tools: [], contextFiles: [], abortCalls: 0, disposeCalls: 0, executed: [] };
+  const record: FakeRecord = { tools: [], contextFiles: [], abortCalls: 0, disposeCalls: 0, unsubscribeCalls: 0, executed: [] };
 
   const module: PrimeSdkModule = {
     getAgentDir: () => "/prime-agent",
@@ -219,7 +220,7 @@ function fakeSdk(script: Script): { module: PrimeSdkModule; record: FakeRecord }
       const session: PrimeSdkSession = {
         subscribe(fn) {
           listener = fn;
-          return () => {};
+          return () => { record.unsubscribeCalls += 1; listener = undefined; };
         },
         async prompt() {
           for (const step of script.steps) {
@@ -971,6 +972,88 @@ describe("prime-sdk backend — scratch lifecycle", () => {
   });
 });
 
+describe("prime-sdk backend — host cancellation", () => {
+  it("rejects pre-aborted entry before loading the SDK or creating scratch state", async () => {
+    let loads = 0;
+    const { module, record } = fakeSdk({ steps: [] });
+    const backend = new PrimeSdkBackend({ loader: async () => { loads += 1; return module; } });
+    const abort = new AbortController();
+    abort.abort();
+    await assert.rejects(backend.run(undefined, request({ signal: abort.signal }), () => {}), (error: unknown) => {
+      assert.ok(error instanceof BackendRunError);
+      assert.equal(error.receipt, undefined);
+      return true;
+    });
+    assert.equal(loads, 0);
+    assert.equal(record.sessionOptions, undefined);
+    assert.equal(record.scratchDir, undefined);
+  });
+
+  for (const paid of [false, true]) {
+  it(`aborts, unsubscribes, disposes and removes scratch with ${paid ? "exact paid subtotal coverage" : "unknown pre-receipt usage"}`, { timeout: 2000 }, async () => {
+    const message = assistant("observed", { input: 19, output: 5, cost: 0.123456789 });
+    const { module, record } = fakeSdk({ steps: [
+      ...(paid ? [
+        { kind: "event" as const, event: { type: "message_end", message } },
+        { kind: "event" as const, event: { type: "turn_end", message } },
+      ] : []),
+      { kind: "event", event: { type: "turn_start" } },
+    ], hangUntilAbort: true });
+    const backend = new PrimeSdkBackend({ loader: async () => module });
+    const abort = new AbortController();
+    const previous = process.env.MIKRO_MCP_RUN_TIMEOUT_MS;
+    process.env.MIKRO_MCP_RUN_TIMEOUT_MS = "1000";
+    try {
+      await assert.rejects(backend.run(undefined, request({ signal: abort.signal }), (message) => {
+        if (message === `iteration ${paid ? 2 : 1}`) abort.abort();
+      }), (error: unknown) => {
+        assert.ok(error instanceof BackendRunError);
+        if (paid) {
+          assert.equal(error.receipt?.usageComplete, false);
+          assert.equal(error.receipt?.iterations, 1);
+          assert.deepEqual(error.receipt?.usage, { inputTokens: 19, outputTokens: 5, totalCost: 0.123456789 });
+        } else assert.equal(error.receipt, undefined);
+        return true;
+      });
+      assert.equal(record.abortCalls, 1);
+      assert.equal(record.disposeCalls, 1);
+      assert.equal(record.unsubscribeCalls, 1);
+      assert.ok(record.scratchDir);
+      assert.equal(existsSync(record.scratchDir), false);
+    } finally {
+      if (previous === undefined) delete process.env.MIKRO_MCP_RUN_TIMEOUT_MS;
+      else process.env.MIKRO_MCP_RUN_TIMEOUT_MS = previous;
+    }
+  });
+  }
+
+  it("cancels during asynchronous session creation without prompting, and releases the acquired session and scratch", async () => {
+    const abort = new AbortController();
+    const { module, record } = fakeSdk({ steps: [{ kind: "call", tool: EMIT_DONE_TOOL, args: { answer: "must not prompt" } }] });
+    const wrapped: PrimeSdkModule = {
+      ...module,
+      createAgentSession: async (options) => {
+        const created = await module.createAgentSession(options);
+        abort.abort();
+        return created;
+      },
+    };
+    await assert.rejects(new PrimeSdkBackend({ loader: async () => wrapped }).run(
+      undefined, request({ signal: abort.signal }), () => {},
+    ), (error: unknown) => {
+      assert.ok(error instanceof BackendRunError);
+      assert.equal(error.receipt, undefined);
+      return true;
+    });
+    assert.equal(record.abortCalls, 1);
+    assert.equal(record.unsubscribeCalls, 1);
+    assert.equal(record.disposeCalls, 1);
+    assert.deepEqual(record.executed, []);
+    assert.ok(record.scratchDir);
+    assert.equal(existsSync(record.scratchDir), false);
+  });
+});
+
 // ── The version pin ──────────────────────────────────────────────────────
 
 describe("prime-sdk backend — the version pin", () => {
@@ -1008,7 +1091,7 @@ describe("prime-sdk backend — the version pin", () => {
           // The subprocess pin is named too: the two are separate surfaces
           // and an operator must be able to see the divergence.
           assert.match(err.message, /subprocess backend pins/);
-          assert.match(err.message, /backend: mikro/);
+          assert.match(err.message, /engine: rlm/);
           return true;
         }
       );

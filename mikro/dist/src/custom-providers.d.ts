@@ -56,10 +56,10 @@ export interface CustomModelConfig {
     maxTokens: number;
     reasoning: boolean;
     input: ("text" | "image")[];
-    /** USD per million tokens. */
-    cost: {
-        input: number;
-        output: number;
+    /** Declared USD per million tokens; absent input/output rates mean unknown, not free. */
+    cost?: {
+        input?: number;
+        output?: number;
         cacheRead: number;
         cacheWrite: number;
     };
@@ -74,6 +74,8 @@ export interface CustomProviderConfig {
     baseUrl: string;
     /** Env vars carrying the key, in precedence order. */
     apiKeyEnv: string[];
+    /** Absolute private key-file reference; resolved by public SDK auth on every invocation. */
+    apiKeyFile?: string;
     headers: Record<string, string>;
     models: CustomModelConfig[];
 }

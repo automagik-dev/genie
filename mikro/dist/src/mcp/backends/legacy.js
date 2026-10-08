@@ -10,10 +10,11 @@
  */
 import { createEmitter } from "../../sdk/emitter.js";
 import { defaultReplTimeoutMs } from "../../repl.js";
-import { rlmLoop } from "../../rlm.js";
+import { RLMRunError, rlmLoop, TIMEOUT_ANSWER } from "../../rlm.js";
 import { loadPythonPlugins } from "../../sdk/python-plugin.js";
 import { loadPluginTools } from "../../sdk/tool-loader.js";
 import { createToolRegistry, toolRegistryAsResolver, } from "../../sdk/tool-registry.js";
+import { BackendRunError } from "../backend.js";
 /** Keep Python plugin failure inside the enclosing REPL execute deadline. */
 export const PLUGIN_TIMEOUT_MARGIN_MS = 1_000;
 export class LegacyMikroBackend {
@@ -70,17 +71,41 @@ export class LegacyMikroBackend {
         })();
         // output: "json" keeps rlmLoop off its stream-mode stdout path, which the
         // MCP transport owns — the same contract `src/acp/agent.ts` follows.
-        const result = await this.loop(request.query, request.context, config, {
-            output: "json",
-            emitter,
-            ...(tools ? { tools } : {}),
-            ...(request.maxIterations !== undefined ? { maxIterations: request.maxIterations } : {}),
-            ...(request.maxOutputTokens !== undefined
-                ? { maxOutputTokens: request.maxOutputTokens }
-                : {}),
-            ...(request.maxRetries !== undefined ? { maxRetries: request.maxRetries } : {}),
-            ...runTimeout(),
-        });
+        let result;
+        try {
+            result = await this.loop(request.query, request.context, config, {
+                output: "json",
+                emitter,
+                signal: request.signal,
+                ...(tools ? { tools } : {}),
+                ...(request.maxIterations !== undefined ? { maxIterations: request.maxIterations } : {}),
+                ...(request.maxOutputTokens !== undefined
+                    ? { maxOutputTokens: request.maxOutputTokens }
+                    : {}),
+                ...(request.maxRetries !== undefined ? { maxRetries: request.maxRetries } : {}),
+                ...runTimeout(),
+            });
+        }
+        catch (error) {
+            if (!(error instanceof RLMRunError))
+                throw error;
+            throw new BackendRunError(error.message, error.usage ? {
+                iterations: error.iterations,
+                budgetHit: error.budgetHit,
+                usage: error.usage,
+                usageComplete: error.usageComplete,
+            } : undefined, { cause: error });
+        }
+        if (result.answer === TIMEOUT_ANSWER) {
+            // A dispatched, cancelled call may have no report. Retain only the
+            // observed subtotal, never a complete bill or a manufactured zero.
+            throw new BackendRunError(TIMEOUT_ANSWER, result.usage.llmCalls > 0 ? {
+                iterations: result.iterations,
+                budgetHit: result.budgetHit ?? null,
+                usage: Object.freeze({ ...result.usage }),
+                usageComplete: false,
+            } : undefined);
+        }
         return {
             answer: result.answer,
             iterations: result.iterations,

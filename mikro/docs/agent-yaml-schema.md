@@ -14,9 +14,10 @@ consumes are validated. Unknown keys are preserved on `AgentSpec.extras`
 so consumers (brain, genie, your project) can layer their own schema
 without forking the parser.
 
-The executing backend is selected by mikro rather than set in this file;
-omitting a backend selection means `mikro`. Every MCP microagent description
-reports that executing backend and the declared tool names.
+`engine: rlm | pi | prime | prime-sdk` selects execution explicitly. Omission
+keeps RLM. MCP accepts the same optional `engine` on both named agents and
+`mikro_query`: explicit call > agent declaration > `rlm`. The obsolete
+`backend` key is rejected, not aliased; change old `backend: mikro` to `engine: rlm`.
 
 ## Minimal example
 
@@ -56,6 +57,10 @@ tools_api: 1                 # or toolsApi: 1
 # ─── Iteration shape (how the loop behaves) ──────────────────
 shape: single-step           # "single-step" | "loop" | "recurse"
                              # Default: single-step
+
+# ─── Execution engine (independent of shape) ─────────────────
+engine: rlm                  # "rlm" | "pi" | "prime" | "prime-sdk"
+                             # Default: rlm
 
 # ─── Model selection (consumer-interpreted) ──────────────────
 model: gemini-2.5-flash      # free-form string; the SDK does not
@@ -116,17 +121,58 @@ prompt:
 | `schema_version` / `schemaVersion` | number | `1` | **SDK reads — stable** | Production-validated 2026-04-22. Bumped when the schema itself changes; prior versions stay loadable. |
 | `tools_api` / `toolsApi` | number | `1` | **SDK reads — stable** | Production-validated 2026-04-22. Bumped when the tool contract changes; prior versions stay loadable. |
 | `shape` | `"single-step" \| "loop" \| "recurse"` | `"single-step"` | SDK reads, enforces allowed values | Rejects unknown shapes with a named error. |
+| `engine` | `"rlm" \| "pi" \| "prime" \| "prime-sdk"` | `rlm` at execution | SDK/MCP validate | Explicit call override wins over the agent declaration. Empty, unknown, null, and non-string declarations fail before inference. `shape` never selects an engine. |
 | `model` | string | — | passthrough | Not validated. Consumers wire it into their driver. |
-| `tools` | string[] | `[]` | SDK reads; default backend loads | Empty strings are filtered and duplicates collapse. Plugins resolve from `tools/<name>.{mjs,js,py}`; optional `tools/<name>.schema.json` supplies the model-facing contract. The default `mikro mcp` backend exposes each plugin in the REPL with keyword arguments. |
+| `tools` | string[] | `[]` | SDK reads; engine resolves | RLM loads plugins from `tools/<name>.{mjs,js,py}` with optional `.schema.json` sidecars. Pi accepts only the scoped native tool names and never imports plugins or executes TOOLS.md functions. |
 | `thinking` | `"minimal" \| "low" \| "medium" \| "high"` | — | SDK reads, enforces allowed values | Reasoning effort for the agent's own model calls. Rejects unknown levels with a named error. See [Reasoning effort](#reasoning-effort-thinking). |
 | `temperature` | number (`0`–`2`) | — | SDK reads, enforces range | Sampling temperature for the agent's own model calls. Applied by `applyAgent` onto `config.temperature`, so it outranks mikro.yaml's top-level `temperature:` and is outranked by `--temperature`. `0` is greedy decoding, **not** unset. A non-number or an out-of-range value is rejected with a named error. Best-effort: pi/ai sends `temperature` on every one of its ten api families and drops it only on the `anthropic-messages` api — either when a reasoning level is set, or when the resolved model declares `compat.supportsTemperature: false`. Claude reached over OpenRouter (`openai-completions`) or Bedrock (`bedrock-converse-stream`) does *not* get that guard, so the model family alone does not tell you whether the pin took. |
 | `system` | string | — | passthrough | Consumer is responsible for reading the file + handing its contents to the driver. |
-| `scope.reads` | string[] | — | passthrough | Advisory. Enforced by individual tool handlers (e.g. brain's `read`). |
-| `scope.writes` | string[] | — | passthrough | Advisory, same as above. |
+| `scope.reads` | string[] | — | engine-specific | Pi enforces non-empty cwd-relative glob/path scopes in addition to realpath root containment. Other engines retain their existing handler policy. An empty list denies all file reads. |
+| `scope.writes` | string[] | — | engine-specific | Pi is read-only and rejects a non-empty write declaration. Other engines retain their existing handler policy. |
 | `budget.max_cost` / `maxCost` | number | — | passthrough | Consumer threads it into their budget tracker. |
 | `budget.max_iterations` / `maxIterations` | number | — | SDK/consumer | Can be passed to `runAgent({ maxIterations })`. |
 | `budget.max_depth` / `maxDepth` | number | — | passthrough | For recursive shapes. |
 | `prompt.append-stop-protocol` / `append_stop_protocol` / `appendStopProtocol` | boolean | `true` | SDK reads, enforces boolean | Whether mikro appends its FINAL/repl termination protocol section to the system prompt. Set `false` for a deliberately bare prompt. A non-boolean is rejected with a named error. |
+
+## Read-only Pi engine
+
+Use `engine: pi` for an explicit native-tool offload. It creates an isolated,
+in-memory Pi 1.0.2 session with no ambient auth/model/settings files, extension
+or skill discovery, project instruction loading, shell, REPL, plugins,
+compaction, cache warming, or agent-level retries. Provider transport retries
+remain bounded (default three, explicit zero honored).
+Provider-hosted search, URL, code-execution, computer-use, maps and file-search
+tools are incompatible with the Pi allowlist and are rejected before inference.
+
+The only tools are `read`, `grep`, `glob`, `git`, and `emit_done`. File targets
+must remain inside the real server cwd or explicitly supplied context root,
+including resolved symlink targets; narrower `scope.reads` declarations apply
+to both. Hidden files/directories, node_modules, configured context exclusions,
+and common credential/key files are excluded. Read output is text-only and
+bounded. `grep` is literal and case-sensitive; `glob` takes a cwd-relative pattern.
+These custom tools are a read-only boundary, not an operating-system sandbox.
+
+`git` permits only `status`, `log`, `show`, `diff`, and `ls-files`, using fixed
+argument arrays and an isolated environment. It disables external diff,
+textconv, clean/process filters, fsmonitor, pager, hooks, network protocols,
+and injected Git configuration. Paths must name individual allowed files;
+directory pathspecs, arbitrary options, and mutation commands are refused.
+Content operations cannot access excluded or out-of-scope historical files.
+
+Finalization is a required `emit_done` tool call, not the last prose paragraph.
+Its schema comes from `config.output.schema`, otherwise `VALIDATE.md`,
+otherwise `{answer:string}`. When both schemas exist, both are enforced and
+contradictory declared types/enums fail at setup. Schema-bearing answers are
+one fenced JSON block; schema-free answers unwrap `answer`. The first accepted
+final wins, and the supported SDK `finishTurn` hook stops after the current
+tool batch, including mixed read/final batches. Invalid tools can receive
+normal-turn feedback only within the remaining declared budget.
+
+Iteration, cost, and token caps are checked after actual model responses, so
+cost/token caps can overshoot by one response; no hidden finalization turn is
+added outside the cap. Deadline/cancellation abort and dispose the session.
+Missing or truncated finals and provider failures are errors. A successful run
+requires reported provider usage, not an invented zero-priced receipt.
 
 ## Reasoning effort: `thinking`
 
@@ -194,17 +240,17 @@ field is simply inert on them rather than harmful.
 
 ## MCP discovery and unavailable agents
 
-`mikro mcp` validates model pins and, for the default `mikro` backend, declared
-tools on every discovery scan. A declaration is advertised as **UNAVAILABLE**
-when it has no matching `.mjs`, `.js`, or `.py` file, uses a reserved REPL
-name, or collides with a function from `.mikro/TOOLS.md`. The first detected
-cause wins, the description includes its repair, and `tools/call` refuses the
-run with that same cause.
+`mikro mcp` validates model pins for RLM/Pi and declared tool compatibility
+on every discovery scan. For RLM, a declaration is **UNAVAILABLE** when it
+has no matching `.mjs`, `.js`, or `.py` file, uses a reserved REPL name, or
+collides with a TOOLS.md function. Pi instead rejects incompatible plugin,
+TOOLS.md, or write-scope declarations. Calls revalidate the effective selected
+engine: an unrelated discovery-time problem cannot block a compatible override.
 
 The file, reserved-name, and collision probes do not pre-reject `prime` or
 `prime-sdk` agents, whose dispatch surfaces resolve tools differently. Every
 microagent description—available or unavailable—ends with
-`Backend: <name>. Tools: a, b.` or `Backend: <name>. Tools: none declared.`
+`Engine: <name>. Tools: a, b.` or `Engine: <name>. Tools: none declared.`
 
 SDK loaders remain independently usable: a non-strict load can report a name
 in `result.missing`, while default-backend MCP discovery refuses guaranteed
@@ -262,6 +308,9 @@ there is no warning to notice.
 | YAML syntax error | `Error: agent.yaml: parse error: ...` |
 | Top-level is not a mapping (e.g. a list or scalar) | `Error: agent.yaml: expected a YAML mapping at the top level` |
 | `shape` is set to an unsupported value | `Error: agent.yaml: shape must be one of single-step \| loop \| recurse, got "..."` |
+| `engine` is unknown, empty, null or non-string | `Error: engine must be one of rlm \| pi \| prime \| prime-sdk; got ...` |
+| Obsolete `backend` field is present | `Error: agent.yaml: obsolete backend field; use engine: rlm \| pi \| prime \| prime-sdk` |
+| `scope.reads` / `scope.writes` is not an array of non-empty strings | `Error: agent.yaml: scope.<key> must be an array of non-empty strings` |
 | `thinking` is set to an unsupported level | `Error: agent.yaml: thinking must be one of minimal \| low \| medium \| high, got "..."` |
 | `temperature` is not a number, is non-finite, or is outside `0`–`2` | `Error: agent.yaml: temperature must be a number between 0 and 2, got ...` |
 | `agent.yaml` file is missing (via `loadAgentSpec`) | `ENOENT` from `node:fs` |

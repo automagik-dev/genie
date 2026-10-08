@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "scope": "Only Main-owned throwaway unscored helpers; no original paid input/result/partial/profile removed",
+  "removed": [
+    {
+      "privatePath": "/home/genie/.local/share/mikro-engine-split/experiments-g8/verify-cap-final-receipt3.mjs",
+      "fullSourceAndActualOutputProof": "G8-RECEIPT3-CAP-FINAL-SMOKE.json"
+    },
+    {
+      "privatePath": "/home/genie/.local/share/mikro-engine-split/experiments-g8/verify-native-receipt3-checks.mjs",
+      "fullSourceAndActualOutputProof": "G8-RECEIPT3-NATIVE-PROFILE-CHECKS.json"
+    },
+    {
+      "privatePath": "/home/genie/.local/share/mikro-engine-split/experiments-g8/diagnose-rlm-cap-receipt.mjs",
+      "fullBeforeAfterSourceAndActualOutputProofs": [
+        "G3-CAP-RECEIPT-BEFORE-PROOF.json",
+        "G3-CAP-RECEIPT-AFTER-PROOF.json"
+      ]
+    }
+  ],
+  "durableProofRetained": true,
+  "permanentTestsRetained": "mikro/tests/validate-loop.test.ts owning behavior regression",
+  "historicalCommandsNotPresentlyInstalledClaims": true,
+  "preRepairPaidDatasetPreserved": "G8-PRE-REPAIR-COHORT-PRESERVATION.json",
+  "sourceEffort": 0
+}

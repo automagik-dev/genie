@@ -1,0 +1,34 @@
+{
+  "schemaVersion": 1,
+  "createdAt": "2026-10-07T07:34:09.028330+00:00",
+  "job": "bg_97",
+  "actualSeconds": 5.93,
+  "actualSuccessfulCommandOutputSha256": "81d04e6af47382347bd04c1aea4100a88037e4843e75efcef10185ce46762c1d",
+  "archive": {
+    "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/paid-runtime-archives/fixed-runtime-after-all-paid-receipt3.tar",
+    "kind": "file",
+    "sha256": "81d04e6af47382347bd04c1aea4100a88037e4843e75efcef10185ce46762c1d",
+    "bytes": 641187840,
+    "mode": "0o400"
+  },
+  "parentMode": "0o700",
+  "members": [
+    "mikro/src",
+    "mikro/dist",
+    "mikro/python",
+    "mikro/node_modules",
+    "mikro/package.json",
+    "mikro/package-lock.json",
+    "mikro/tsconfig.json",
+    "mikro/bin",
+    "scripts/mikro",
+    ".genie/wishes/mikro-engine-split/experiments",
+    "dist/genie.js"
+  ],
+  "basis": "Exact consumed fixed SDK/src/dist/Python/dependencies/package/bin/tsconfig plus canonical caller/experiment executables preserved after actualwhole108+same18+report-only completed, before any final deps:ci/build. External actual interpreter/Node/Bun/git/gh byte hashes remain bound in immutable profiles; no external interpreter copy or productionstate mutation claimed.",
+  "activePaidModelsAfterBarrier": 0,
+  "originalPaidInputResultsPartialReceiptsRemoved": false,
+  "keysOrOperatorSettingsInArchive": false,
+  "compiledAndSourceBytesPreservedForCurrentPaidOutcomeIdentity": true,
+  "next": "Run final full standalone deps/build/check/test/install smoke and root frozeninstall/fullgate; preserve exactunknownaccounting and newsource-free native reviews."
+}

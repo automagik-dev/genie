@@ -17,13 +17,12 @@
 import assert from "node:assert/strict";
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 import { describe, it } from "node:test";
+import { BackendRunError } from "../src/mcp/backend.js";
 import { DEFAULT_PRIME_DEADLINE_MS, EXPECTED_PRIME_VERSION, PrimeBackend, buildPrimeChildEnv, } from "../src/mcp/backends/prime.js";
 import { TIMEOUT_ANSWER } from "../src/rlm.js";
 import { isFailedRun } from "../src/mcp/server.js";
-const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 // ── Stub binary ───────────────────────────────────────────────────────────
 //
 // One env-driven node shim per test workspace. `--version` answers the pin
@@ -218,7 +217,7 @@ function fakeAgent() {
             shape: "loop",
             tools: [],
             extras: {},
-            backend: "prime",
+            engine: "prime",
         },
     };
 }
@@ -551,7 +550,7 @@ describe("prime backend — loud failures", () => {
             await assert.rejects(() => runOnce(backend, c.over), (err) => {
                 assert.ok(err instanceof Error);
                 assert.match(err.message, c.pattern);
-                assert.match(err.message, /backend: mikro/, "the message must name the escape hatch");
+                assert.match(err.message, /engine: rlm/, "the message must name the escape hatch");
                 return true;
             });
         });
@@ -571,7 +570,7 @@ describe("prime backend — loud failures", () => {
                 assert.match(err.message, /context file/);
                 assert.ok(err.message.includes(join(dir, "gone.md")), `the error must name the missing file: ${err.message}`);
                 assert.match(err.message, /does not exist/);
-                assert.match(err.message, /backend: mikro/, "the message must name the escape hatch");
+                assert.match(err.message, /engine: rlm/, "the message must name the escape hatch");
                 return true;
             });
             assert.equal(calls.length, 0, "the existence check fires before the engine is ever invoked");
@@ -978,20 +977,75 @@ describe("prime backend — budget enforcement", () => {
         assert.equal(calls2[0].limits.maxTurns, null);
     });
 });
-// ── No SDK integration ────────────────────────────────────────────────────
-describe("prime backend — no SDK integration", () => {
-    it("imports only node builtins and relative modules, and package.json has no prime-agent dependency", async () => {
-        const source = await readFile(join(REPO_ROOT, "src", "mcp", "backends", "prime.ts"), "utf8");
-        for (const line of source.split("\n")) {
-            const m = /^\s*import\b.*?from\s+["']([^"']+)["']/.exec(line);
-            if (!m)
-                continue;
-            assert.ok(m[1].startsWith("node:") || m[1].startsWith("."), `prime.ts must not import a third-party module: ${m[1]}`);
+describe("prime backend — host cancellation", () => {
+    it("rejects a pre-aborted call without starting the real subprocess", async () => {
+        const dir = await scratch();
+        try {
+            const backend = await makeSpawnBackend(dir);
+            const marker = join(dir, "argv.json");
+            const abort = new AbortController();
+            abort.abort();
+            await withEnv({ MIKRO_STUB_ARGV_FILE: marker }, async () => {
+                await assert.rejects(runOnce(backend, { signal: abort.signal }), (error) => {
+                    assert.ok(error instanceof BackendRunError);
+                    assert.equal(error.receipt, undefined, "pre-abort has no provider receipt, not numeric zeros");
+                    return true;
+                });
+                await assert.rejects(readFile(marker), /ENOENT/);
+            });
         }
-        const pkg = JSON.parse(await readFile(join(REPO_ROOT, "package.json"), "utf8"));
-        const deps = { ...pkg.dependencies, ...pkg.devDependencies };
-        assert.equal(deps["prime-agent"], undefined, "no prime-agent npm dependency");
-        assert.equal(deps["@earendil-works/pi-coding-agent"], undefined, "no pi-coding-agent npm dependency");
+        finally {
+            await rm(dir, { recursive: true, force: true });
+        }
     });
+    for (const paid of [false, true]) {
+        it(`kills the active subprocess tree on host abort and ${paid ? "retains exact paid subtotals" : "keeps pre-receipt usage unknown"}`, { timeout: 15000 }, async () => {
+            const dir = await scratch();
+            const selfPidFile = join(dir, "self.pid");
+            const childPidFile = join(dir, "child.pid");
+            try {
+                const backend = await makeSpawnBackend(dir);
+                const abort = new AbortController();
+                await withEnv({
+                    MIKRO_MCP_RUN_TIMEOUT_MS: "1000", MIKRO_STUB_HANG: "1",
+                    MIKRO_STUB_SELF_PID_FILE: selfPidFile, MIKRO_STUB_CHILD_PID_FILE: childPidFile,
+                    MIKRO_STUB_EVENTS: JSON.stringify([
+                        SESSION, ...(paid ? turnEvents("observed paid turn", { input: 19, output: 5, total: 0.123456789 }) : []),
+                        { type: "turn_start" },
+                    ]),
+                }, async () => {
+                    await assert.rejects(backend.run(fakeAgent(), requestOf({ signal: abort.signal }), (message) => {
+                        if (message === `iteration ${paid ? 2 : 1}`)
+                            abort.abort();
+                    }), (error) => {
+                        assert.ok(error instanceof BackendRunError);
+                        if (paid) {
+                            assert.equal(error.receipt?.usageComplete, false);
+                            assert.equal(error.receipt?.iterations, 1);
+                            assert.deepEqual(error.receipt?.usage, { inputTokens: 19, outputTokens: 5, totalCost: 0.123456789 });
+                        }
+                        else
+                            assert.equal(error.receipt, undefined, "unreported cancellation does not invent zero usage");
+                        return true;
+                    });
+                    assert.equal(abort.signal.aborted, true);
+                    await assertDead(Number(await readFile(selfPidFile, "utf8")), "cancelled shim");
+                    await assertDead(Number(await readFile(childPidFile, "utf8")), "cancelled descendant");
+                });
+            }
+            finally {
+                try {
+                    const pid = Number(await readFile(selfPidFile, "utf8"));
+                    if (Number.isSafeInteger(pid) && pid > 0)
+                        process.kill(-pid, "SIGKILL");
+                }
+                catch (error) {
+                    if (!(error instanceof Error && "code" in error && ["ENOENT", "ESRCH"].includes(String(error.code))))
+                        throw error;
+                }
+                await rm(dir, { recursive: true, force: true });
+            }
+        });
+    }
 });
 //# sourceMappingURL=prime-backend.test.js.map

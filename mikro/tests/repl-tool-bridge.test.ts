@@ -1,12 +1,13 @@
 import { execFile } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { before, describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { REPL } from "../src/repl.js";
+import { REPL, REPLTimeoutError } from "../src/repl.js";
+import type { ExecuteResult } from "../src/ipc.js";
 import {
 	createToolRegistry,
 	toolRegistryAsResolver,
@@ -16,6 +17,9 @@ const execFileAsync = promisify(execFile);
 const echoStub = `def echo(**kwargs):
     return call_tool("echo", kwargs)`;
 
+
+// Crash fixtures intentionally access the known in-process child handle.
+interface ReplChildHandle { process: ChildProcess }
 async function hasPython(): Promise<boolean> {
 	try {
 		await execFileAsync("python3", ["--version"], { timeout: 2_000 });
@@ -26,7 +30,7 @@ async function hasPython(): Promise<boolean> {
 }
 
 function assertRuntimeError(
-	result: Awaited<ReturnType<REPL["execute"]>>,
+	result: ExecuteResult,
 	text: RegExp,
 ): void {
 	assert.match(result.error ?? result.stderr, /RuntimeError/);
@@ -99,7 +103,8 @@ describe("REPL tool bridge", () => {
 				echo: `import os\nif os.path.exists(${JSON.stringify(marker)}):\n    raise RuntimeError("reinstall failed")\n${echoStub}`,
 			} });
 			await writeFile(marker, "fail\n");
-			const child = (repl as unknown as { process: ChildProcess }).process;
+			const handle = repl as unknown as ReplChildHandle;
+			const child = handle.process;
 			const exited = new Promise<void>((resolve) => child.once("exit", () => resolve()));
 			child.kill("SIGKILL");
 			await exited;
@@ -132,7 +137,8 @@ describe("REPL tool bridge", () => {
 			assert.equal(first.error, undefined, first.stderr);
 			assert.deepEqual(JSON.parse(first.stdout.trim()), { x: 1 });
 
-			const process = (repl as unknown as { process: ChildProcess }).process;
+			const handle = repl as unknown as ReplChildHandle;
+			const process = handle.process;
 			const exited = new Promise<void>((resolve) =>
 				process.once("exit", () => resolve()),
 			);
@@ -190,6 +196,254 @@ describe("REPL tool bridge", () => {
 			writable._send = send;
 			await assertAlive(repl);
 		} finally {
+			await repl.stop();
+		}
+	});
+
+	it("recovers a timed-out block without replay, restores original inputs, and loses user variables", async (ctx) => {
+		if (!pythonAvailable) return ctx.skip("python3 not on PATH");
+		const dir = await mkdtemp(join(tmpdir(), "mikro-repl-timeout-"));
+		const marker = join(dir, "marker");
+		const context = { answer: "original" };
+		const tools = { echo: echoStub };
+		const repl = new REPL();
+		repl.onToolRequest(async (_tool, args) => args);
+		try {
+			await repl.start({ context, tools });
+			await repl.execute("saved = 'user-state'");
+			context.answer = "caller-mutated";
+			tools.echo = 'raise RuntimeError("mutated tool")';
+			await assert.rejects(repl.execute(
+				`import time\nwith open(${JSON.stringify(marker)}, "a") as f:\n    f.write("once\\n")\n    f.flush()\ntime.sleep(5)`,
+				100,
+			), (error: unknown) => {
+				assert.ok(error instanceof REPLTimeoutError);
+				assert.equal(error.timeoutMs, 100);
+				assert.match(error.message, /user-created variables were lost/);
+				assert.match(error.message, /not replayed/);
+				return true;
+			});
+			const next = await repl.execute(
+				'import json\nprint(context["answer"])\nprint(json.dumps(echo(value="restored")))\nprint("saved" in dir())',
+			);
+			assert.equal(next.error, undefined, next.stderr);
+			assert.deepEqual(next.stdout.trim().split("\n"), ["original", '{"value": "restored"}', "False"]);
+			assert.equal(await readFile(marker, "utf8"), "once\n");
+			assert.equal(repl.isRunning(), true);
+		} finally {
+			await repl.stop();
+			await repl.stop();
+			await rm(dir, { recursive: true, force: true });
+		}
+	});
+
+	for (const action of ["stop", "replace"] as const) {
+		it(`does not resurrect a retired timeout generation after explicit ${action}`, async (ctx) => {
+			if (!pythonAvailable) return ctx.skip("python3 not on PATH");
+			const dir = await mkdtemp(join(tmpdir(), "mikro-repl-retired-"));
+			const startups = join(dir, "startups");
+			const block = join(dir, "block");
+			const startup = `with open(${JSON.stringify(startups)}, "a") as f:\n    f.write("started\\n")`;
+			const repl = new REPL();
+			let control: Promise<void> | undefined;
+			let entered!: () => void;
+			const controlled = new Promise<void>((resolve) => { entered = resolve; });
+			try {
+				await repl.start({ context: "original", tools: { startup } });
+				const child = (repl as unknown as ReplChildHandle).process;
+				// This listener precedes the retirement waiter's exit listener. The
+				// real child is detached, but recovery cannot continue until we return.
+				child.once("exit", () => {
+					control = action === "stop" ? repl.stop() : repl.start({
+						context: "new-owner",
+						tools: { startup },
+					});
+					entered();
+				});
+				// Exercise the platform timeout and actual Python exit; event ordering,
+				// not a guessed sleep, controls the shutdown/replacement race.
+				const execution = assert.rejects(repl.execute(
+					`import time\nwith open(${JSON.stringify(block)}, "a") as f:\n    f.write("once\\n")\n    f.flush()\ntime.sleep(30)`,
+					100,
+				), (error: unknown) => {
+					assert.ok(error instanceof Error);
+					assert.match(error.message, /lifecycle cancelled/);
+					assert.equal(error instanceof REPLTimeoutError, false, "cancelled recovery must not claim a restart");
+					return true;
+				});
+				await controlled;
+				assert.ok(control);
+				await control;
+				await execution;
+				assert.equal(await readFile(block, "utf8"), "once\n", "timed-out code was never replayed");
+				assert.equal(await readFile(startups, "utf8"), action === "stop" ? "started\n" : "started\nstarted\n");
+				if (action === "stop") {
+					assert.equal(repl.isRunning(), false);
+					await assert.rejects(repl.execute("print('stopped')"), /REPL not started/);
+				} else {
+					const next = await repl.execute("print(context)");
+					assert.equal(next.error, undefined, next.stderr);
+					assert.equal(next.stdout.trim(), "new-owner");
+					assert.equal(repl.isRunning(), true, "stale recovery must not tear down the explicit replacement");
+				}
+			} finally {
+				await repl.stop();
+				await rm(dir, { recursive: true, force: true });
+			}
+		});
+	}
+
+	it("cancels an explicit start waiting for the previous Python child to exit", async (ctx) => {
+		if (!pythonAvailable) return ctx.skip("python3 not on PATH");
+		const dir = await mkdtemp(join(tmpdir(), "mikro-repl-start-stop-"));
+		const marker = join(dir, "startups");
+		const startup = `with open(${JSON.stringify(marker)}, "a") as f:\n    f.write("started\\n")`;
+		const repl = new REPL();
+		try {
+			await repl.start({ tools: { startup } });
+			// start() synchronously detaches the old child before its first wait.
+			const starting = assert.rejects(
+				repl.start({ context: "must-not-start", tools: { startup } }),
+				/lifecycle cancelled/,
+			);
+			await repl.stop();
+			await starting;
+			assert.equal(await readFile(marker, "utf8"), "started\n");
+			assert.equal(repl.isRunning(), false);
+			await assert.rejects(repl.execute("print(context)"), /REPL not started/);
+		} finally {
+			await repl.stop();
+			await rm(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("does not let a superseded asynchronous startup tear down a newer owner", async (ctx) => {
+		if (!pythonAvailable) return ctx.skip("python3 not on PATH");
+		const repl = new REPL();
+		let entered!: () => void;
+		const installing = new Promise<void>((resolve) => { entered = resolve; });
+		let release!: () => void;
+		const blocked = new Promise<void>((resolve) => { release = resolve; });
+		let oldSignal: AbortSignal | undefined;
+		repl.onToolRequest(async (_tool, args, signal) => {
+			oldSignal = signal;
+			entered();
+			await blocked;
+			return args;
+		});
+		try {
+			const oldStart = assert.rejects(repl.start({
+				context: "old-owner",
+				tools: { gate: 'call_tool("startup_gate", {})' },
+			}), /lifecycle cancelled/);
+			await installing;
+			const newStart = repl.start({ context: "new-owner" });
+			await oldStart;
+			await newStart;
+			assert.equal(oldSignal?.aborted, true);
+			release();
+			const next = await repl.execute("print(context)");
+			assert.equal(next.error, undefined, next.stderr);
+			assert.equal(next.stdout.trim(), "new-owner");
+			assert.equal(repl.isRunning(), true);
+		} finally {
+			release();
+			await repl.stop();
+		}
+	});
+
+	for (const bridge of ["llm", "tool"] as const) {
+		it(`discards a late ${bridge} response after timeout instead of sending it to the replacement`, async (ctx) => {
+			if (!pythonAvailable) return ctx.skip("python3 not on PATH");
+			const repl = new REPL();
+			let release!: () => void;
+			let started!: () => void;
+			let finished!: () => void;
+			const entered = new Promise<void>((resolve) => { started = resolve; });
+			const blocked = new Promise<void>((resolve) => { release = resolve; });
+			const completed = new Promise<void>((resolve) => { finished = resolve; });
+			let oldSignal: AbortSignal | undefined;
+			let calls = 0;
+			const delayed = async (signal: AbortSignal): Promise<string> => {
+				calls++;
+				if (calls === 1) {
+					oldSignal = signal;
+					started();
+					await blocked; // Simulate a handler that ignores cancellation.
+					finished();
+					return "stale";
+				}
+				assert.equal(signal.aborted, false);
+				return "fresh";
+			};
+			repl.onLLMRequest(async (_request, signal) => [await delayed(signal)]);
+			repl.onToolRequest(async (_tool, _args, signal) => delayed(signal));
+			const code = bridge === "llm" ? 'print(llm_query("fixture"))' : 'print(echo(value="fixture"))';
+			try {
+				await repl.start({ context: "restored", tools: { echo: echoStub } });
+				const timed = assert.rejects(repl.execute(code, 300), REPLTimeoutError);
+				await entered;
+				await timed;
+				assert.equal(oldSignal?.aborted, true);
+				// Keep a replacement command active while the old response arrives.
+				const next = repl.execute('import time\ntime.sleep(0.2)\nprint(context)');
+				release();
+				await completed;
+				const result = await next;
+				assert.equal(result.error, undefined, result.stderr);
+				assert.equal(result.stdout.trim(), "restored");
+				const fresh = await repl.execute(code);
+				assert.equal(fresh.error, undefined, fresh.stderr);
+				assert.equal(fresh.stdout.trim(), "fresh");
+				assert.equal(calls, 2);
+			} finally {
+				release();
+				await repl.stop();
+			}
+		});
+	}
+
+	it("treats a failed timeout restart as terminal and leaves no replacement child", async (ctx) => {
+		if (!pythonAvailable) return ctx.skip("python3 not on PATH");
+		const dir = await mkdtemp(join(tmpdir(), "mikro-repl-timeout-restart-"));
+		const marker = join(dir, "fail-reinstall");
+		const repl = new REPL();
+		try {
+			await repl.start({ tools: {
+				echo: `import os\nif os.path.exists(${JSON.stringify(marker)}):\n    raise RuntimeError("restart denied")\n${echoStub}`,
+			} });
+			await writeFile(marker, "fail");
+			await assert.rejects(repl.execute("import time\ntime.sleep(5)", 100), /timeout recovery failed[\s\S]*restart denied/);
+			assert.equal(repl.isRunning(), false);
+			await assert.rejects(repl.execute("print('not restarted')"), /REPL not started/);
+		} finally {
+			await repl.stop();
+			await rm(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("cancels an outstanding bridge at the run deadline without restarting or waiting for the handler", async (ctx) => {
+		if (!pythonAvailable) return ctx.skip("python3 not on PATH");
+		const controller = new AbortController();
+		const repl = new REPL();
+		let entered!: () => void;
+		let release!: () => void;
+		const started = new Promise<void>((resolve) => { entered = resolve; });
+		const blocked = new Promise<void>((resolve) => { release = resolve; });
+		let calls = 0;
+		repl.onToolRequest(async () => { calls++; entered(); await blocked; return "late"; });
+		try {
+			await repl.start({ tools: { echo: echoStub }, signal: controller.signal });
+			const result = assert.rejects(repl.execute("echo()", 5_000), /fixture deadline/);
+			await started;
+			controller.abort(new Error("fixture deadline"));
+			await result;
+			await repl.stop();
+			assert.equal(repl.isRunning(), false);
+			assert.equal(calls, 1);
+			await assert.rejects(repl.execute("echo()"), /fixture deadline/);
+		} finally {
+			release();
 			await repl.stop();
 		}
 	});

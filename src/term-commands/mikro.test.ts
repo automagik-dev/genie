@@ -32,7 +32,7 @@ function shippedHome(agents: string[]): string {
   for (const agent of agents) {
     const dir = join(home, 'templates', 'mikro', 'agents', agent);
     mkdirSync(dir, { recursive: true });
-    writeFileSync(join(dir, 'agent.yaml'), 'model: deepseek-api/deepseek-flash\nsystem: SYSTEM.md\n');
+    writeFileSync(join(dir, 'agent.yaml'), 'model: deepseek/deepseek-flash\nsystem: SYSTEM.md\n');
     writeFileSync(join(dir, 'SYSTEM.md'), '# shipped default\n');
   }
   return home;
@@ -225,7 +225,10 @@ describe('genie mikro coach, fixtures and init', () => {
     run(['init', '-q', '-b', 'main']);
     writeFileSync(join(repo, 'a.txt'), 'a\n');
     run(['add', '-A']);
-    run(['commit', '-qm', 'feat: add a']);
+    run(['commit', '-qm', 'initial parent']);
+    writeFileSync(join(repo, 'a.txt'), 'a\nchanged\n');
+    run(['add', '-A']);
+    run(['commit', '-qm', 'feat: change a']);
 
     const built = runCli(['mikro', 'fixtures', '--from-commits', 'HEAD', '--agent', 'wish-context', '--dir', repo]);
     expect(built.code).toBe(0);

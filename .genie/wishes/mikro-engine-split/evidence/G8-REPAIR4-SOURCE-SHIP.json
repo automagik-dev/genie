@@ -1,0 +1,83 @@
+{
+  "schemaVersion": 1,
+  "scope": "C4 physical-fixture-hash source only; overall experiments BLOCKED by separate genuine native accounting/sandbox failures",
+  "snapshot": "G8-REPAIR4-SOURCE-SNAPSHOT.json",
+  "recordedAt": "2026-10-06T14:44:09.331261Z",
+  "correctnessVerdict": "SHIP",
+  "qualityVerdict": "SHIP",
+  "correctnessReview": {
+    "text": "{\n  \"overall_correctness\": \"correct\",\n  \"explanation\": \"SHIP \u2014 bounded C3\u2192C4 physical-fixture-hash SOURCE repair only: workingTreeSha256 (scripts/mikro/engine-experiment.ts:292\u2013315) deterministically records sorted relative paths, entry types, regular-file byte hashes, empty directories, hidden/nested Git entries and exact symlink text without resolving or following link targets, excludes only root .git, rejects irregular entries, and remains consumed by validateFixture before dispatch and after execution; the added tests call that same exported helper rather than duplicating its implementation, while executable/dependency directory sealing, fixture parent/tree/truth checks, native manifest binding, adapters and accounting consumers remain unchanged, with no concrete patch-introduced blocking de\u2026\n  \"confidence\": 0.98,\n  \"findings\": []\n}\n\n[Some lines truncated to 768 chars]",
+    "details": {
+      "totalLines": 6,
+      "displayContent": {
+        "text": "{\n  \"overall_correctness\": \"correct\",\n  \"explanation\": \"SHIP \u2014 bounded C3\u2192C4 physical-fixture-hash SOURCE repair only: workingTreeSha256 (scripts/mikro/engine-experiment.ts:292\u2013315) deterministically records sorted relative paths, entry types, regular-file byte hashes, empty directories, hidden/nested Git entries and exact symlink text without resolving or following link targets, excludes only root .git, rejects irregular entries, and remains consumed by validateFixture before dispatch and after execution; the added tests call that same exported helper rather than duplicating its implementation, while executable/dependency directory sealing, fixture parent/tree/truth checks, native manifest binding, adapters and accounting consumers remain unchanged, with no concrete patch-introduced blocking de\u2026\n  \"confidence\": 0.98,\n  \"findings\": []\n}",
+        "startLine": 1,
+        "lineNumbers": [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6
+        ]
+      },
+      "fileSize": 3022,
+      "meta": {
+        "source": {
+          "type": "internal",
+          "value": "agent://G8CorrectnessReview"
+        },
+        "limits": {
+          "columnTruncated": {
+            "maxColumn": 768,
+            "unit": "chars"
+          }
+        }
+      },
+      "resolvedPath": "/home/genie/.omp/agent/sessions/-workspace-repos-genie/2026-10-05T14-02-09-036Z_01a10c5f-370c-7000-b1a1-e7fa3d0156ea/G8CorrectnessReview.md",
+      "contentType": "text/markdown"
+    }
+  },
+  "qualityReview": {
+    "text": "{\n  \"overall_correctness\": \"correct\",\n  \"explanation\": \"SHIP for the bounded C4 physical-fixture-hash source delta identified in G8-REPAIR4-SOURCE-SNAPSHOT.json: workingTreeSha256 now hashes sorted structural records for file bytes, names, empty directories, hidden/nested entries and symlink text without following targets, excludes only root .git, and remains the actual validateFixture consumer; the separate executable/dependency seal rules are unchanged. No blocking maintainability, provenance, security or performance regression was found in this delta, and the added real-filesystem tests exercise meaningful link/structure invariants without inventing experiment outcomes; reused evidence is the recorded 12-pass/85-expect focused result, corrected explicit strict TypeScript check, three Node syn\u2026\n  \"confidence\": 0.97,\n  \"findings\": []\n}\n\n[Some lines truncated to 768 chars]",
+    "details": {
+      "totalLines": 6,
+      "displayContent": {
+        "text": "{\n  \"overall_correctness\": \"correct\",\n  \"explanation\": \"SHIP for the bounded C4 physical-fixture-hash source delta identified in G8-REPAIR4-SOURCE-SNAPSHOT.json: workingTreeSha256 now hashes sorted structural records for file bytes, names, empty directories, hidden/nested entries and symlink text without following targets, excludes only root .git, and remains the actual validateFixture consumer; the separate executable/dependency seal rules are unchanged. No blocking maintainability, provenance, security or performance regression was found in this delta, and the added real-filesystem tests exercise meaningful link/structure invariants without inventing experiment outcomes; reused evidence is the recorded 12-pass/85-expect focused result, corrected explicit strict TypeScript check, three Node syn\u2026\n  \"confidence\": 0.97,\n  \"findings\": []\n}",
+        "startLine": 1,
+        "lineNumbers": [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6
+        ]
+      },
+      "fileSize": 1360,
+      "meta": {
+        "source": {
+          "type": "internal",
+          "value": "agent://G8QualityReview"
+        },
+        "limits": {
+          "columnTruncated": {
+            "maxColumn": 768,
+            "unit": "chars"
+          }
+        }
+      },
+      "resolvedPath": "/home/genie/.omp/agent/sessions/-workspace-repos-genie/2026-10-05T14-02-09-036Z_01a10c5f-370c-7000-b1a1-e7fa3d0156ea/G8QualityReview.md",
+      "contentType": "text/markdown"
+    }
+  },
+  "correctnessRepairCycles": 4,
+  "correctnessRepairBudget": 4,
+  "qualityRepairCycles": 1,
+  "qualityRepairCap": 1,
+  "nativeAccountingComplete": false,
+  "scoredEngineCells": 0,
+  "scoredNativeCells": 0,
+  "experimentalPRs": 0,
+  "ownerDecision": "G8-FIXTURE-HASH-OWNER-DECISION.json"
+}

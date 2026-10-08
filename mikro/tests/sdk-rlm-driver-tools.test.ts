@@ -19,6 +19,7 @@ import type {
 	ToolCall as PiToolCall,
 } from "@earendil-works/pi-ai";
 import type { ModelConfig } from "../src/config.js";
+import { LLMCompletionError } from "../src/llm.js";
 import {
 	type AgentEvent,
 	createToolRegistry,
@@ -67,7 +68,7 @@ function makeAssistant(
 function makeToolCall(
 	id: string,
 	name: string,
-	args: Record<string, unknown>,
+	args: PiToolCall["arguments"],
 ): PiToolCall {
 	return { type: "toolCall", id, name, arguments: args };
 }
@@ -641,4 +642,31 @@ describe("rlmDriver tier-2 integration — brain tools stub end-to-end", () => {
 			.map((e) => (e as { tool: string }).tool);
 		assert.deepEqual(beforeNames, ["search_corpus", "read", "propose_yaml"]);
 	});
+});
+
+describe("rlmDriver provider terminal failures", () => {
+	for (const stopReason of ["error", "aborted", "length"] as const) {
+		it(`rejects ${stopReason} before partial text or emit_done tool dispatch`, async () => {
+			const registry = createToolRegistry();
+			registry.register("search_corpus", async () => [], SEARCH_SCHEMA);
+			const response = makeAssistant([
+				{ type: "text", text: '{"answer":"not complete"}' },
+				makeToolCall("final", "emit_done", { answer: "not complete" }),
+			], stopReason);
+			response.errorMessage = "fixture failure";
+			const driver = rlmDriver({ model: MODEL, tools: { registry }, toolsLlm: async () => response });
+			const steps: IterationStep[] = [];
+			for await (const step of driver(
+				{ sessionId: "s", iteration: 1, history: [{ role: "user", content: "find gravity" }] },
+				new AbortController().signal,
+			)) steps.push(step);
+			assert.equal(steps.length, 1);
+			assert.equal(steps[0]?.kind, "error");
+			if (steps[0]?.kind !== "error") throw new Error("missing terminal failure");
+			assert.ok(steps[0].error instanceof LLMCompletionError);
+			assert.equal(steps[0].error.stopReason, stopReason);
+			assert.equal(steps[0].error.usage, undefined, "a canned normalized message is not a provider usage receipt");
+		});
+	}
+
 });

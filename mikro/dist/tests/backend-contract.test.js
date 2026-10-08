@@ -42,13 +42,18 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { loadConfig } from "../src/config.js";
+import { parseCustomProviders } from "../src/custom-providers.js";
 import { LegacyMikroBackend } from "../src/mcp/backends/legacy.js";
+import { PiBackend } from "../src/mcp/backends/pi.js";
 import { PrimeBackend, } from "../src/mcp/backends/prime.js";
 import { EMIT_DONE_TOOL, PrimeSdkBackend, } from "../src/mcp/backends/prime-sdk.js";
 import { EMPTY_RESPONSES_BUDGET_HIT, TIMEOUT_ANSWER } from "../src/rlm.js";
 import { parseAgentSpec } from "../src/sdk/agent-spec.js";
+import { parseValidateMd } from "../src/sdk/validate.js";
 import { isFailedRun, runTurn, selectBackend, sessionResult, } from "../src/mcp/server.js";
 const SESSION_ID = "sess_contract0000000";
 /** Config whose fields the turn pipeline actually reads (model for the footer). */
@@ -400,21 +405,6 @@ const SCENARIOS = [
         isError: true,
     },
     {
-        name: "wall-clock timeout is a failed run with the verbatim timeout answer",
-        agent: undefined,
-        label: "query",
-        query: GENERIC_QUERY,
-        stub: {
-            answer: TIMEOUT_ANSWER,
-            iterations: 1,
-            budgetHit: null,
-            usage: USAGE,
-            events: [ev("IterationStart")],
-        },
-        expectedProgress: ["query · iteration 1"],
-        isError: true,
-    },
-    {
         name: "budget-truncated run stays a success with the budget field in the footer",
         agent: undefined,
         label: "query",
@@ -430,7 +420,7 @@ const SCENARIOS = [
         isError: false,
     },
 ];
-function fakeAgent(backend) {
+function fakeAgent(engine) {
     return {
         name: "triage",
         toolName: "mikro_triage",
@@ -443,7 +433,7 @@ function fakeAgent(backend) {
             shape: "loop",
             tools: [],
             extras: {},
-            ...(backend === undefined ? {} : { backend }),
+            ...(engine === undefined ? {} : { engine }),
         },
     };
 }
@@ -510,92 +500,20 @@ describe("backend contract — one harness, both backends", () => {
         }
     });
 });
-/**
- * `validation_failed` — deliberately NOT a shared `SCENARIOS` entry.
- *
- * The flag is produced by `rlmLoop`'s VALIDATE.md gate and therefore exists
- * only behind the legacy backend: the prime backends enforce their schema
- * through `emit_done`'s parameter schema and can never reach this state. A
- * scenario in the shared list would fail the cross-backend byte comparison by
- * construction — which would be pinning an asymmetry the wish declared OUT of
- * scope, not catching a regression. So it is asserted legacy-only, on the same
- * real turn pipeline every other scenario uses.
- */
-describe("validation_failed reaches the footer (legacy backend only)", () => {
-    const ANSWER = '{"verdict": "maybe"}';
-    /** The stub loop, plus the one field the shared `stubLoop` cannot express. */
-    function flaggingLoop(validationFailed) {
-        return async (_query, _context, _config, options = {}) => {
-            options.emitter?.emit(ev("IterationStart"));
-            options.emitter?.close();
-            return {
-                answer: ANSWER,
-                references: [],
-                usage: USAGE,
-                iterations: 2,
-                model: "stub/stub-model",
-                budgetHit: null,
-                ...(validationFailed ? { validation_failed: true } : {}),
-            };
-        };
-    }
-    async function driveFlagged(validationFailed) {
-        return drive(new LegacyMikroBackend({ loop: flaggingLoop(validationFailed) }), {
-            name: "validation flag",
-            agent: undefined,
-            label: "query",
-            query: GENERIC_QUERY,
-            stub: {
-                answer: ANSWER,
-                iterations: 2,
-                budgetHit: null,
-                usage: USAGE,
-                events: [ev("IterationStart")],
-            },
-            expectedProgress: ["query · iteration 1"],
-            isError: false,
-        });
-    }
-    it("adds a footer segment when the loop flagged the answer", async () => {
-        const { outcome } = await driveFlagged(true);
-        const footer = splitText(outcome.text).footer;
-        assert.ok(footer.includes(" · validation_failed: true · session "), `footer must carry the flag ahead of the session id: ${JSON.stringify(footer)}`);
-    });
-    it("leaves the footer untouched when the answer conformed", async () => {
-        const { outcome } = await driveFlagged(false);
-        const footer = splitText(outcome.text).footer;
-        assert.ok(!footer.includes("validation_failed"));
-        // Still the canonical footer shape — the segment is purely additive.
-        assert.equal(parseFooter(footer).sessionId, SESSION_ID);
-    });
-    /**
-     * The flag is footer-only by contract. `structuredContent` is a declared
-     * output schema an MCP host validates against, and widening it would be a
-     * host-visible contract change the wish explicitly froze.
-     */
-    it("never widens structuredContent beyond {answer, session_id}", async () => {
-        const { outcome } = await driveFlagged(true);
-        assert.deepEqual(sessionResult(outcome.text, SESSION_ID, outcome.failed).structuredContent, { answer: outcome.text, session_id: SESSION_ID });
-    });
-    /** A flagged answer is a real, paid, returned payload — not a failed run. */
-    it("is not classified as a failed run", async () => {
-        const { outcome } = await driveFlagged(true);
-        assert.equal(outcome.failed, false);
-    });
-});
 describe("backend selection", () => {
-    it("defaults an agent with no backend field to the legacy backend", () => {
+    it("defaults an agent with no engine field to RLM", () => {
         assert.ok(selectBackend(fakeAgent(undefined)) instanceof LegacyMikroBackend);
     });
-    it("honors an explicit backend: mikro", () => {
-        assert.ok(selectBackend(fakeAgent("mikro")) instanceof LegacyMikroBackend);
+    it("honors an explicit engine: rlm", () => {
+        assert.ok(selectBackend(fakeAgent("rlm")) instanceof LegacyMikroBackend);
     });
-    it("runs mikro_query — no spec, no backend field — on legacy, unconditionally", () => {
-        // There is no selection path for the generic tool: it has no agent spec,
-        // so there is no `backend` field to read.
+    it("defaults generic query to RLM and honors explicit per-call overrides", () => {
         assert.ok(selectBackend(undefined) instanceof LegacyMikroBackend);
+        assert.ok(selectBackend(undefined, "pi") instanceof PiBackend);
+        assert.ok(selectBackend(fakeAgent("prime-sdk"), "rlm") instanceof LegacyMikroBackend);
+        assert.ok(selectBackend(fakeAgent("rlm"), "pi") instanceof PiBackend);
     });
-    it("selects the prime backend for a spec naming backend: prime", async () => {
+    it("selects Prime for engine: prime", async () => {
         // The prime backend's constructor pins the binary version, so the
         // selection test drives it with a version-only stub — the test suite
         // must not require the real prime-agent install.
@@ -622,7 +540,7 @@ describe("backend selection", () => {
             await rm(dir, { recursive: true, force: true });
         }
     });
-    it("selects the in-process prime-sdk backend for a spec naming backend: prime-sdk", () => {
+    it("selects Prime SDK for engine: prime-sdk", () => {
         // Unlike PrimeBackend, this constructor touches nothing: package
         // resolution, the version pin, and the dynamic import all live behind
         // the memoized loader, so selection works on a machine with no
@@ -637,39 +555,30 @@ describe("backend selection", () => {
                 process.env.MIKRO_PRIME_AGENT_ROOT = previous;
         }
     });
-    it("rejects a forged backend name that would hit the prototype chain", () => {
-        // A plain-object BACKENDS record resolves "constructor" to a truthy
-        // non-backend; the Map record must resolve it to "not wired".
-        assert.throws(() => selectBackend(fakeAgent("constructor")), /backend "constructor" is not wired into this build/);
-    });
-    it("fails loudly when a spec names a backend this build has not wired", () => {
-        assert.throws(() => selectBackend(fakeAgent("pulp")), (err) => {
-            assert.ok(err instanceof Error);
-            assert.match(err.message, /backend "pulp" is not wired/);
-            assert.match(err.message, /triage/);
-            return true;
-        });
+    it("rejects forged, unknown, empty and non-string explicit selectors", () => {
+        for (const value of ["constructor", "pulp", "", null, false, 0, {}]) {
+            assert.throws(() => selectBackend(undefined, value), /engine must be one of/);
+        }
+        assert.throws(() => selectBackend(fakeAgent("constructor")), /engine must be one of/);
     });
 });
-describe("agent.yaml backend field (internal, undocumented)", () => {
+describe("public agent.yaml engine selector", () => {
     const DIR = "/tmp/fake-agent";
-    it("parses mikro | prime | prime-sdk and stays undefined when absent", () => {
-        assert.equal(parseAgentSpec("backend: mikro\n", DIR).backend, "mikro");
-        assert.equal(parseAgentSpec("backend: prime\n", DIR).backend, "prime");
-        assert.equal(parseAgentSpec("backend: prime-sdk\n", DIR).backend, "prime-sdk");
-        assert.equal(parseAgentSpec("shape: loop\n", DIR).backend, undefined);
+    it("accepts all public engines and omits a default from the parsed spec", () => {
+        for (const engine of ["rlm", "pi", "prime", "prime-sdk"]) {
+            const spec = parseAgentSpec(`engine: ${engine}\n`, DIR);
+            assert.equal(spec.engine, engine);
+            assert.deepEqual(spec.extras, {});
+        }
+        assert.equal(parseAgentSpec("shape: loop\n", DIR).engine, undefined);
     });
-    it("rejects a typo loudly instead of silently running the legacy engine", () => {
-        assert.throws(() => parseAgentSpec("backend: prim\n", DIR), /agent\.yaml: backend must be one of mikro \| prime \| prime-sdk, got "prim"/);
-        assert.throws(() => parseAgentSpec("backend: xhigh\n", DIR), /backend must be one of/);
-        // The near-miss that matters most: `prime-sdk` is one hyphen away from a
-        // name that would otherwise fall through to a different engine.
-        assert.throws(() => parseAgentSpec("backend: primesdk\n", DIR), /backend must be one of mikro \| prime \| prime-sdk, got "primesdk"/);
-    });
-    it("does not leak into the extras bag", () => {
-        const spec = parseAgentSpec("backend: prime\n", DIR);
-        assert.equal(spec.extras.backend, undefined);
-        assert.deepEqual(Object.keys(spec.extras), []);
+    it("rejects obsolete backend and malformed engines before execution", () => {
+        for (const yaml of ["backend: mikro", "backend: prime", "backend: null", "backend: 42"]) {
+            assert.throws(() => parseAgentSpec(yaml, DIR), /obsolete backend field/);
+        }
+        for (const value of ["prim", "primesdk", "mikro", '\"\"', "null", "false", "42", "[]", "{}"]) {
+            assert.throws(() => parseAgentSpec(`engine: ${value}`, DIR), /engine must be one of/);
+        }
     });
 });
 describe("the cross-backend comparator can fail", () => {
@@ -779,6 +688,238 @@ describe("legacy timeout override", () => {
                 delete process.env.MIKRO_MCP_RUN_TIMEOUT_MS;
             else
                 process.env.MIKRO_MCP_RUN_TIMEOUT_MS = previous;
+        }
+    });
+});
+/** Real local provider packets exercise Legacy, RLM, Python and the MCP receiver. */
+async function terminalReceiptFixture(packets) {
+    const root = await mkdtemp(join(tmpdir(), "mikro-terminal-receipt-"));
+    const base = await loadConfig(root);
+    const controller = new AbortController();
+    let requests = 0;
+    const server = createServer(async (request, response) => {
+        for await (const _chunk of request) { }
+        const packet = packets[requests++];
+        if (packet === "cancel") {
+            controller.abort(new Error("local cancellation during an unreported operation"));
+            response.destroy();
+            return;
+        }
+        if (!packet) {
+            response.writeHead(400);
+            response.end("unexpected model request");
+            return;
+        }
+        response.writeHead(200, { "Content-Type": "text/event-stream" });
+        response.end(`data: ${JSON.stringify({
+            id: `receipt-${requests}`,
+            object: "chat.completion.chunk",
+            model: "control",
+            choices: [{
+                    index: 0,
+                    delta: { role: "assistant", content: packet.text },
+                    finish_reason: packet.finish ?? "stop",
+                }],
+            usage: {
+                prompt_tokens: packet.inputTokens,
+                completion_tokens: packet.outputTokens,
+                total_tokens: packet.inputTokens + packet.outputTokens,
+            },
+        })}\n\ndata: [DONE]\n\n`);
+    });
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    assert.ok(address && typeof address !== "string");
+    const keyEnv = "MIKRO_BACKEND_RECEIPT_FIXTURE_KEY";
+    const previousKey = process.env[keyEnv];
+    process.env[keyEnv] = "fixture-only-not-a-credential";
+    const config = {
+        ...base,
+        system: null,
+        criteria: null,
+        tools: [],
+        toolsLevel: "core",
+        validate: null,
+        output: { schema: null },
+        budget: { maxCost: null, maxTokens: null, maxDepth: 0 },
+        cache: { ...base.cache, enabled: false },
+        storage: { ...base.storage, enabled: "never" },
+        gemini: { ...base.gemini, thinkingLevel: null },
+        model: {
+            provider: "receipt-fixture",
+            model: "control",
+            providers: parseCustomProviders({
+                "receipt-fixture": {
+                    "base-url": `http://127.0.0.1:${address.port}/v1`,
+                    "api-key-env": keyEnv,
+                    models: { control: { cost: { input: 1, output: 2 } } },
+                },
+            }, "terminal receipt fixture"),
+        },
+    };
+    return {
+        root,
+        config,
+        controller,
+        get requests() { return requests; },
+        async close() {
+            if (previousKey === undefined)
+                delete process.env[keyEnv];
+            else
+                process.env[keyEnv] = previousKey;
+            server.closeAllConnections();
+            await new Promise((resolve, reject) => {
+                server.close((error) => error ? reject(error) : resolve());
+            });
+            await rm(root, { recursive: true, force: true });
+        },
+    };
+}
+/** Narrow parsed external JSON without asserting a fabricated receipt shape. */
+function receiptRecord(value) {
+    assert.ok(value !== null && typeof value === "object" && !Array.isArray(value));
+    return value;
+}
+function assertPartialReceipt(outcome, inputTokens, outputTokens, iterations) {
+    assert.equal(outcome.failed, true);
+    assert.match(outcome.text, /usage coverage: partial; unreported totals unknown/);
+    assert.doesNotMatch(outcome.text, / · [\d,]+ in \/ [\d,]+ out · \$/);
+    const line = outcome.text.split("\n").find((part) => part.startsWith("observed_usage: "));
+    assert.ok(line, "failed run must expose its actual observed subtotal");
+    const parsed = JSON.parse(line.slice("observed_usage: ".length));
+    const observed = receiptRecord(parsed);
+    assert.deepEqual(Object.keys(observed).sort(), ["coverage", "iterations", "subtotal", "totals"]);
+    assert.equal(observed.coverage, "partial");
+    assert.equal(observed.iterations, iterations);
+    assert.equal(observed.totals, null);
+    const subtotal = receiptRecord(observed.subtotal);
+    assert.deepEqual(Object.keys(subtotal).sort(), ["inputTokens", "outputTokens", "totalCost"]);
+    assert.equal(subtotal.inputTokens, inputTokens);
+    assert.equal(subtotal.outputTokens, outputTokens);
+    assert.ok(typeof subtotal.totalCost === "number");
+    assert.ok(Math.abs(subtotal.totalCost - (inputTokens + 2 * outputTokens) / 1_000_000) < 1e-12);
+    const result = sessionResult(outcome.text, SESSION_ID, outcome.failed);
+    assert.equal(result.isError, true);
+    assert.deepEqual(result.structuredContent, { answer: outcome.text, session_id: SESSION_ID });
+    assert.deepEqual(result.content, [{ type: "text", text: outcome.text }]);
+}
+describe("real Legacy terminal accounting at the MCP receiving boundary", () => {
+    it("preserves prior and failed provider receipts cumulatively exactly once", async () => {
+        const local = await terminalReceiptFixture([
+            { text: "```repl\nprint('continue')\n```", inputTokens: 11, outputTokens: 7 },
+            { text: "", inputTokens: 13, outputTokens: 5, finish: "length" },
+        ]);
+        try {
+            const outcome = await runTurn(new LegacyMikroBackend(), undefined, local.config, "receipt-fixture", "Continue then stop", SESSION_ID, undefined, local.root, undefined, 3, local.controller.signal);
+            assert.equal(local.requests, 2, "no recovery model call after the failed packet");
+            assert.match(outcome.answer, /LLM stopped with reason "length"/);
+            assertPartialReceipt(outcome, 24, 12, 2);
+        }
+        finally {
+            await local.close();
+        }
+    });
+    it("keeps cancellation's exact answer and exposes only the observed prior subtotal", async () => {
+        const local = await terminalReceiptFixture([
+            { text: "```repl\nprint('continue')\n```", inputTokens: 11, outputTokens: 7 },
+            "cancel",
+        ]);
+        try {
+            const outcome = await runTurn(new LegacyMikroBackend(), undefined, local.config, "receipt-fixture", "Cancel during the second provider request", SESSION_ID, undefined, local.root, undefined, 3, local.controller.signal);
+            assert.equal(local.requests, 2);
+            assert.equal(outcome.answer, TIMEOUT_ANSWER);
+            assert.equal(splitText(outcome.text).answer, TIMEOUT_ANSWER);
+            assertPartialReceipt(outcome, 11, 7, 2);
+        }
+        finally {
+            await local.close();
+        }
+    });
+    for (const dispatched of [false, true]) {
+        it(`does not invent a receipt when cancellation has no observations (${dispatched ? "dispatched" : "pre-aborted"})`, async () => {
+            const local = await terminalReceiptFixture(dispatched ? ["cancel"] : []);
+            try {
+                if (!dispatched)
+                    local.controller.abort(new Error("cancel before any observed provider operation"));
+                const outcome = await runTurn(new LegacyMikroBackend(), undefined, local.config, "receipt-fixture", "Cancel without a reported receipt", SESSION_ID, undefined, local.root, undefined, 3, local.controller.signal);
+                assert.equal(local.requests, dispatched ? 1 : 0);
+                assert.equal(outcome.answer, TIMEOUT_ANSWER);
+                assert.equal(outcome.text, TIMEOUT_ANSWER, "no fabricated zero-price or partial footer");
+                assert.equal(outcome.failed, true);
+                const result = sessionResult(outcome.text, SESSION_ID, outcome.failed);
+                assert.equal(result.isError, true);
+                assert.deepEqual(result.structuredContent, { answer: TIMEOUT_ANSWER, session_id: SESSION_ID });
+                assert.deepEqual(result.content, [{ type: "text", text: TIMEOUT_ANSWER }]);
+            }
+            finally {
+                await local.close();
+            }
+        });
+    }
+    for (const declaration of ["output", "VALIDATE"]) {
+        it(`classifies an actual ${declaration} schema-invalid final as an error without replacing its answer`, async () => {
+            const local = await terminalReceiptFixture([
+                { text: 'FINAL({"wrong":true})', inputTokens: 11, outputTokens: 7 },
+            ]);
+            try {
+                const schema = {
+                    type: "object",
+                    required: ["wanted"],
+                    properties: { wanted: { type: "boolean" } },
+                    additionalProperties: false,
+                };
+                const parsed = parseValidateMd(`\`\`\`json\n${JSON.stringify(schema)}\n\`\`\``);
+                assert.ok(parsed.schema && parsed.rawBlock !== null);
+                const config = declaration === "output"
+                    ? { ...local.config, output: { schema } }
+                    : { ...local.config, validate: { schema: parsed.schema, rawBlock: parsed.rawBlock } };
+                const outcome = await runTurn(new LegacyMikroBackend(), undefined, config, "receipt-fixture", "Return a structured final", SESSION_ID, undefined, local.root, undefined, 1);
+                assert.equal(local.requests, 1, "classification must not request another final");
+                assert.equal(outcome.answer, '{"wrong":true}');
+                const { answer, footer } = splitText(outcome.text);
+                assert.equal(answer, outcome.answer);
+                assert.match(footer, / · 1 iteration · 11 in \/ 7 out · /);
+                assert.match(footer, / · validation_failed: true · session /);
+                assert.equal(outcome.failed, true);
+                const result = sessionResult(outcome.text, SESSION_ID, outcome.failed);
+                assert.equal(result.isError, true);
+                assert.deepEqual(result.structuredContent, { answer: outcome.text, session_id: SESSION_ID });
+                assert.deepEqual(result.content, [{ type: "text", text: outcome.text }]);
+            }
+            finally {
+                await local.close();
+            }
+        });
+    }
+    it("keeps a schema-conforming real final successful with its complete receipt", async () => {
+        const local = await terminalReceiptFixture([
+            { text: 'FINAL({"wanted":true})', inputTokens: 11, outputTokens: 7 },
+        ]);
+        try {
+            const config = {
+                ...local.config,
+                output: {
+                    schema: {
+                        type: "object", required: ["wanted"],
+                        properties: { wanted: { type: "boolean" } }, additionalProperties: false,
+                    },
+                },
+            };
+            const outcome = await runTurn(new LegacyMikroBackend(), undefined, config, "receipt-fixture", "Return a valid final", SESSION_ID, undefined, local.root, undefined, 1);
+            assert.equal(local.requests, 1);
+            assert.equal(outcome.answer, '{"wanted":true}');
+            assert.equal(outcome.failed, false);
+            assert.doesNotMatch(outcome.text, /validation_failed|usage coverage: partial|observed_usage/);
+            const footer = parseFooter(splitText(outcome.text).footer);
+            assert.equal(footer.inputTokens, 11);
+            assert.equal(footer.outputTokens, 7);
+            assert.equal(footer.iterations, 1);
+            const result = sessionResult(outcome.text, SESSION_ID, outcome.failed);
+            assert.equal(result.isError, false);
+            assert.deepEqual(result.structuredContent, { answer: outcome.text, session_id: SESSION_ID });
+        }
+        finally {
+            await local.close();
         }
     });
 });

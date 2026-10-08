@@ -1,0 +1,93 @@
+{
+  "schema": 1,
+  "recordedAt": "2026-10-05T19:50:16.100984+00:00",
+  "seal": "WAVE3-REVIEW-SNAPSHOT.json",
+  "integrationHead": "0fe62de3e2292fe1cc3eeb7f80068c0ee17918c7",
+  "childGate": {
+    "artifact": "artifact://174",
+    "buildExitCode": 0,
+    "typeCheckExitCode": 0,
+    "testsPassed": 1201,
+    "testsFailed": 0,
+    "suites": 214,
+    "successMarker": "CHILD_GATE_EXIT=0",
+    "wallSeconds": 229.31,
+    "testDurationMs": 195762.696813
+  },
+  "rootGate": {
+    "status": "cancelled-after-independent-findings-before-repair-writes",
+    "aggregateExitCodeObserved": null,
+    "completionCredit": false
+  },
+  "reviews": {
+    "G3": {
+      "correctness": {
+        "agent": "G3CorrectnessResume",
+        "verdict": "FIX-FIRST",
+        "findings": [
+          "Retired recursive batches still spawn children after generation abort",
+          "Explicit stop can be undone by pending timeout restart"
+        ]
+      },
+      "quality": {
+        "agent": "G3QualityResumeReview",
+        "verdict": "FIX-FIRST",
+        "findings": [
+          "Explicit stop can be undone by pending timeout restart"
+        ]
+      }
+    },
+    "G4": {
+      "correctness": {
+        "agent": "G4CorrectnessResume",
+        "verdict": "FIX-FIRST",
+        "findings": [
+          "Configured credential files not excluded",
+          "Available paid failure receipt lost through MCP",
+          "Missing configured pricing treated as free",
+          "Prime engines discard host cancellation",
+          "Pi bypasses existing date-pin model resolver",
+          "Explicit facts context rejected by hidden-file policy"
+        ]
+      },
+      "quality": {
+        "agent": "G4QualityResumeReview",
+        "verdict": "FIX-FIRST",
+        "findings": [
+          "Git core.worktree bypasses authorized worktree",
+          "Available paid failure receipt lost through MCP",
+          "Prime engines discard host cancellation"
+        ]
+      }
+    },
+    "G6": {
+      "correctness": {
+        "agent": "G6CorrectnessResume",
+        "verdict": "FIX-FIRST",
+        "findings": [
+          "JSON escapes bypass raw JEV credential guard"
+        ]
+      },
+      "quality": {
+        "agent": "G6QualityResumeReview",
+        "verdict": "FIX-FIRST",
+        "findings": [
+          "Viewer cookie/token escapes provenance redaction",
+          "JSON escapes bypass raw JEV credential guard",
+          "Manual parsers reject advertised -h alias"
+        ]
+      }
+    }
+  },
+  "repairBudget": {
+    "perGroup": {
+      "correctnessRepairsUsed": 1,
+      "correctnessCap": 2,
+      "qualityLoopsUsed": 1,
+      "qualityCap": 1,
+      "effortEscalations": 0
+    },
+    "scope": "Only reproduced initial independent blockers; no changed signed criteria"
+  },
+  "completionClaim": false
+}

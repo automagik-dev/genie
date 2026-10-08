@@ -17,8 +17,8 @@ export { scaffold, needsScaffold } from "./scaffold.js";
 export { loadContext, loadContextFromDir, loadContextFromFile, loadContextFromStdin } from "./context.js";
 export type { LoadedContext, ContextItem, CollectOptions } from "./context.js";
 
-export { REPL } from "./repl.js";
-export type { REPLStartOptions, LLMRequestHandler } from "./repl.js";
+export { REPL, REPLTimeoutError } from "./repl.js";
+export type { REPLStartOptions, REPLContext, LLMRequestHandler } from "./repl.js";
 
 export { detectPackages, formatPackagePrompt, checkPythonVersion, PROBE_PACKAGES } from "./detect.js";
 export type { PackageAvailability, PythonVersionInfo } from "./detect.js";
@@ -34,7 +34,7 @@ export { ObservabilityRecorder } from "./observe.js";
 export { LangfuseTraceRecorder } from "./langfuse.js";
 export type { LLMCallUsage, TotalUsage } from "./observe.js";
 
-export { rlmLoop } from "./rlm.js";
+export { RLMRunError, rlmLoop } from "./rlm.js";
 export type { RLMOptions } from "./rlm.js";
 
 export { runBatch } from "./batch.js";

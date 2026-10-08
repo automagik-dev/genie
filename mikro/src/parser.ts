@@ -8,8 +8,11 @@
 const MAX_FORMATTED_OUTPUT = 20_000;
 
 // Pre-compiled regexes for FINAL signal detection (used every RLM iteration)
-const FINAL_VAR_REGEX = /^\s*FINAL_VAR\((.*?)\)/m;
+const FINAL_VAR_REGEX = /^\s*FINAL_VAR\((.*)\)\s*$/m;
 const FINAL_REGEX = /^\s*FINAL\((.*)\)\s*$/m;
+const IDENTIFIER_REGEX = /^[_\p{XID_Start}][_\p{XID_Continue}]*$/u;
+const QUOTED_ARGUMENT_REGEX = /^(['"])(.*)\1$/;
+const FENCED_BLOCK_REGEX = /```[\s\S]*?```/g;
 
 /** A code block extracted from an LLM response. */
 export interface CodeBlock {
@@ -22,8 +25,8 @@ export interface CodeBlock {
 
 /** Detected final answer signal. */
 export interface FinalSignal {
-  type: "final" | "final_var";
-  /** The answer text or variable name. */
+  type: "final" | "final_var" | "invalid";
+  /** The literal answer, safe variable name, or model-visible repair feedback. */
   value: string;
 }
 
@@ -56,19 +59,30 @@ export function extractCodeBlocks(text: string): CodeBlock[] {
  */
 export function detectFinal(text: string, codeBlocks: CodeBlock[]): FinalSignal | null {
   // Get text outside code blocks
-  const outsideText = getTextOutsideBlocks(text, codeBlocks);
+  const outsideText = getTextOutsideBlocks(text, codeBlocks).replace(FENCED_BLOCK_REGEX, "\n");
 
   // Check FINAL_VAR first (higher priority)
   const finalVarMatch = FINAL_VAR_REGEX.exec(outsideText);
   if (finalVarMatch) {
-    const varName = finalVarMatch[1].trim().replace(/^["']|["']$/g, "");
-    return { type: "final_var", value: varName };
+    const argument = finalVarMatch[1].trim();
+    const varName = QUOTED_ARGUMENT_REGEX.exec(argument)?.[2] ?? argument;
+    return IDENTIFIER_REGEX.test(varName)
+      ? { type: "final_var", value: varName.normalize("NFKC") }
+      : { type: "invalid", value: "FINAL_VAR requires a bare variable name, not an expression." };
   }
 
   // Check FINAL
   const finalMatch = FINAL_REGEX.exec(outsideText);
   if (finalMatch) {
-    return { type: "final", value: finalMatch[1] };
+    const argument = finalMatch[1].trim();
+    const quoted = QUOTED_ARGUMENT_REGEX.exec(argument);
+    const value = quoted ? quoted[2] : argument;
+    if (!value || value === "..." || value === "…" || value === "Ellipsis") {
+      return { type: "invalid", value: "FINAL requires a complete answer; an empty value or ellipsis is not an answer." };
+    }
+    return !quoted && IDENTIFIER_REGEX.test(value)
+      ? { type: "final_var", value: value.normalize("NFKC") }
+      : { type: "final", value };
   }
 
   return null;
@@ -94,7 +108,7 @@ function getTextOutsideBlocks(text: string, blocks: CodeBlock[]): string {
     parts.push(text.slice(pos));
   }
 
-  return parts.join("");
+  return parts.join("\n");
 }
 
 /** Result from executing a single code block in the REPL. */

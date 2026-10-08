@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "preparation": {
+    "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/prepared-engine-receipt3-resources.json",
+    "sha256": "f6b94c662871d68d3c3c9f0bc807dcbb09710bb8a0dcd21ec3c63d1bed9ab741"
+  },
+  "agent": "G8EngineProfilePrep",
+  "engineProfiles": 36,
+  "exactOriginalAssignmentsPreserved": true,
+  "originalOrdered108CellsPreserved": true,
+  "methodUnchanged": true,
+  "actualDescribesReported": {
+    "finalImmutableProfiles": 36,
+    "preFinalConfigComputes": 36,
+    "total": 72,
+    "allExitedZero": true,
+    "helperExitCode": 0
+  },
+  "privateEvidence": "Each newprofile/describe.json finalSHA/config/model/budget/source/rates; owning Mainfullpreflight forthcoming",
+  "sourceScope": "privateNEWprofiles/launchers/callerpacks/HOME+refmetadata only; no source/operator/native18/oldcohort mutation",
+  "modelCalls": 0,
+  "networkCalls": 0,
+  "sourceGatesRunByWorker": 0,
+  "sourceEffort": 0,
+  "fullCohortNotDispatchedOrClaimed": true,
+  "assignment": {
+    "oldBindings": 4,
+    "oldCells": 12,
+    "newBindings": 32,
+    "newCells": 96,
+    "totalCells": 108
+  }
+}

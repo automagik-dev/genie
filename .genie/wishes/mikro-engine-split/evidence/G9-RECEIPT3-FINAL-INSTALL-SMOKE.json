@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "createdAt": "2026-10-07T07:44:48.265676+00:00",
+  "job": "bg_101",
+  "actualSuccessfulCompletion": true,
+  "actualSeconds": 62.94,
+  "command": "env PATH=\"/home/genie/.hermes/node/bin:$PATH\" TMPDIR=/var/tmp bash scripts/smoke-install-update.sh",
+  "cwd": "/home/genie/orca/workspaces/genie/mikro-engine-split/mikro",
+  "actualMarkers": [
+    "Smoke install from local main checkout",
+    "Installed mikro v1.260907.1",
+    "Smoke update dirty-check refusal",
+    "Smoke update --force happy path from advanced main",
+    "Install/update smoke passed"
+  ],
+  "disposableSourceRoot": "/var/tmp/tmp.0IPUl1PFYM/source",
+  "disposableInstallRoot": "/var/tmp/tmp.0IPUl1PFYM/install",
+  "initial": "f2527f4012481a00ed118e147d72298ced2099f9",
+  "target": "be74de4b08a727b0a5e9bf7e0822d7f8a5767050",
+  "standaloneNpmciAndBuildBothInstallAndUpdate": true,
+  "originalRepositoryOperatorOrProductionInstallMutation": false,
+  "deprecatedAndAllowScriptsWarningsSuppressed": false
+}

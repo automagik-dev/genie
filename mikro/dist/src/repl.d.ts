@@ -15,10 +15,12 @@ import type { Logger } from "./logger.js";
 import type { ToolResolver } from "./sdk/agent.js";
 /** Names supplied by the REPL runtime and battery modules. */
 export declare const REPL_RESERVED_NAMES: ReadonlySet<string>;
+/** Context snapshots are serialized once per subprocess generation. */
+export type REPLContext = string | unknown[] | Record<string, unknown>;
 /** Options passed to REPL.start() */
 export interface REPLStartOptions {
     /** Context to inject (string, list, or dict serialized as JSON string). */
-    context?: string | string[] | Record<string, unknown>;
+    context?: REPLContext;
     /** Custom tools to inject as Python code strings (name -> code). */
     tools?: Record<string, string>;
     /** Tool level: core (6 paper functions), standard (+ batteries), full (+ package info). */
@@ -33,10 +35,17 @@ export interface REPLStartOptions {
     serverPath?: string;
     /** Optional logger for crash events and diagnostics. */
     logger?: Logger;
+    /** Enclosing run cancellation/deadline; remains in force during recovery. */
+    signal?: AbortSignal;
 }
 /** Callback for handling LLM requests from the Python REPL. */
-export type LLMRequestHandler = (request: LLMRequest) => Promise<string[]>;
+export type LLMRequestHandler = (request: LLMRequest, signal: AbortSignal) => Promise<string[]>;
 export declare function defaultReplTimeoutMs(): number;
+/** A block ran once, timed out, and lost its namespace; execute never replays it. */
+export declare class REPLTimeoutError extends Error {
+    readonly timeoutMs: number;
+    constructor(timeoutMs: number);
+}
 export declare class REPL {
     private process;
     private readline;
@@ -46,9 +55,13 @@ export declare class REPL {
     private llmHandler;
     private toolHandler;
     private messageBuffer;
-    private readonly toolSignal;
+    private generation;
+    private lifecycle;
+    private childController;
+    private removeRunAbort;
     private _startOptions;
     private _recovering;
+    private _initializing;
     private _batteriesUsed;
     private _geminiBatteriesUsed;
     private _skipTracking;
@@ -59,6 +72,8 @@ export declare class REPL {
     onToolRequest(handler: ToolResolver): void;
     /** Start the Python REPL subprocess. */
     start(options?: REPLStartOptions): Promise<void>;
+    /** Startup and recovery keep ownership across every asynchronous boundary. */
+    private _start;
     /** Execute Python code in the REPL and return the result. */
     execute(code: string, timeoutMs?: number): Promise<ExecuteResult>;
     /** Reset the REPL namespace. */
@@ -71,6 +86,10 @@ export declare class REPL {
     getBatteriesUsed(): string[];
     /** Get list of Gemini battery functions that were called during this session. */
     getGeminiBatteriesUsed(): string[];
+    private _assertLifecycle;
+    private _rejectPending;
+    /** Retire this generation synchronously, then wait for its actual exit. */
+    private _detachAndWait;
     private _loadBatteries;
     private _loadGeminiBatteries;
     private _loadPgBatteries;

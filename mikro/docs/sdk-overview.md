@@ -97,6 +97,95 @@ handlers and points to the migrations: add a sidecar, call
 execution is intentional. There is no schema-less fallback once `tools` is
 supplied.
 
+## Completion failures and accounting
+
+The Pi dependency family is pinned to `1.0.2`. `LLMCompletionError` from
+`src/llm.ts` reports `error`, `aborted`, or `length`; partial text from these
+stops is not a successful answer. Transport retries default to three;
+`maxRetries: 0` disables them.
+
+Failure `usage` is optional. Missing provider evidence is unknown, not a
+zero-token receipt; an explicitly reported zero remains zero. Native tool
+loops include observed prior turns in their one terminal failure receipt.
+`runAgent()` emits that receipt even when cancellation stops further
+messages, tools, or `EmitDone`, and closes the session as aborted.
+Account the failure receipt once. REPL IPC already accounts its direct
+failed subcalls; a root catch must not account those again.
+
+Settled recursive-batch child receipts are merged before completion callbacks,
+including when cancellation prevents queued children from starting. Completed
+receipts count once; killed children without receipts remain unknown.
+
+MCP failures with incomplete coverage expose `observed_usage` JSON containing
+unrounded `subtotal` token/cost observations, `coverage: "partial"`, and
+`totals: null`. They deliberately omit the normal numeric complete-run footer:
+the frozen host parser must not treat a paid subtotal as a complete bill.
+Failures without any receipt expose no fabricated numeric accounting.
+
+Consumers using Pi streaming directly must call `streamLLMCompletion()`
+rather than raw `runtime.streamSimple()` to retain provider-reported failure
+usage, including packets received before SDK normalization. Provider
+diagnostics redact configured credentials, including trimmed header values.
+For a selected custom provider using `apiKeyFile`, diagnostics are omitted rather
+than re-reading its credential to sanitize a reflected response. Stop reason and
+observed usage remain available.
+
+## RLM finalization and REPL recovery
+
+`FINAL(name)` and `FINAL_VAR(name)` resolve an existing Python variable.
+`FINAL("text")` stays literal; arbitrary expressions are not evaluated.
+Missing variables and ellipsis produce repair feedback.
+
+The last root model turn requests finalization within `maxIterations`; there is
+no extra forced completion after the cap. Declared `output.schema` and
+`VALIDATE.md` both apply. Validation retries require remaining iteration,
+validation, cost/token, and deadline room. A terminal rejected payload retains
+its answer and `validation_failed` flag; MCP classifies it as a failed tool
+response without another model turn. Exhaustion without any final is an error.
+
+`rlmLoop()` throws the public `RLMRunError` when iteration, cost, or token
+exhaustion leaves no complete final, or a root completion fails terminally.
+Its `iterations` counts actual root model turns; optional `usage` snapshots
+cumulative observed root and IPC calls once, including a reported failed packet.
+The original completion error remains its `cause`. `usageComplete: false`
+identifies a subtotal, not a full bill. No observed calls means no usage receipt.
+The legacy MCP adapter preserves this error through the existing
+`BackendRunError`/`observed_usage` failure boundary. Cancellation retains the
+existing timeout answer but exposes only any observed partial subtotal, never
+a complete numeric footer or fabricated zero receipt. Neither path makes
+another completion.
+
+The public `REPLTimeoutError` means the block ran once, the old child was killed
+and awaited, and a new child restored the original context and tools. All
+user-created variables are lost, and the timed-out block is never replayed.
+Generation-scoped cancellation discards late LLM/tool replies. Failed restart or
+expired enclosing deadline is terminal. `RLMOptions.signal` supplies caller
+cancellation, and `LLMRequestHandler` receives the generation's abort signal.
+An explicit `stop()` or newer `start()` invalidates an in-flight recovery;
+retirement cannot resurrect a subprocess after the newer lifecycle completes.
+
+
+## Manual source selection with JEV
+
+`extractWithJev()` in `src/jev.ts` is a separate manual API, not an ordinary
+agent or MCP hook. Supply an explicit full endpoint, API key, versioned model
+or documented `jev-latest` / `jev-preview` alias, sanitized `state`, and bounded
+candidate `{ id, text, source }` records. There is no default endpoint,
+automatic routing, retry, or cache.
+
+One POST carries `{ state, model, questions }`. Choice includes abstention;
+optional Noul and Score questions share the same request. The result retains
+the actual versioned model, validated answers/probabilities, observed token
+usage, and the exact locally selected candidate or explicit abstention.
+Candidate source references stay local. Optional `sourceSnapshot` is cloned
+and frozen locally, never transmitted; without it, the frozen snapshot is
+the exact serialized state sent on the wire. Serialization hooks and getters
+are evaluated once for that wire state and fallback provenance.
+
+The caller must sanitize state and candidate text before transmission.
+Transport, cancellation, HTTP, and response-schema failures are typed
+`JevExtractionError` failures, not successful empty selections.
+
 ## When to use the SDK vs the CLI
 
 **Use the CLI (`mikro "query"`)** when:

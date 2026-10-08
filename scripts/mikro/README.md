@@ -1,8 +1,8 @@
 # mikro microagents for genie
 
-Cheap, fast, read-only workers on DeepSeek 4.1 Flash (`deepseek-api/deepseek-flash`, custom-typed
-in `.mikro/mikro.yaml` because the engine's registry only knows `deepseek-v4-flash`) that gather
-the mechanical facts a stage needs BEFORE an expensive agent reads anything. Four agents live in
+Read-only workers using built-in DeepSeek Flash (`deepseek/deepseek-flash`) gather
+the mechanical facts a stage needs BEFORE an expensive agent reads anything. No custom
+provider declaration is needed for this control model. Four agents live in
 `.mikro/agents/<name>/` (`agent.yaml` + `SYSTEM.md` on the upstream five-rules contract — starter
 block first, no `FINAL` before the fourth REPL block, every citation printed by its own REPL, git
 and gh read-only, one fenced JSON answer):
@@ -41,6 +41,35 @@ Exit codes: **0** ok, **1** not ok — an agent that failed validation, a `mikro
 and also `genie mikro call` with NO agent, which is Commander's missing-argument path through
 genie's global error handler — and **2** for the runtime's own usage refusals: an unregistered agent
 NAME, a registered one with no prompt, a bad `--boundary`.
+
+`call` and `bench` accept `--engine rlm|pi|prime|prime-sdk`. Invalid or missing selectors refuse
+before a model call; omission preserves the runtime/agent default. An explicit selector is forwarded
+to MCP, not merely tagged. Repository defaults use built-in `deepseek/deepseek-flash` (Pi 1.0.2);
+operator settings and historical benchmark artifacts are not rewritten.
+
+Wish workflow controls are `offloadEngine: "rlm"|"pi"` (default `"rlm"`) and `offload: boolean`
+(default `true`). Both scout and review use the selected engine; `false` retains native stages
+without either offload. Native stage model choices are unchanged.
+Disabled labels remain in the rendered workflow report, but are not emitted as executed offload
+receipts. The unchanged canonical report consumer therefore sees no failed scout/review offload
+when the caller disabled them.
+
+Only top-level `plan.files` entries whose reason starts `NEW:` may propose absent paths without
+lines. The nearest lexical existing ancestor must contain tracked content and resolve inside the
+checkout; symlink path components cannot authorize NEW proposals.
+This permission does not authorize an ordinary citation to the same missing path.
+Commit-derived wish fixtures record source/parent/evaluation commits and evaluate the parent tree;
+`truth.newFiles` scores NEW proposals independently of existing files and citations. Bench creates
+an isolated detached evaluation worktree per job and removes it after the run.
+The bench table and summary report NEW recall/precision separately. Mean NEW recall must meet
+the same 0.6 bar as existing-file recall when NEW ground truth is present; an added-only fixture
+cannot pass merely because it has no existing-file recall sample. Unmeasured NEW means stay null.
+Historical worktrees receive only the current trusted runtime configuration files, leaving the
+implementation tree at its recorded evaluation commit. Each result records the overlay's source
+root and per-file historical/runtime SHA256 (or absence); the ordinary `runAgent` configuration
+trust gate still applies. Fixtures whose ground truth overlaps those runtime files are refused
+rather than exposing an added implementation through the overlay.
+
 
 ### Where the agent files come from — the trust boundary
 
@@ -455,14 +484,21 @@ ground truth mechanically, which is what makes it re-runnable and arguable:
 
 | field | rule |
 |---|---|
-| `truth.files` | `git show --name-only` of the commit; a rename contributes the NEW path |
+| `truth.files` | For wish-context, changed paths already present in the parent; for review-prep, all changed paths |
+| `truth.newFiles` | Wish-context paths absent from the parent, scored as `NEW:` proposals rather than citations |
+| `sourceCommit` / `sourceTree` | The changed commit and immutable tree used to derive truth |
+| `parentCommit` / `parentTree` | Its genuine single parent and immutable parent tree |
+| `evaluationCommit` / `evaluationTree` | Parent for wish-context, changed commit for review-prep |
 | `prompt` | `Intent: <commit subject>` (wish-context) or `Prepare the review of commit <sha> against <sha>^` (review-prep) |
 | `id` | the first 12 characters of the sha — not `git rev-parse --short`, whose length follows `core.abbrev` |
 
 Skipped, each with its reason printed: a merge commit (its `--name-only` is a combined
-diff), a root commit for review-prep (no `<sha>^`), a commit with no files, and any commit
-one of whose files no longer exists at HEAD — the verifier scores the TREE, not the commit,
-so a fixture naming a deleted file would score a correct agent down. The output is
+diff), a root commit (neither treatment has a genuine parent), a commit with no files,
+an empty wish-context commit subject, and any commit whose changed paths no longer exist
+at HEAD. Wish-context evaluates the parent with added implementations absent;
+review-prep evaluates the changed commit. Each bench job gets an isolated detached
+evaluation worktree with the current trusted runtime configuration overlay described above.
+The output is
 byte-stable across runs of the same argv, so a rebuilt set is a real diff; it lands at
 `<repo>/.mikro/fixtures/<agent>.json` (`--out` is taken as given and may point outside the
 repository) and is not replaced without `--force`. A built prompt is repository content —
@@ -488,20 +524,20 @@ or an unaudited clone runs that tree's configuration. `coach` goes one step furt
 carrying its own copy of the bench runs that copy. Reviewing untrusted content is `genie
 mikro call`'s job; measuring is an operator tool over the operator's own tree.
 
-**Host prerequisites, which genie does not ship:** `mikro` ≥ 1.260909.1 on PATH
-(`mikro --version`), a `~/.mikro/settings.json` declaring a `deepseek-api` provider with
-the `deepseek-flash` model (the shipped agents name it, and a repository with no
-`.mikro/mikro.yaml` depends on the global settings for it), and `DEEPSEEK_API_KEY` in the
-environment. Without them every run answers `ok: false` with one `unavailable:` error and
-exits 1 — nothing written, nothing billed. `genie mikro init` prints this list too.
+**Host prerequisites, which genie does not ship:** a separately installed `mikro` on PATH
+with the Pi 1.0.2 dependency family and built-in `deepseek/deepseek-flash` support,
+Node ≥ 22.19.0, and `DEEPSEEK_API_KEY` in the environment. The historical
+1.260909.1 installation is not the runtime floor for these migrated agents.
+No `deepseek-api` custom provider or operator settings edit is required.
+A missing executable answers `ok: false` with an `unavailable:` error and exits 1;
+provider/authentication failures are runtime errors, not executable-unavailable errors.
 
 ## Per-machine prerequisites (checklist)
 
-- `mikro` ≥ 1.260909.1 on PATH (`mikro --version`), run by a working node — on this host Homebrew's node 25
-  cannot load `libllhttp`, so the `mikro` MCP wrapper registered with `claude mcp` pins
-  `~/.nvm/versions/node/v24.13.1/bin` first in PATH.
-- `~/.mikro/settings.json` mirroring the `providers:` block of `.mikro/mikro.yaml` (api-key-env only, no
-  literal key), so a `--dir` outside this checkout still resolves `deepseek-api/deepseek-flash`.
+- A separate `mikro` installation on PATH with Pi 1.0.2 and built-in
+  `deepseek/deepseek-flash` support, running on Node ≥ 22.19.0.
+- `DEEPSEEK_API_KEY` supplied through the environment; preserve existing operator
+  settings and any independently configured custom providers.
 - `~/.mikro/gate-env.sh` exporting `DEEPSEEK_API_KEY` by resolving it from Bitwarden (`bws secret get …`)
   at source time. It is never backed up with a literal value; `call.ts` sources it only when the caller's
   environment lacks the key and hands the key to the MCP server's environment alone.
@@ -650,28 +686,32 @@ read as the wrong arm.
   about this model on these prompts *and* about these mounts — not proof that a different injection
   could not reach something the allowlist still permits.
 
-## Prices
+## Historical prices
 
-USD figures come from the per-million prices declared for the provider (`cost:` in `.mikro/mikro.yaml`);
-token counts, iterations and wall clock are measured. Since 2026-09-18 those are DeepSeek's published
-list prices, read from <https://api-docs.deepseek.com/quick_start/pricing> (USD per million tokens):
+The table below describes the custom-provider pricing used by historical runs, not
+current built-in-provider onboarding or a requirement to edit operator settings.
+Those USD figures came from `cost:` declarations in the then-current `.mikro/mikro.yaml`;
+token counts, iterations and wall clock were measured. From 2026-09-18 those declarations
+used DeepSeek's published list prices, read from
+<https://api-docs.deepseek.com/quick_start/pricing> (USD per million tokens):
 
 | model | input, cache miss | input, cache hit | output |
 |---|---|---|---|
 | `deepseek-flash` (4.1 Flash; legacy `deepseek-v4-flash` bills at Flash rates) | 0.30 peak / 0.15 off-peak | 0.006 / 0.003 | 1.20 / 0.60 |
 | `deepseek-v4-pro` | 1.32 / 0.66 | 0.044 / 0.022 | 3.96 / 1.98 |
 
-The config declares the **peak cache-miss** column, deliberately: off-peak is exactly half, and mikro's
-cost footer reports one input figure without separating cached prompt tokens, so a reported cost is an
-upper bound on the bill — never below it. DeepSeek documents 1M context for both models; the declared
-`context-window: 128000` is left as a conservative cap (nothing in `scripts/mikro/` reads it, and a low
-cap can only refuse a run). The per-machine `~/.mikro/settings.json` mirrors the `providers:` block of
-`.mikro/mikro.yaml` by hand and is not in the repo, so reprice it there too.
+The historical config declared the **peak cache-miss** column: off-peak was exactly half,
+and that runtime's footer reported one input figure without separating cached prompt tokens.
+It also declared a conservative `context-window: 128000`. These describe the old measurement
+basis, not the current built-in catalog. Current pricing comes from the selected runtime
+model's catalog; do not rewrite historical results or mirror the removed provider block
+into `~/.mikro/settings.json`.
 
-Each ledger row and Phoenix span carries `mikro_version` and `price_basis`, which is now
-`deepseek-list-2026-09-18-peak` (`PRICE_BASIS` in `call.ts` — the one constant both the ledger and the
-span read), so a later reprice stays mechanical: rows are filtered by basis, never rewritten. Rounds
-dated before 2026-09-18T05:00Z in `.mikro/agents/*/EVIDENCE.md` were billed at the placeholder basis
+Each ledger row and Phoenix span carries `mikro_version` and `price_basis`. The retained
+caller label is `deepseek-list-2026-09-18-peak` (`PRICE_BASIS` in `call.ts`);
+it is historical metadata, not proof of today's provider rates. Rows are filtered by basis,
+never rewritten.
+Rounds dated before 2026-09-18T05:00Z in `.mikro/agents/*/EVIDENCE.md` were billed at the placeholder basis
 (0.14 in / 0.28 out per million) and their USD is therefore understated — roughly 4.3x on output and
 2.1x on input against the peak list price. Those numbers are left alone: every row is a real run at the
 basis of its time, and the basis on each row is what makes it re-priceable.

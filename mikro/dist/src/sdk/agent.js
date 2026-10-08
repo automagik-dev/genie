@@ -33,6 +33,7 @@
  *
  * Spec: `.genie/wishes/rlmx-sdk-upgrade/WISH.md` L110-158.
  */
+import { LLMCompletionError } from "../llm.js";
 import { createEmitter } from "./emitter.js";
 import { createMetricsRecorder } from "./metrics.js";
 import { makeEvent, } from "./events.js";
@@ -162,12 +163,10 @@ async function drive(config, em) {
                     break;
                 if (!step)
                     continue;
-                // Re-check abort AFTER the driver yielded — the driver
-                // itself may have triggered the abort in its yield
-                // prelude. Matches the pre-mikro#78 `for await` semantics
-                // which checked before processing each step.
-                if (ac.signal.aborted)
+                // Cancellation blocks output/tools, not the driver's terminal usage receipt.
+                if (ac.signal.aborted && !(step.kind === "error" && step.error instanceof LLMCompletionError)) {
                     break iterationLoop;
+                }
                 switch (step.kind) {
                     case "message": {
                         const ev = makeEvent("Message", {
@@ -372,11 +371,15 @@ async function drive(config, em) {
                                 name: step.error.name,
                                 message: step.error.message,
                                 stack: step.error.stack,
+                                ...(step.error instanceof LLMCompletionError ? {
+                                    stopReason: step.error.stopReason,
+                                    ...(step.error.usage ? { usage: step.error.usage } : {}),
+                                } : {}),
                             },
                         });
                         em.emit(err);
                         done = true;
-                        closeReason = "error";
+                        closeReason = ac.signal.aborted ? "abort" : "error";
                         break;
                     }
                 }

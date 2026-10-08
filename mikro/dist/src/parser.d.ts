@@ -14,8 +14,8 @@ export interface CodeBlock {
 }
 /** Detected final answer signal. */
 export interface FinalSignal {
-    type: "final" | "final_var";
-    /** The answer text or variable name. */
+    type: "final" | "final_var" | "invalid";
+    /** The literal answer, safe variable name, or model-visible repair feedback. */
     value: string;
 }
 /**

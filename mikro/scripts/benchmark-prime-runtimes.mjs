@@ -11,8 +11,8 @@ import { fileURLToPath } from "node:url";
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const PINNED_PRIME_VERSION = "0.8.1";
 const BWS_PROJECT_ID = "09229871-62e6-4331-9ede-b4a7012ec521";
-const RUNTIMES = ["mikro", "prime", "prime-sdk"];
-const MAX_ITERATIONS_BY_RUNTIME = { mikro: 1, prime: 1, "prime-sdk": 2 };
+const RUNTIMES = ["rlm", "prime", "prime-sdk"];
+const MAX_ITERATIONS_BY_RUNTIME = { rlm: 1, prime: 1, "prime-sdk": 2 };
 const MODELS = [
   {
     id: "z-ai/glm-5.3",
@@ -272,7 +272,7 @@ function manifest() {
     noRetries: true,
     rawAnswersPersisted: false,
     outputLimitEnforcement: {
-      mikro: "BackendRequest.maxOutputTokens -> rlmLoop -> llmComplete -> provider",
+      rlm: "BackendRequest.maxOutputTokens -> rlmLoop -> llmComplete -> provider",
       prime: "models.json provider/model override maxTokens -> provider",
       "prime-sdk": "models.json provider/model override maxTokens -> provider",
     },
@@ -392,7 +392,7 @@ function agentFor(runtime) {
       shape: "single-step",
       tools: [],
       extras: {},
-      backend: runtime,
+      engine: runtime,
     },
   };
 }
@@ -414,7 +414,7 @@ async function loadRuntimeModules() {
     previousPrimeAgentDir,
     base,
     backends: {
-      mikro: new LegacyMikroBackend(),
+      rlm: new LegacyMikroBackend(),
       prime: new PrimeBackend({ binaryPath: "/home/genie/.local/bin/prime-agent" }),
       "prime-sdk": new PrimeSdkBackend({
         primeRoot: "/home/genie/.local/lib/node_modules/prime-agent",

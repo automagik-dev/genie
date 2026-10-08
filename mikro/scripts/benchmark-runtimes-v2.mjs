@@ -24,9 +24,9 @@ const MODEL = Object.freeze({
   contextWindow: 1_000_000,
   providerOutputCap: 17_408,
 });
-const RUNTIMES = Object.freeze(["mikro", "prime-sdk"]);
+const RUNTIMES = Object.freeze(["rlm", "prime-sdk"]);
 const REPETITIONS = 3;
-const MAX_ITERATIONS_BY_RUNTIME = Object.freeze({ mikro: 2, "prime-sdk": 3 });
+const MAX_ITERATIONS_BY_RUNTIME = Object.freeze({ rlm: 2, "prime-sdk": 3 });
 const MAX_INPUT_TOKENS = 32_768;
 const MAX_OUTPUT_TOKENS = 8_192;
 const DEADLINE_MS = 180_000;
@@ -264,7 +264,7 @@ function agent(runtime) {
     toolName: `mikro_runtime_v2_${runtime.replaceAll("-", "_")}`,
     dir: ROOT,
     summary: "Runtime benchmark v2",
-    spec: { dir: ROOT, schemaVersion: 1, model: `${MODEL.provider}/${MODEL.id}`, thinking: REASONING, budget: { maxIterations: MAX_ITERATIONS_BY_RUNTIME[runtime], maxCost: null, maxTokens: MAX_INPUT_TOKENS, maxDepth: 1 }, output: null, toolsApi: 1, shape: "single-step", tools: [], extras: {}, backend: runtime },
+    spec: { dir: ROOT, schemaVersion: 1, model: `${MODEL.provider}/${MODEL.id}`, thinking: REASONING, budget: { maxIterations: MAX_ITERATIONS_BY_RUNTIME[runtime], maxCost: null, maxTokens: MAX_INPUT_TOKENS, maxDepth: 1 }, output: null, toolsApi: 1, shape: "single-step", tools: [], extras: {}, engine: runtime },
   };
 }
 
@@ -329,7 +329,7 @@ async function runCampaign(options) {
   ]);
   const base = await loadConfig(runRoot);
   const backends = {
-    mikro: new LegacyMikroBackend(),
+    rlm: new LegacyMikroBackend(),
     "prime-sdk": new PrimeSdkBackend({ primeRoot: PRIME_ROOT, primeAgentDir }),
   };
   const report = { version: frozen.version, manifest: frozen, manifestSha256: digest, stage: options.mode, runtimes, authorizedCalls: options.authorizedCalls, authorizedUsd: options.authorizedUsd, startedAt: new Date().toISOString(), complete: false, records: [], deepSeekBalanceStartUsd: balanceStart, deepSeekBalanceCurrentUsd: balanceStart, deepSeekSpendDeltaUsd: 0 };
@@ -378,7 +378,7 @@ async function runCampaign(options) {
 }
 
 function summarize(report) {
-  const byRuntime = Object.fromEntries(RUNTIMES.map((runtime) => {
+  const byRuntime = Object.fromEntries([...new Set(report.records.map((record) => record.runtime))].map((runtime) => {
     const rows = report.records.filter((record) => record.runtime === runtime);
     const latencies = rows.map((record) => record.wallMs).sort((a, b) => a - b);
     const solved = rows.filter((record) => record.semanticPass).length;

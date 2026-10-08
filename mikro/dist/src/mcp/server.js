@@ -48,12 +48,16 @@ import { EMPTY_RESPONSES_BUDGET_HIT, TIMEOUT_ANSWER } from "../rlm.js";
 import { REPL_RESERVED_NAMES } from "../repl.js";
 import { resolvePythonScript } from "../sdk/python-plugin.js";
 import { resolvePluginPath } from "../sdk/tool-loader.js";
+import { ENGINES, parseEngine } from "../sdk/agent-spec.js";
 import { VERSION } from "../version.js";
-import { checkModelConfig } from "../llm.js";
+import { checkModelConfig, LLMCompletionError } from "../llm.js";
 import { discoverAgents, splitModel } from "./agents.js";
+import { BackendRunError } from "./backend.js";
 import { LegacyMikroBackend } from "./backends/legacy.js";
 import { PrimeBackend } from "./backends/prime.js";
 import { PrimeSdkBackend } from "./backends/prime-sdk.js";
+import { PiBackend } from "./backends/pi.js";
+import { checkPiTools } from "./backends/pi-tools.js";
 /** How often to tick when the run itself is emitting nothing. */
 const HEARTBEAT_MS = 15_000;
 /** Tool always present, so the server is useful before any agent is authored. */
@@ -120,6 +124,11 @@ export function toolOutputSchema() {
         required: ["answer", "session_id"],
     };
 }
+const ENGINE_PROPERTY = {
+    type: "string",
+    enum: [...ENGINES],
+    description: "Execution engine. Explicit call selection overrides agent engine; omitted defaults to rlm.",
+};
 function agentToolSchema() {
     return {
         type: "object",
@@ -128,6 +137,7 @@ function agentToolSchema() {
             query: QUERY_PROPERTY,
             session_id: SESSION_ID_PROPERTY,
             context: CONTEXT_PROPERTY,
+            engine: ENGINE_PROPERTY,
         },
         required: [],
     };
@@ -140,6 +150,7 @@ function genericToolSchema() {
             query: QUERY_PROPERTY,
             session_id: SESSION_ID_PROPERTY,
             context: CONTEXT_PROPERTY,
+            engine: ENGINE_PROPERTY,
             model: {
                 type: "string",
                 description: 'Optional model override as "<provider>/<model>", e.g. ' +
@@ -152,11 +163,11 @@ function genericToolSchema() {
 /** Spawn-style description: what it is, how to prompt it, what comes back. */
 function describeAgent(agent) {
     const model = agent.spec.model ? ` Runs on ${agent.spec.model}.` : "";
-    const backend = agent.spec.backend ?? "mikro";
+    const engine = agent.spec.engine ?? "rlm";
     const declaredTools = agent.spec.tools.length
         ? `Tools: ${agent.spec.tools.join(", ")}.`
         : "Tools: none declared.";
-    const suffix = `Backend: ${backend}. ${declaredTools}`;
+    const suffix = `Engine: ${engine}. ${declaredTools}`;
     if (agent.unavailable) {
         return (`UNAVAILABLE — "${agent.name}" cannot run: ${agent.unavailable} ` +
             `${agent.summary}${model} ${suffix}`);
@@ -172,7 +183,7 @@ function describeAgent(agent) {
         suffix);
 }
 const GENERIC_DESCRIPTION = "Launch a general-purpose mikro agent to handle a self-contained task " +
-    "autonomously (RLM loop: Python REPL plus recursion). Use it to offload " +
+    "autonomously (default engine: rlm, Python REPL plus recursion; explicit engine: pi runs read-only native tools). Use it to offload " +
     "work you would otherwise grind through inline — analysis over a large " +
     "body of files, repeated extraction, wide searches. Give it a complete, " +
     "standalone prompt: it runs to completion and returns a single final " +
@@ -496,7 +507,7 @@ export async function validateAgentModels(cwd, agents) {
         return [...agents];
     }
     return agents.map((agent) => {
-        if ((agent.spec.backend ?? "mikro") !== "mikro")
+        if (agent.spec.engine === "prime" || agent.spec.engine === "prime-sdk")
             return agent;
         const problem = checkModelConfig(applyAgent(config, agent).model);
         if (!problem)
@@ -524,8 +535,9 @@ export async function validateAgentTools(cwd, agents) {
     if (agents.length === 0)
         return [];
     let collisions = new Set();
+    let config;
     try {
-        const config = await loadConfig(cwd);
+        config = await loadConfig(cwd);
         collisions = new Set(config.tools.map((tool) => tool.name.normalize("NFKC")));
     }
     catch {
@@ -533,7 +545,13 @@ export async function validateAgentTools(cwd, agents) {
         // checks remain useful even when TOOLS.md cannot be loaded.
     }
     return Promise.all(agents.map(async (agent) => {
-        if ((agent.spec.backend ?? "mikro") !== "mikro" || agent.unavailable) {
+        if (agent.spec.engine === "pi") {
+            if (!config)
+                return agent;
+            const problem = checkPiTools(agent, { config: applyAgent(config, agent) });
+            return problem && !agent.unavailable ? { ...agent, unavailable: problem } : agent;
+        }
+        if ((agent.spec.engine ?? "rlm") !== "rlm" || agent.unavailable) {
             return agent;
         }
         const pythonNames = new Map();
@@ -601,8 +619,6 @@ function formatCost(cost) {
     return `$${cost.toFixed(2)}`;
 }
 function formatFooter(label, config, result, elapsedMs, sessionId) {
-    const tokensIn = result.usage.inputTokens.toLocaleString("en-US");
-    const tokensOut = result.usage.outputTokens.toLocaleString("en-US");
     const model = `${config.model.provider}/${config.model.model}`;
     const seconds = (elapsedMs / 1000).toFixed(1);
     const budget = result.budgetHit ? ` · budget hit: ${result.budgetHit}` : "";
@@ -610,6 +626,23 @@ function formatFooter(label, config, result, elapsedMs, sessionId) {
     // exactly `{answer, session_id}`. The key is spelled as it is in
     // `--output json` so one grep finds it on either surface.
     const validation = result.validationFailed ? " · validation_failed: true" : "";
+    if (result.usageComplete === false) {
+        // Frozen host parsers accept arbitrary extras after numeric totals. Partial
+        // receipts must therefore never use the complete-run numeric footer shape.
+        const observed = {
+            coverage: "partial",
+            iterations: result.iterations,
+            subtotal: {
+                inputTokens: result.usage.inputTokens,
+                outputTokens: result.usage.outputTokens,
+                totalCost: result.usage.totalCost,
+            },
+            totals: null,
+        };
+        return `mikro · ${label} · ${model} · usage coverage: partial; unreported totals unknown · ${seconds}s${budget}${validation} · session ${sessionId}\nobserved_usage: ${JSON.stringify(observed)}`;
+    }
+    const tokensIn = result.usage.inputTokens.toLocaleString("en-US");
+    const tokensOut = result.usage.outputTokens.toLocaleString("en-US");
     // The session id is echoed in prose as well as structuredContent: a host
     // that renders only the text block still shows the model how to follow up.
     return (`mikro · ${label} · ${model} · ${result.iterations} iteration` +
@@ -650,55 +683,20 @@ export function sessionResult(text, sessionId, isError = false) {
     };
 }
 /**
- * Did `rlmLoop` hand back a failure instead of an answer?
- *
- * Only rlmLoop's `throw` path reaches the catch in the call handler. Its two
- * non-throwing failures — the consecutive-empty-response abort and the
- * wall-clock timeout — *return* normally with their reason as the answer
- * (`src/rlm.ts`). Reported as a success, the host model reads "Error: aborted
- * after 3 consecutive empty LLM responses" as the delegated agent's report.
- * `src/cli.ts` treats the first of those as a failed run (exit 1 on
- * `budgetHit === "empty_responses"`); this is the MCP equivalent, keyed off the
- * same field.
- *
- * Each abort is matched by its own exact signal, because neither one alone
- * covers both:
- *
- *   - the empty-response abort sets `budgetHit = "empty_responses"`;
- *   - the timeout preserves whatever `budgetHit` the run had accumulated
- *     (usually none) and is identified by its verbatim answer.
- *
- * What must NOT be used is a prefix test on the answer. `answer` is the model's
- * own final text, and a report that legitimately opens with `Error: …` is a
- * normal outcome, not a failure — quoting the failing line out of a log is the
- * entire job of the shipped `log-triage` recipe. Flagging that as `isError`
- * hands the host a paid, correct run marked failed, which it may discard or
- * retry at double the cost.
- *
- * A genuine `max-cost`/`max-tokens`/`max-depth` budget hit is deliberately not
- * a failure either: it forces a real final answer — a shorter report — and
- * stays `isError: false`.
+ * Classify returned failures using explicit engine metadata, not an arbitrary
+ * "Error:" prefix in model-authored text. A schema-invalid answer remains the
+ * original observed payload, but is a failed MCP response. Budget-shortened
+ * valid answers remain successful.
  */
 export function isFailedRun(result) {
-    return result.budgetHit === EMPTY_RESPONSES_BUDGET_HIT || result.answer === TIMEOUT_ANSWER;
+    return result.validationFailed === true
+        || result.budgetHit === EMPTY_RESPONSES_BUDGET_HIT
+        || result.answer === TIMEOUT_ANSWER;
 }
-/**
- * Backends wired to this build, keyed by the agent-spec `backend` field
- * (internal and undocumented — `src/sdk/agent-spec.ts`). A `Map`, not a
- * plain object record: a forged `backend: "constructor"` must resolve to
- * "not wired", never to a truthy prototype property that is not a backend.
- */
-const BACKENDS = new Map([
-    ["mikro", new LegacyMikroBackend()],
-]);
-/**
- * The prime backend, constructed lazily on first selection. Its constructor
- * runs the version-pin check (`prime-agent --version` === 0.7.2), and a
- * server that never selects prime must not pay for that — nor fail to start
- * on a machine without the binary. A spec naming a backend this build has
- * not wired fails loudly at call time, the same "no silent degradation"
- * rule the spec parser applies to typos.
- */
+/** Public engines share the original MCP result/history/accounting contract. */
+const rlmBackend = new LegacyMikroBackend();
+const piBackend = new PiBackend();
+/** Prime's pinned binary is probed only when selected; no ambient startup dependency. */
 let primeBackend;
 /**
  * The in-process prime backend (`src/mcp/backends/prime-sdk.ts`), also
@@ -709,26 +707,16 @@ let primeBackend;
  * on prime-agent being installed.
  */
 let primeSdkBackend;
-/**
- * The backend a turn runs on.
- *
- * `mikro_query` (the generic tool) has no agent spec and therefore no
- * `backend` field: it always runs on the legacy backend, unconditionally —
- * there is no selection path for it. Agents default to `mikro` unless their
- * spec names another backend.
- */
-export function selectBackend(agent) {
-    const selected = agent?.spec.backend ?? "mikro";
-    const backend = BACKENDS.get(selected) ??
-        (selected === "prime"
-            ? (primeBackend ??= new PrimeBackend())
-            : selected === "prime-sdk"
-                ? (primeSdkBackend ??= new PrimeSdkBackend())
-                : undefined);
-    if (!backend) {
-        throw new Error(`agent "${agent?.name ?? "mikro_query"}": backend "${selected}" is not wired into this build`);
+/** Resolve strict per-call > agent > default precedence; never infer from shape. */
+export function selectBackend(agent, engine) {
+    const declared = agent?.spec.engine;
+    const selected = parseEngine(engine !== undefined ? engine : declared !== undefined ? declared : "rlm");
+    switch (selected) {
+        case "rlm": return rlmBackend;
+        case "pi": return piBackend;
+        case "prime": return primeBackend ??= new PrimeBackend();
+        case "prime-sdk": return primeSdkBackend ??= new PrimeSdkBackend();
     }
-    return backend;
 }
 /**
  * Run one turn on one backend. `query` is already the resume-folded prompt;
@@ -742,7 +730,7 @@ export function selectBackend(agent) {
  * and presentation stay server concerns while event translation stays the
  * backend's.
  */
-export async function runTurn(backend, agent, config, label, query, sessionId, contextPath, cwd, progress, maxIterations) {
+export async function runTurn(backend, agent, config, label, query, sessionId, contextPath, cwd, progress, maxIterations, signal) {
     let context = null;
     const contextRoot = contextPath ? resolve(cwd, contextPath) : undefined;
     if (contextRoot) {
@@ -755,12 +743,18 @@ export async function runTurn(backend, agent, config, label, query, sessionId, c
         context = await loadContext(contextRoot, contextOpts);
     }
     let lastProgressAt = Date.now();
-    const emit = progress
-        ? (message) => {
+    let observedIterations = 0;
+    const emit = (message) => {
+        if (message.startsWith("iteration ")) {
+            const iteration = Number.parseInt(message.slice(10), 10);
+            if (Number.isSafeInteger(iteration) && iteration > observedIterations)
+                observedIterations = iteration;
+        }
+        if (progress) {
             lastProgressAt = Date.now();
             progress(`${label} · ${message}`);
         }
-        : (_message) => { };
+    };
     const started = Date.now();
     // Heartbeat. Event-driven progress alone is not enough: a `single-step`
     // agent emits exactly one IterationStart and then goes quiet for the whole
@@ -785,6 +779,7 @@ export async function runTurn(backend, agent, config, label, query, sessionId, c
             config,
             cwd,
             contextRoot,
+            signal,
             ...(maxIterations !== undefined ? { maxIterations } : {}),
         }, emit);
         const footer = formatFooter(label, config, result, Date.now() - started, sessionId);
@@ -793,6 +788,26 @@ export async function runTurn(backend, agent, config, label, query, sessionId, c
             text: `${result.answer}\n\n---\n${footer}`,
             failed: isFailedRun(result),
         };
+    }
+    catch (error) {
+        if (!(error instanceof BackendRunError) && !(error instanceof LLMCompletionError))
+            throw error;
+        const receipt = error instanceof BackendRunError ? error.receipt : error.usage ? {
+            iterations: observedIterations,
+            usage: error.usage,
+            // LLMCompletionError owns one failed logical operation, not the entire RLM
+            // run. Preserve that actual receipt without claiming unavailable run totals.
+            usageComplete: false,
+        } : undefined;
+        const answer = error instanceof BackendRunError && error.message === TIMEOUT_ANSWER
+            ? TIMEOUT_ANSWER
+            : `mikro ${label} failed: ${error.message}`;
+        // Complete observed receipts keep the existing priced footer; partial
+        // subtotals remain separate metadata and cannot enter a complete-run ledger.
+        const text = receipt
+            ? `${answer}\n\n---\n${formatFooter(label, config, { answer, ...receipt }, Date.now() - started, sessionId)}`
+            : answer;
+        return { answer, text, failed: true };
     }
     finally {
         if (heartbeat)
@@ -885,11 +900,6 @@ export async function runMcp(cwd = process.cwd()) {
             sessions.evictTools([name]);
             return textResult(`Unknown tool: ${name}`, true);
         }
-        if (agent?.unavailable) {
-            // Refuse up front: the run would die on its first model call with the
-            // same message, after paying for context loading and a REPL spawn.
-            return textResult(`mikro ${name} cannot run: ${agent.unavailable}`, true);
-        }
         const promptArg = readArg(args?.prompt);
         const queryArg = readArg(args?.query);
         if (promptArg && queryArg) {
@@ -927,19 +937,37 @@ export async function runMcp(cwd = process.cwd()) {
         }
         session.busy = true;
         try {
+            // Reject selectors before config/context/model work, through the existing
+            // session-bearing error envelope rather than inventing a second result shape.
+            if (args && Object.hasOwn(args, "backend"))
+                throw new Error("obsolete backend argument; use engine: rlm | pi | prime | prime-sdk");
+            const engine = args && Object.hasOwn(args, "engine")
+                ? parseEngine(args.engine)
+                : parseEngine(agent?.spec.engine !== undefined ? agent.spec.engine : "rlm");
             const baseConfig = await loadConfig(cwd);
+            const runAgent = agent ? { ...agent, unavailable: undefined, spec: { ...agent.spec, engine } } : undefined;
+            const modelOverride = !agent ? readArg(args?.model) : undefined;
+            const config = runAgent ? applyAgent(baseConfig, runAgent) : modelOverride ? applyModelOverride(baseConfig, modelOverride) : baseConfig;
+            // Discovery may be degraded for a different engine; validate THIS selection afresh.
+            if (engine === "rlm" || engine === "pi") {
+                const problem = checkModelConfig(config.model);
+                if (problem)
+                    throw new Error(problem);
+            }
+            if (engine === "pi") {
+                const problem = checkPiTools(runAgent, { config });
+                if (problem)
+                    throw new Error(problem);
+            }
+            else if (engine === "rlm" && runAgent) {
+                const [checked] = await validateAgentTools(cwd, [runAgent]);
+                if (checked?.unavailable)
+                    throw new Error(checked.unavailable);
+            }
             // Resume is conversation replay, not REPL state: every call builds a
             // fresh rlmLoop, and the prior turns ride in with the prompt.
             const query = buildResumeQuery(session.turns, prompt);
-            let outcome;
-            if (agent) {
-                outcome = await runTurn(selectBackend(agent), agent, applyAgent(baseConfig, agent), `agent=${agent.name}`, query, session.id, contextPath, cwd, progress, agentMaxIterations(agent));
-            }
-            else {
-                const override = readArg(args?.model);
-                const config = override ? applyModelOverride(baseConfig, override) : baseConfig;
-                outcome = await runTurn(selectBackend(undefined), undefined, config, "query", query, session.id, contextPath, cwd, progress);
-            }
+            const outcome = await runTurn(selectBackend(runAgent, engine), runAgent, config, agent ? `agent=${agent.name}` : "query", query, session.id, contextPath, cwd, progress, runAgent ? agentMaxIterations(runAgent) : undefined, extra.signal);
             // The turn is recorded either way: an aborted turn is still history the
             // follow-up may need to reference, and the caller was told it happened.
             sessions.record(session, { prompt, answer: outcome.answer });

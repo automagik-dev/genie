@@ -1,0 +1,34 @@
+{
+  "schemaVersion": 1,
+  "createdAt": "2026-10-07T07:43:05.777775+00:00",
+  "scope": "Final exact standalone required full deps:ci/build/check/test chain after allpaid108+18 and unchangedfinalreport-only, not root/remote/delivery.",
+  "job": "bg_99",
+  "actualSuccessfulCompletion": true,
+  "actualSeconds": 251.84,
+  "rawOutputArtifact": "artifact://774",
+  "commands": [
+    "env PATH=\"/home/genie/.hermes/node/bin:$PATH\" TMPDIR=/var/tmp npm --prefix mikro run deps:ci",
+    "env PATH=\"/home/genie/.hermes/node/bin:$PATH\" TMPDIR=/var/tmp npm --prefix mikro run build",
+    "env PATH=\"/home/genie/.hermes/node/bin:$PATH\" TMPDIR=/var/tmp npm --prefix mikro run check",
+    "env PATH=\"/home/genie/.hermes/node/bin:$PATH\" TMPDIR=/var/tmp npm --prefix mikro test"
+  ],
+  "allFourChainedCommandsReachedAndSucceeded": true,
+  "actualSummary": {
+    "tests": 1225,
+    "suites": 218,
+    "pass": 1225,
+    "fail": 0,
+    "cancelled": 0,
+    "skipped": 0,
+    "todo": 0,
+    "testDurationMs": 186256.320512
+  },
+  "dependenciesAdded": 322,
+  "warningsRetained": [
+    "git-raw-commits and node-domexception deprecations",
+    "npm install-scripts lists5packages notcovered by allowScripts: embedded-postgres/linux-x64, google/genai, bun1.3.11, esbuild, protobufjs; no unattendedapproval or dependencyrewrite made"
+  ],
+  "nestedLiveSmokeMarker": "Output includes LIVE LLM smoke SKIP whennoAPIkey; aggregate skipped0 recorded verbatim, not proof that an externalmodel call ran. Actual separatelysealedlive proofs remaindistinct.",
+  "paidRuntimePreservedBeforeRebuild": "G9-RECEIPT3-PAID-RUNTIME-PRESERVATION.json",
+  "currentRootGateInstallSmokeIntegratedReviewRemoteNotClaimed": true
+}

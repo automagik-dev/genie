@@ -15,6 +15,32 @@ Wish: `wish/tui-native-selection`.
 
 ## Unreleased
 
+### Selectable Mikro engines and independent source package
+
+- Mikro lives in the history-preserving `mikro/` Node/npm package with its own
+  lockfile, checks and CI; it remains outside the Genie binary and release payload.
+- `genie mikro call --engine rlm|pi` selects the real backend while retaining
+  schema and citation verification. RLM remains the default; agent `engine`
+  replaces the rejected legacy `backend` field. Pi uses isolated read-only native
+  tools and `emit_done`, not ambient plugins or RLM Python tool packs.
+- RLM timeout recovery loses the old namespace without replaying side effects;
+  stop/start ownership prevents a retired child from resurrecting. Bounded final
+  extraction remains inside the iteration/budget cap and enforces both schemas.
+- Settled recursive receipts survive cancellation exactly once. Partial provider
+  usage retains an unrounded observed subtotal, never a complete numeric footer
+  or a fabricated zero bill.
+- RLM cap and terminal provider failures retain cumulative observed root/IPC
+  usage and actual turns through the existing partial-failure boundary. Caller
+  cancellation preserves the timeout answer with partial observations and unknown
+  full totals; schema-invalid finals are failed MCP responses. No extra completion.
+- Explicit per-project Juice key references, literal catalogs and viewer-only
+  aggregate snapshots remain separate from canonical accounting. Manual JEV
+  extraction is explicit, source-linked and absent from ordinary model runs.
+- Frozen engine experiments hash complete physical fixture structure, including
+  symlink text without following targets; executable/dependency seal rules remain
+  separate and unchanged.
+
+
 ### `genie update` repaired for hosts on 5.260831.x
 
 5.260901.1 dropped the `.agents/` and `.claude-plugin/` directories from the

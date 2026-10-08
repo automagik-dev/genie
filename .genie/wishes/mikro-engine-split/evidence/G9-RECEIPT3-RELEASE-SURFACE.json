@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "command": "dist/linux-x64-glibc/genie --version && dist/linux-x64-glibc/genie mikro --help && dist/linux-x64-musl/genie --version && file ...",
+  "actualCommandExitCode": 127,
+  "actualSeconds": 0.96,
+  "glibcVersion": "6.261005.1",
+  "glibcMikroHelpObserved": [
+    "bench",
+    "call",
+    "coach",
+    "fixtures",
+    "init"
+  ],
+  "muslHostExecution": {
+    "success": false,
+    "message": "error: command not found: dist/linux-x64-musl/genie",
+    "cause": "not yet diagnosed; format/interpreter inspection next"
+  },
+  "remainingFileCommand": "not reached in this chain",
+  "allFourBuildAndExtractionProof": "G9-RECEIPT3-ALL-FOUR-RELEASE-PAYLOADS.json",
+  "otherArchitecturesRuntimeClaim": null,
+  "noFailureSuppression": true
+}

@@ -184,24 +184,24 @@ export function stationProvider(catalog = STATION_BASELINE_MODELS) {
  * network, and the baseline still resolves offline.
  */
 let stationOverlay = null;
+let stationApplied = new WeakSet();
 export async function ensureStationModels(models) {
     if (!stationOverlay) {
-        stationOverlay = (async () => {
-            const catalog = await fetchStationModels();
-            // fetchStationModels already falls back to the baseline and never
-            // throws; only re-register when it actually found more.
-            if (catalog.length > STATION_BASELINE_MODELS.length) {
-                models.setProvider(stationProvider(catalog));
-            }
-        })().catch(() => {
+        stationOverlay = fetchStationModels().catch(() => {
             stationOverlay = null;
+            return STATION_BASELINE_MODELS;
         });
     }
-    await stationOverlay;
+    const catalog = await stationOverlay;
+    if (!stationApplied.has(models) && catalog.length > STATION_BASELINE_MODELS.length) {
+        models.setProvider(stationProvider(catalog));
+        stationApplied.add(models);
+    }
 }
 /** Test seam: forget the memoized overlay. */
 export function resetStationModelsCache() {
     stationOverlay = null;
+    stationApplied = new WeakSet();
 }
 /**
  * Register the station provider on a pi-ai `Models` runtime. Call once per

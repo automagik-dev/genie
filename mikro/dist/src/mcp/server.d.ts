@@ -40,7 +40,7 @@
 import { type CallToolResult, type Tool } from "@modelcontextprotocol/sdk/types.js";
 import { type MikroConfig } from "../config.js";
 import { type Microagent } from "./agents.js";
-import type { MicroagentResult, RuntimeBackend } from "./backend.js";
+import { type MicroagentResult, type RuntimeBackend } from "./backend.js";
 /**
  * Emits `notifications/progress` for a single tool call.
  *
@@ -226,51 +226,20 @@ export declare function textResult(text: string, isError?: boolean): CallToolRes
  */
 export declare function sessionResult(text: string, sessionId: string, isError?: boolean): CallToolResult;
 /**
- * Did `rlmLoop` hand back a failure instead of an answer?
- *
- * Only rlmLoop's `throw` path reaches the catch in the call handler. Its two
- * non-throwing failures — the consecutive-empty-response abort and the
- * wall-clock timeout — *return* normally with their reason as the answer
- * (`src/rlm.ts`). Reported as a success, the host model reads "Error: aborted
- * after 3 consecutive empty LLM responses" as the delegated agent's report.
- * `src/cli.ts` treats the first of those as a failed run (exit 1 on
- * `budgetHit === "empty_responses"`); this is the MCP equivalent, keyed off the
- * same field.
- *
- * Each abort is matched by its own exact signal, because neither one alone
- * covers both:
- *
- *   - the empty-response abort sets `budgetHit = "empty_responses"`;
- *   - the timeout preserves whatever `budgetHit` the run had accumulated
- *     (usually none) and is identified by its verbatim answer.
- *
- * What must NOT be used is a prefix test on the answer. `answer` is the model's
- * own final text, and a report that legitimately opens with `Error: …` is a
- * normal outcome, not a failure — quoting the failing line out of a log is the
- * entire job of the shipped `log-triage` recipe. Flagging that as `isError`
- * hands the host a paid, correct run marked failed, which it may discard or
- * retry at double the cost.
- *
- * A genuine `max-cost`/`max-tokens`/`max-depth` budget hit is deliberately not
- * a failure either: it forces a real final answer — a shorter report — and
- * stays `isError: false`.
+ * Classify returned failures using explicit engine metadata, not an arbitrary
+ * "Error:" prefix in model-authored text. A schema-invalid answer remains the
+ * original observed payload, but is a failed MCP response. Budget-shortened
+ * valid answers remain successful.
  */
-export declare function isFailedRun(result: Pick<MicroagentResult, "answer" | "budgetHit">): boolean;
+export declare function isFailedRun(result: Pick<MicroagentResult, "answer" | "budgetHit" | "validationFailed">): boolean;
 export interface TurnOutcome {
     readonly answer: string;
     readonly text: string;
-    /** True when the run hit one of the backend's designed aborts (see {@link isFailedRun}). */
+    /** True for a designed abort or a failed operation preserved with its accounting receipt. */
     readonly failed: boolean;
 }
-/**
- * The backend a turn runs on.
- *
- * `mikro_query` (the generic tool) has no agent spec and therefore no
- * `backend` field: it always runs on the legacy backend, unconditionally —
- * there is no selection path for it. Agents default to `mikro` unless their
- * spec names another backend.
- */
-export declare function selectBackend(agent: Microagent | undefined): RuntimeBackend;
+/** Resolve strict per-call > agent > default precedence; never infer from shape. */
+export declare function selectBackend(agent: Microagent | undefined, engine?: unknown): RuntimeBackend;
 /**
  * Run one turn on one backend. `query` is already the resume-folded prompt;
  * `prompt` is the caller's own text, which is what gets recorded as the turn
@@ -283,7 +252,7 @@ export declare function selectBackend(agent: Microagent | undefined): RuntimeBac
  * and presentation stay server concerns while event translation stays the
  * backend's.
  */
-export declare function runTurn(backend: RuntimeBackend, agent: Microagent | undefined, config: MikroConfig, label: string, query: string, sessionId: string, contextPath: string | undefined, cwd: string, progress?: ProgressSink, maxIterations?: number): Promise<TurnOutcome>;
+export declare function runTurn(backend: RuntimeBackend, agent: Microagent | undefined, config: MikroConfig, label: string, query: string, sessionId: string, contextPath: string | undefined, cwd: string, progress?: ProgressSink, maxIterations?: number, signal?: AbortSignal): Promise<TurnOutcome>;
 /**
  * Run the MCP server on stdio until the client disconnects.
  *

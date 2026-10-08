@@ -111,8 +111,9 @@ export {
 	loadAgentSpec,
 	parseAgentSpec,
 	resolveAgentPath,
+	parseEngine,
 } from "./agent-spec.js";
-export type { AgentBudget, AgentScope, AgentSpec } from "./agent-spec.js";
+export type { AgentBudget, AgentScope, AgentSpec, Engine } from "./agent-spec.js";
 export {
 	createToolRegistry,
 	toolRegistryAsResolver,

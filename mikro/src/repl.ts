@@ -74,10 +74,13 @@ export const REPL_RESERVED_NAMES: ReadonlySet<string> = new Set([
   "pg_query",
 ]);
 
+/** Context snapshots are serialized once per subprocess generation. */
+export type REPLContext = string | unknown[] | Record<string, unknown>;
+
 /** Options passed to REPL.start() */
 export interface REPLStartOptions {
   /** Context to inject (string, list, or dict serialized as JSON string). */
-  context?: string | string[] | Record<string, unknown>;
+  context?: REPLContext;
   /** Custom tools to inject as Python code strings (name -> code). */
   tools?: Record<string, string>;
   /** Tool level: core (6 paper functions), standard (+ batteries), full (+ package info). */
@@ -92,11 +95,14 @@ export interface REPLStartOptions {
   serverPath?: string;
   /** Optional logger for crash events and diagnostics. */
   logger?: Logger;
+  /** Enclosing run cancellation/deadline; remains in force during recovery. */
+  signal?: AbortSignal;
 }
 
 /** Callback for handling LLM requests from the Python REPL. */
 export type LLMRequestHandler = (
-  request: LLMRequest
+  request: LLMRequest,
+  signal: AbortSignal
 ) => Promise<string[]>;
 
 export function defaultReplTimeoutMs(): number {
@@ -115,6 +121,47 @@ interface ToolRequestMessage {
 
 type ReplMessage = PythonToNode | ToolRequestMessage;
 
+const LLM_REQUEST_TYPES: Record<LLMRequest["request_type"], true> = {
+  llm_query: true, llm_query_batched: true, rlm_query: true, rlm_query_batched: true,
+  web_search: true, fetch_url: true, generate_image: true,
+  pg_search: true, pg_slice: true, pg_time: true, pg_count: true, pg_query: true,
+};
+
+/** Validate subprocess records before they enter the bridge message queue. */
+function parseReplMessage(value: unknown): ReplMessage | null {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
+  // JSON objects have been checked; fields remain unknown until narrowed below.
+  const record = value as Record<string, unknown>;
+  if (record.type === "ready") return { type: "ready" };
+  if (record.type === "tool_request" && typeof record.tool === "string") {
+    return { type: "tool_request", tool: record.tool, args: record.args };
+  }
+  if (record.type === "llm_request" && typeof record.request_type === "string" &&
+      Object.hasOwn(LLM_REQUEST_TYPES, record.request_type) && Array.isArray(record.prompts) &&
+      record.prompts.every((prompt: unknown) => typeof prompt === "string") &&
+      (record.model === undefined || typeof record.model === "string")) {
+    // The preceding allowlist checked the IPC request-type enum.
+    const requestType = record.request_type as LLMRequest["request_type"];
+    return { type: "llm_request", request_type: requestType, prompts: record.prompts, model: record.model };
+  }
+  if (record.type !== "execute_result" || typeof record.stdout !== "string" ||
+      typeof record.stderr !== "string" || !Array.isArray(record.variables) ||
+      !record.variables.every((name: unknown) => typeof name === "string") ||
+      (record.error !== undefined && typeof record.error !== "string")) return null;
+  const result: ExecuteResult = {
+    type: "execute_result", stdout: record.stdout, stderr: record.stderr,
+    variables: record.variables, error: record.error,
+  };
+  if (record.final !== undefined) {
+    if (typeof record.final !== "object" || record.final === null || Array.isArray(record.final)) return null;
+    // Checked object, with type/value still unknown.
+    const final = record.final as Record<string, unknown>;
+    if ((final.type !== "var" && final.type !== "inline") || typeof final.value !== "string") return null;
+    result.final = { type: final.type, value: final.value };
+  }
+  return result;
+}
+
 type ToolResponseMessage =
   | { type: "tool_response"; ok: true; result: unknown }
   | { type: "tool_response"; ok: false; error: string };
@@ -128,6 +175,14 @@ function errorString(value: unknown): string {
   }
 }
 
+/** A block ran once, timed out, and lost its namespace; execute never replays it. */
+export class REPLTimeoutError extends Error {
+  constructor(readonly timeoutMs: number) {
+    super(`REPL execution timed out after ${timeoutMs}ms. The REPL was restarted with original context and tools; all user-created variables were lost. The timed-out block was not replayed.`);
+    this.name = "REPLTimeoutError";
+  }
+}
+
 export class REPL {
   private process: ChildProcess | null = null;
   private readline: Interface | null = null;
@@ -137,11 +192,15 @@ export class REPL {
   private llmHandler: LLMRequestHandler | null = null;
   private toolHandler: ToolResolver | null = null;
   private messageBuffer: ReplMessage[] = [];
-  private readonly toolSignal = new AbortController().signal;
+  private generation = 0;
+  private lifecycle = 0;
+  private childController = new AbortController();
+  private removeRunAbort: (() => void) | null = null;
 
   // Crash recovery state
   private _startOptions: REPLStartOptions = {};
   private _recovering = false;
+  private _initializing = false;
 
   // Battery tracking
   private _batteriesUsed = new Set<string>();
@@ -163,7 +222,27 @@ export class REPL {
 
   /** Start the Python REPL subprocess. */
   async start(options: REPLStartOptions = {}): Promise<void> {
-    this._startOptions = options;
+    options.signal?.throwIfAborted();
+    const lifecycle = ++this.lifecycle;
+    this._recovering = false;
+    this._initializing = false;
+    this._skipTracking = false;
+    await this._start(options, lifecycle);
+  }
+
+  /** Startup and recovery keep ownership across every asynchronous boundary. */
+  private async _start(options: REPLStartOptions, lifecycle: number): Promise<void> {
+    this._assertLifecycle(lifecycle);
+    options.signal?.throwIfAborted();
+    if (this.process) await this._detachAndWait(true);
+    this._assertLifecycle(lifecycle);
+    options.signal?.throwIfAborted();
+    this._startOptions = {
+      ...options,
+      context: options.context === undefined ? undefined : structuredClone(options.context),
+      tools: options.tools ? { ...options.tools } : undefined,
+    };
+    options = this._startOptions;
     this._logger = options.logger ?? null;
 
     const pythonPath = options.pythonPath ?? "python3";
@@ -177,18 +256,36 @@ export class REPL {
       },
     });
 
-    this.readline = createInterface({ input: this.process.stdout! });
+    const child = this.process;
+    const generation = ++this.generation;
+    this.childController = new AbortController();
+    this.readline = createInterface({ input: child.stdout! });
+    const rejectChild = (error: Error): void => {
+      if (this.process !== child || this.generation !== generation) return;
+      this.ready = false;
+      this._rejectPending(error);
+    };
+    // Writable errors are asynchronous (not caught by write()); always own EPIPE.
+    child.stdin?.on("error", rejectChild);
+    child.on("error", rejectChild);
+    const onAbort = (): void => {
+      rejectChild(new Error("REPL run cancelled", { cause: options.signal?.reason }));
+      this.childController.abort(options.signal?.reason);
+      child.kill("SIGKILL");
+    };
+    options.signal?.addEventListener("abort", onAbort, { once: true });
+    this.removeRunAbort = () => options.signal?.removeEventListener("abort", onAbort);
 
     // Route each JSON line from Python
     this.readline.on("line", (line: string) => {
-      let msg: ReplMessage;
+      let msg: ReplMessage | null;
       try {
-        msg = JSON.parse(line) as ReplMessage;
+        const value: unknown = JSON.parse(line);
+        msg = parseReplMessage(value);
       } catch {
-        // Not JSON — ignore (should not happen with correct server)
         return;
       }
-      this._handleMessage(msg);
+      if (msg && this.process === child && this.generation === generation) this._handleMessage(msg);
     });
 
     // Collect stderr for diagnostics
@@ -197,58 +294,58 @@ export class REPL {
     });
 
     // Detect unexpected subprocess exit for crash recovery
-    this.process.on("exit", () => {
-      this.ready = false;
-      if (this.pendingReject) {
-        this.pendingReject(new Error("REPL subprocess exited unexpectedly"));
-        this.pendingReject = null;
-        this.pendingResolve = null;
-      }
+    child.on("exit", () => {
+      rejectChild(new Error("REPL subprocess exited unexpectedly"));
     });
 
-    // Wait for the "ready" message
-    await this._waitForMessage("ready");
-    this.ready = true;
-
-    // Inject context if provided
-    if (options.context !== undefined) {
-      await this._injectContext(options.context);
+    try {
+      await this._waitForMessage("ready");
+      this._assertLifecycle(lifecycle);
+      options.signal?.throwIfAborted();
+      this.ready = true;
+    } catch (error) {
+      if (lifecycle === this.lifecycle) await this._detachAndWait(true);
+      throw error;
     }
 
-    // Inject custom tools if provided
-    if (options.tools) {
-      for (const [name, code] of Object.entries(options.tools)) {
-        try {
-          const result = await this.execute(code);
-          if (result.error) throw new Error(result.error);
-        } catch (err: unknown) {
-          // A partially installed namespace must never look ready, including
-          // when start() is reinstalling tools during crash recovery.
-          await this.stop().catch(() => {});
-          throw new Error(`Failed to install REPL tool ${JSON.stringify(name)}: ${errorString(err)}`);
+    this._initializing = true;
+    try {
+      if (options.context !== undefined) {
+        await this._injectContext(options.context);
+        this._assertLifecycle(lifecycle);
+      }
+      if (options.tools) {
+        for (const [name, code] of Object.entries(options.tools)) {
+          try {
+            const result = await this.execute(code);
+            this._assertLifecycle(lifecycle);
+            if (result.error) throw new Error(result.error);
+          } catch (error: unknown) {
+            throw new Error(`Failed to install REPL tool ${JSON.stringify(name)}: ${errorString(error)}`);
+          }
         }
       }
-    }
-
-    // Load batteries for standard/full tool levels
-    const level = options.toolsLevel ?? "core";
-    if (level === "standard" || level === "full") {
-      await this._loadBatteries();
-
-      // Load Gemini batteries when requested (Google provider with standard/full tools)
-      if (options.loadGeminiBatteries) {
-        await this._loadGeminiBatteries();
+      const level = options.toolsLevel ?? "core";
+      if (level === "standard" || level === "full") {
+        await this._loadBatteries(lifecycle);
+        if (options.loadGeminiBatteries) await this._loadGeminiBatteries(lifecycle);
       }
-    }
-
-    // Load pg_batteries when storage mode is active (independent of tools level)
-    if (options.loadPgBatteries) {
-      await this._loadPgBatteries();
+      if (options.loadPgBatteries) await this._loadPgBatteries(lifecycle);
+      this._assertLifecycle(lifecycle);
+      options.signal?.throwIfAborted();
+    } catch (error: unknown) {
+      if (lifecycle === this.lifecycle) await this._detachAndWait(true);
+      throw error;
+    } finally {
+      if (lifecycle === this.lifecycle) this._initializing = false;
     }
   }
 
   /** Execute Python code in the REPL and return the result. */
   async execute(code: string, timeoutMs = defaultReplTimeoutMs()): Promise<ExecuteResult> {
+    this._startOptions.signal?.throwIfAborted();
+    const lifecycle = this.lifecycle;
+    const options = this._startOptions;
     // Distinguish "never started" from "started but crashed"
     if (!this.process) {
       throw new Error("REPL not started. Call start() first.");
@@ -259,7 +356,8 @@ export class REPL {
       return this._recoverAndRetry(
         code,
         timeoutMs,
-        new Error("REPL subprocess exited unexpectedly")
+        new Error("REPL subprocess exited unexpectedly"),
+        lifecycle
       );
     }
 
@@ -274,9 +372,31 @@ export class REPL {
       this._send({ type: "execute", code });
       return await this._waitForExecuteResult(timeoutMs);
     } catch (err: unknown) {
+      this._assertLifecycle(lifecycle);
+      if (err instanceof REPLTimeoutError) {
+        // Kill and wait before installing a replacement; never rerun code.
+        await this._detachAndWait(true);
+        this._assertLifecycle(lifecycle);
+        options.signal?.throwIfAborted();
+        if (this._recovering || this._initializing) {
+          throw new Error("REPL initialization timed out; no code was replayed", { cause: err });
+        }
+        this._recovering = true;
+        try {
+          await this._start(options, lifecycle);
+        } catch (restartError: unknown) {
+          if (lifecycle === this.lifecycle) await this._detachAndWait(true);
+          throw new Error(`REPL timeout recovery failed; user-created variables were lost. ${errorString(restartError)}`, { cause: restartError });
+        } finally {
+          if (lifecycle === this.lifecycle) this._recovering = false;
+        }
+        throw err;
+      }
+      this._startOptions.signal?.throwIfAborted();
+      if (!this.process) throw err; // stop() owns a detached generation.
       // Attempt crash recovery if process died (not during recovery itself)
-      if (!this._recovering && !this.isRunning()) {
-        return this._recoverAndRetry(code, timeoutMs, err instanceof Error ? err : new Error(String(err)));
+      if (!this._recovering && !this._initializing && !this.isRunning()) {
+        return this._recoverAndRetry(code, timeoutMs, err instanceof Error ? err : new Error(String(err)), lifecycle);
       }
       throw err;
     }
@@ -291,36 +411,16 @@ export class REPL {
 
   /** Stop the Python subprocess. */
   async stop(): Promise<void> {
-    if (!this.process) return;
-
-    try {
-      this._send({ type: "shutdown" });
-    } catch {
-      // stdin may already be closed
-    }
-
-    // Give it 2s to exit gracefully, then kill
-    await new Promise<void>((resolve) => {
-      const timeout = setTimeout(() => {
-        this.process?.kill("SIGKILL");
-        resolve();
-      }, 2000);
-
-      this.process!.on("exit", () => {
-        clearTimeout(timeout);
-        resolve();
-      });
-    });
-
-    this.readline?.close();
-    this.process = null;
-    this.readline = null;
-    this.ready = false;
+    this.lifecycle++;
+    this._recovering = false;
+    this._initializing = false;
+    this._skipTracking = false;
+    await this._detachAndWait(false);
   }
 
   /** Check if the REPL subprocess is running. */
   isRunning(): boolean {
-    return this.ready && this.process !== null && this.process.exitCode === null;
+    return this.ready && this.process !== null && this.process.exitCode === null && this.process.signalCode === null;
   }
 
   /** Get list of battery functions that were called during this session. */
@@ -334,26 +434,73 @@ export class REPL {
   }
 
   // ─── Internal ────────────────────────────────────────────
+  private _assertLifecycle(lifecycle: number): void {
+    if (lifecycle !== this.lifecycle) {
+      throw new Error("REPL lifecycle cancelled by stop() or a newer start()");
+    }
+  }
 
-  private async _loadBatteries(): Promise<void> {
+  private _rejectPending(error: Error): void {
+    const reject = this.pendingReject;
+    this.pendingResolve = null;
+    this.pendingReject = null;
+    reject?.(error);
+  }
+
+  /** Retire this generation synchronously, then wait for its actual exit. */
+  private async _detachAndWait(kill: boolean): Promise<void> {
+    const child = this.process;
+    if (!child) return;
+    if (!kill && child.exitCode === null && child.signalCode === null) {
+      try { this._send({ type: "shutdown" }); } catch { /* Already dead. */ }
+    }
+    this.process = null;
+    this.ready = false;
+    this.generation++;
+    this.removeRunAbort?.();
+    this.removeRunAbort = null;
+    this.childController.abort(new Error("REPL generation retired"));
+    this.readline?.close();
+    this.readline = null;
+    this.messageBuffer = [];
+    this._rejectPending(new Error("REPL generation retired"));
+    if (child.exitCode === null && child.signalCode === null && child.pid !== undefined) {
+      await new Promise<void>((resolve) => {
+        const timer = setTimeout(() => child.kill("SIGKILL"), 2_000);
+        child.once("exit", () => { clearTimeout(timer); resolve(); });
+        if (kill) child.kill("SIGKILL");
+      });
+    }
+    child.stdin?.destroy();
+    child.stdout?.destroy();
+    child.stderr?.destroy();
+  }
+
+  private async _loadBatteries(lifecycle: number): Promise<void> {
     const code = await readFile(BATTERIES_PATH, "utf-8");
+    this._assertLifecycle(lifecycle);
     // Skip battery tracking for the definition code itself
     this._skipTracking = true;
     await this.execute(code);
+    this._assertLifecycle(lifecycle);
     this._skipTracking = false;
   }
 
-  private async _loadGeminiBatteries(): Promise<void> {
+  private async _loadGeminiBatteries(lifecycle: number): Promise<void> {
     const code = await readFile(GEMINI_BATTERIES_PATH, "utf-8");
+    this._assertLifecycle(lifecycle);
     this._skipTracking = true;
     await this.execute(code);
+    this._assertLifecycle(lifecycle);
     this._skipTracking = false;
   }
 
-  private async _loadPgBatteries(): Promise<void> {
+  private async _loadPgBatteries(lifecycle: number): Promise<void> {
     const code = await readFile(PG_BATTERIES_PATH, "utf-8");
+    this._assertLifecycle(lifecycle);
     this._skipTracking = true;
     await this.execute(code);
+    this._assertLifecycle(lifecycle);
     this._skipTracking = false;
   }
 
@@ -376,8 +523,11 @@ export class REPL {
   private async _recoverAndRetry(
     code: string,
     timeoutMs: number,
-    originalError: Error
+    originalError: Error,
+    lifecycle: number
   ): Promise<ExecuteResult> {
+    this._assertLifecycle(lifecycle);
+    const options = this._startOptions;
     this._recovering = true;
     this._logger?.log("repl_exec", {
       crash_recovery: true,
@@ -386,37 +536,36 @@ export class REPL {
     });
 
     try {
-      // Clean up dead process state
-      this.readline?.close();
-      this.process = null;
-      this.readline = null;
-      this.ready = false;
-      this.messageBuffer = [];
-      this.pendingResolve = null;
-      this.pendingReject = null;
-
-      // Restart with same options
-      await this.start(this._startOptions);
+      await this._detachAndWait(true);
+      this._assertLifecycle(lifecycle);
+      options.signal?.throwIfAborted();
+      // Restart with same options, unless explicit lifecycle control intervened.
+      await this._start(options, lifecycle);
+      this._assertLifecycle(lifecycle);
 
       // Retry execution once
       this._send({ type: "execute", code });
       return await this._waitForExecuteResult(timeoutMs);
     } catch (retryErr) {
+      if (lifecycle === this.lifecycle) await this._detachAndWait(true);
       throw new Error(
         `REPL subprocess crashed and recovery failed. ` +
           `Original: ${originalError.message}. ` +
-          `Retry: ${(retryErr as Error).message}`
+          `Retry: ${errorString(retryErr)}`
       );
     } finally {
-      this._recovering = false;
+      if (lifecycle === this.lifecycle) this._recovering = false;
     }
   }
 
   private _send(msg: Record<string, unknown>): void {
-    if (!this.process?.stdin?.writable) {
+    const child = this.process;
+    if (!child?.stdin?.writable || child.stdin.destroyed || child.exitCode !== null || child.signalCode !== null) {
       throw new Error("REPL subprocess stdin not writable");
     }
-    this.process.stdin.write(JSON.stringify(msg) + "\n");
+    child.stdin.write(JSON.stringify(msg) + "\n", (error) => {
+      if (error && this.process === child) this._rejectPending(error);
+    });
   }
 
   private _handleMessage(msg: ReplMessage): void {
@@ -430,6 +579,9 @@ export class REPL {
   }
 
   private _nextMessage(): Promise<ReplMessage> {
+    if (!this.process || this.process.exitCode !== null || this.process.signalCode !== null) {
+      return Promise.reject(new Error("REPL subprocess exited unexpectedly"));
+    }
     // Check buffer first
     if (this.messageBuffer.length > 0) {
       return Promise.resolve(this.messageBuffer.shift()!);
@@ -447,6 +599,7 @@ export class REPL {
     return new Promise<ReplMessage>((resolve, reject) => {
       const timeout = setTimeout(() => {
         reject(new Error(`Timeout waiting for "${expectedType}" message`));
+        this._rejectPending(new Error(`Timeout waiting for "${expectedType}" message`));
       }, timeoutMs);
 
       const check = async () => {
@@ -473,38 +626,51 @@ export class REPL {
     timeoutMs: number
   ): Promise<ExecuteResult> {
     return new Promise<ExecuteResult>((resolve, reject) => {
+      const generation = this.generation;
+      const signal = this.childController.signal;
       let settled = false;
 
       const timeout = setTimeout(() => {
         if (!settled) {
           settled = true;
-          // Kill the subprocess on timeout
-          this.process?.kill("SIGKILL");
-          reject(new Error(`REPL execution timed out after ${timeoutMs}ms`));
+          const error = new REPLTimeoutError(timeoutMs);
+          this.childController.abort(error);
+          this._rejectPending(error);
+          reject(error);
         }
       }, timeoutMs);
+      const onAbort = (): void => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeout);
+        reject(signal.reason);
+      };
+      signal.addEventListener("abort", onAbort, { once: true });
+      if (signal.aborted) onAbort();
 
       const processMessages = async () => {
         while (!settled) {
           const msg = await this._nextMessage();
+          if (settled || generation !== this.generation) return;
 
           if (msg.type === "execute_result") {
             if (!settled) {
               settled = true;
               clearTimeout(timeout);
-              resolve(msg as ExecuteResult);
+              signal.removeEventListener("abort", onAbort);
+              resolve(msg);
             }
             return;
           }
 
           if (msg.type === "llm_request") {
             // Handle LLM request from Python
-            const llmReq = msg as LLMRequest;
+            const llmReq = msg;
             let results: string[];
 
             if (this.llmHandler) {
               try {
-                results = await this.llmHandler(llmReq);
+                results = await this.llmHandler(llmReq, signal);
               } catch (err: unknown) {
                 const msg = err instanceof Error ? err.message : String(err);
                 results = llmReq.prompts.map(
@@ -517,12 +683,12 @@ export class REPL {
               );
             }
 
-            // Send response back to Python
+            if (settled || generation !== this.generation) return;
             this._send({ type: "llm_response", results });
           }
 
           if (msg.type === "tool_request") {
-            await this._handleToolRequest(msg);
+            await this._handleToolRequest(msg, generation, signal);
           }
           // Other message types during execution — ignore
         }
@@ -532,6 +698,7 @@ export class REPL {
         if (!settled) {
           settled = true;
           clearTimeout(timeout);
+          signal.removeEventListener("abort", onAbort);
           reject(err);
         }
       });
@@ -539,7 +706,7 @@ export class REPL {
   }
 
   /** Handle a tool request without allowing bridge failures to reject execute(). */
-  private async _handleToolRequest(request: ToolRequestMessage): Promise<void> {
+  private async _handleToolRequest(request: ToolRequestMessage, generation: number, signal: AbortSignal): Promise<void> {
     let response: ToolResponseMessage;
 
     try {
@@ -550,7 +717,7 @@ export class REPL {
       const result = await this.toolHandler(
         request.tool,
         request.args,
-        this.toolSignal
+        signal
       );
       const serialized = JSON.stringify(result);
       if (serialized === undefined) {
@@ -568,6 +735,7 @@ export class REPL {
         error: errorString(err),
       };
     }
+    if (signal.aborted || generation !== this.generation) return;
 
     try {
       this._send(response);
@@ -587,7 +755,7 @@ export class REPL {
   }
 
   private async _injectContext(
-    context: string | string[] | Record<string, unknown>
+    context: REPLContext
   ): Promise<void> {
     let value: string;
     let valueType: "str" | "list" | "dict";

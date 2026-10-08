@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "ownerAuthorized": true,
+  "approvalRef": "Current-session manifestBinding answer: Explicit native-manifest binding",
+  "recordedAt": "2026-10-06T04:05:12.755459Z",
+  "problem": "Engine preflight requires hash-sealed genuine native-smoke evidence before freeze; that smoke carries the same whole-manifest hash required by scored native dispatch and engine native comparison, forming a self-referential hash cycle.",
+  "approvedOldToNew": {
+    "old": "Native comparison raw-manifest SHA equals combined engine raw-input manifest SHA",
+    "new": "Independent immutable native input file explicitly sealed in engine workflow reference; native smoke and18scored runs share exact native input SHA; engine supplied/normalized input identities remain separate, all native args/resources/cells must match frozen reference"
+  },
+  "correctnessRepairBudgetOverride": {
+    "oldBudget": 2,
+    "newBudget": 3,
+    "authorizedAdditionalCycles": 1
+  },
+  "qualityRepairCap": 1,
+  "independentReReviewsRequired": true,
+  "notAuthorized": [
+    "duplicate second genuine native smoke solely for hashcycle",
+    "shipping SDK/config/API/caller/consumer changes",
+    "automatic rerun/resample/resume",
+    "Pro or Claude calls",
+    "Luna default-tier substitution",
+    "production push/merge/install"
+  ],
+  "scoredCellsAtDecision": 0,
+  "genuineNativeRunsAtDecision": 0
+}

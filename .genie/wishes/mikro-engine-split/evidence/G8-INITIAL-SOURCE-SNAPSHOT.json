@@ -1,0 +1,127 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-10-06T02:51:14.284653+00:00",
+  "scope": "Group8 initial implementation review only; no scored/native outcomes",
+  "baseSha": "0fe62de3e2292fe1cc3eeb7f80068c0ee17918c7",
+  "groupTask": "t_muuj0u8n1d85b0f4",
+  "correctnessRepair": 0,
+  "correctnessCap": 2,
+  "qualityRepair": 0,
+  "qualityCap": 1,
+  "effortEscalations": 0,
+  "sourceFiles": [
+    {
+      "path": "scripts/mikro/engine-experiment.ts",
+      "sha256": "7dbb380ea30ea9379f53f1cb0815209956b722424ede3a8dd6750cbce07b8659",
+      "bytes": 54127
+    },
+    {
+      "path": "scripts/mikro/engine-experiment-runtime.mjs",
+      "sha256": "98fc558b78dde2fc2f272e51ffecc2d798294800fd9ef4fca46ae188484a47dd",
+      "bytes": 19656
+    },
+    {
+      "path": "scripts/mikro/engine-experiment.test.ts",
+      "sha256": "4a7eeb5bc52d3dfcbee04d9d1397442150522dbad240911b49e36bbb6d5bc9f3",
+      "bytes": 2172
+    },
+    {
+      "path": ".genie/wishes/mikro-engine-split/experiments/native-workflow-observer.mjs",
+      "sha256": "6fff943f1caebc3ce914a7b1653727c975005383d75b1d9f5563c7ab683f4845",
+      "bytes": 50872
+    },
+    {
+      "path": ".genie/wishes/mikro-engine-split/experiments/native-session-accounting.mjs",
+      "sha256": "541a2d33f6b6715d52683ef5c8a35041e2d8caa05cad38fd3cca0028a17d91cc",
+      "bytes": 14692
+    }
+  ],
+  "checks": {
+    "rootTypecheck": {
+      "command": "bun run typecheck",
+      "exitCode": 0
+    },
+    "focusedOperator": {
+      "command": "bun test scripts/mikro/engine-experiment.test.ts",
+      "pass": 2,
+      "fail": 0,
+      "expects": 42,
+      "exitCode": 0,
+      "marker": "G8_FOCUSED_OPERATOR_EXIT=0"
+    },
+    "mjsSyntax": {
+      "command": "Node26 --check on runtime bridge/observer/accounting",
+      "exitCode": 0
+    },
+    "scopeNote": "Root tsconfig includes src only and Biome basename mikro ignore excludes scripts/mikro; new TS formatter used explicit private copied-style config, source independent reviews and actual execution remain necessary"
+  },
+  "forgeAuthorization": {
+    "ownerChoice": "Two private experiment repositories",
+    "scope": {
+      "repositories": 2,
+      "realExperimentalPullRequests": 18,
+      "productionSideEffects": false
+    },
+    "actualCreated": [
+      "automagik-genie/mikro-engine-split-genie-20261006",
+      "automagik-genie/mikro-engine-split-brain-20261006"
+    ],
+    "actualPrivateRepositoryIds": [
+      1406603445,
+      1406603438
+    ],
+    "unscoredSmoke": "isolated-local to avoid nineteenth PR"
+  },
+  "fixtureMaterialization": [
+    {
+      "id": "genie-existing",
+      "dir": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-fixtures/genie-existing",
+      "head": "a73db92d26ff99cb1cc91adbec1e0294c793bb2f",
+      "tree": "61617fb0a737ef9342952c8a3463b1c11d82d573",
+      "commonDir": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-fixtures/genie-existing/.git",
+      "independentCommonDir": true,
+      "borrowedObjects": false,
+      "newPathsAbsent": true,
+      "truthRetained": 2,
+      "originalRefMutation": false
+    },
+    {
+      "id": "brain-existing",
+      "dir": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-fixtures/brain-existing",
+      "head": "47e36743d643edc030a2a415155a683cb6692cae",
+      "tree": "6fdc6c88d5fb0c2c19a92256c43bed695866ed70",
+      "commonDir": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-fixtures/brain-existing/.git",
+      "independentCommonDir": true,
+      "borrowedObjects": false,
+      "newPathsAbsent": true,
+      "truthRetained": 3,
+      "originalRefMutation": false
+    },
+    {
+      "id": "brain-new-directory",
+      "dir": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-fixtures/brain-new-directory",
+      "head": "77b67f4375190383d3b2b2d0102ebf717758758b",
+      "tree": "d7c62a2aa467ddc3442b168669f77b1ddfccd003",
+      "commonDir": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-fixtures/brain-new-directory/.git",
+      "independentCommonDir": true,
+      "borrowedObjects": false,
+      "newPathsAbsent": true,
+      "truthRetained": 12,
+      "originalRefMutation": false
+    },
+    {
+      "id": "genie-new-directory",
+      "dir": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-fixtures/genie-new-directory",
+      "head": "2f32857edb06e5db23eb51fae668fe4899aeebb9",
+      "tree": "b955b8b12d56fb2ac14cd45016412869221f77fa",
+      "commonDir": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-fixtures/genie-new-directory/.git",
+      "independentCommonDir": true,
+      "borrowedObjects": false,
+      "newPathsAbsent": true,
+      "truthRetained": 20,
+      "originalRefMutation": false
+    }
+  ],
+  "noModelCallsByEngineers": true,
+  "noSourceRuntimeChangesG2throughG7": true
+}

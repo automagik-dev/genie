@@ -1,0 +1,377 @@
+{
+  "schemaVersion": 1,
+  "scope": "Actual existing immutable completed108 records, without new inference, resampling, consumer/source repair or reclassification.",
+  "createdAt": "2026-10-07T02:17:13.520597+00:00",
+  "cohortSha256": "b4bd38ee49eb678406a18d72f436144f3e435f8812ca80d1d84148e2f1bb8728",
+  "affectedLogicalRuns": 7,
+  "partialCanonicalAttempts": 10,
+  "observedCauseClasses": [
+    "Eight patched RLM maxIterations cap failures across five cells preserve actual immutable usage snapshots and16 root turns via BackendRunError; usageComplete:false is deliberate existing contract, so fulltotal stays unknown.",
+    "One old unpatchedcontrol REPL timeout lacks usage; historical baseline not patched or resampled.",
+    "One Pi provider error after12iterations reports11observed LLMcalls withpartialusage; diagnostic credential content omitted by existing file-reference authentication boundary."
+  ],
+  "missingUnknownUsageRecoveryClaim": false,
+  "completeInvoiceClaim": false,
+  "repairWithinCurrentScopeAuthorized": false,
+  "blockedUntil": "Final report and independent engine/native review must retain unknown SDK full totals, native dollar bill and gateway invoice as unknown; no fabricated zero, silent consumer rewrite, outcome-driven extra completion or exhausted G8 budget repair.",
+  "runs": [
+    {
+      "cellId": "g8-engine-genie-new-directory-flash-control-rlm-unpatched-r2",
+      "verifiedAfterAllowedRetry": false,
+      "observedSdkNominalKnownSubtotalUsd": 0.0391266,
+      "sdkNominalTotalUsd": null,
+      "allAttempts": [
+        {
+          "id": "7bbb20dc-c051-4471-b0f3-40c5ef14c9a7",
+          "sessionId": "sess_fb7ab22903b9bd40",
+          "failed": true,
+          "observed": {
+            "kind": "thrown",
+            "iterations": null,
+            "usageComplete": false,
+            "usage": null,
+            "errorType": "Error",
+            "error": "REPL execution timed out after 30000ms"
+          },
+          "errorType": "Error",
+          "error": "REPL execution timed out after 30000ms"
+        },
+        {
+          "id": "0d4071f8-af2b-4a08-a67a-d2f1c0e339d5",
+          "sessionId": "sess_cc2f201290355303",
+          "failed": false,
+          "observed": {
+            "kind": "returned",
+            "iterations": 16,
+            "budgetHit": null,
+            "usageComplete": true,
+            "usage": {
+              "inputTokens": 39378,
+              "outputTokens": 22761,
+              "totalCost": 0.0391266
+            },
+            "validationFailed": false
+          },
+          "errorType": null,
+          "error": null
+        }
+      ]
+    },
+    {
+      "cellId": "g8-engine-genie-existing-glm-5-3-flash-rlm-patched-r2",
+      "verifiedAfterAllowedRetry": true,
+      "observedSdkNominalKnownSubtotalUsd": 0.09105794999999998,
+      "sdkNominalTotalUsd": null,
+      "allAttempts": [
+        {
+          "id": "d51e70b3-cb02-4eac-aa9f-505742a08925",
+          "sessionId": "sess_a324c8783c0921e3",
+          "failed": true,
+          "observed": {
+            "kind": "thrown",
+            "iterations": 16,
+            "usageComplete": false,
+            "usage": {
+              "inputTokens": 191982,
+              "outputTokens": 12333,
+              "totalCost": 0.04036284,
+              "cacheReadTokens": 179968,
+              "cacheWriteTokens": 0,
+              "llmCalls": 16,
+              "reasoningTokens": 2029
+            },
+            "errorType": "BackendRunError",
+            "error": "RLM maxIterations exhausted without a complete final answer (16 model turns)"
+          },
+          "errorType": null,
+          "error": null
+        },
+        {
+          "id": "14d21112-68fc-47b0-9b63-f35180d3ada4",
+          "sessionId": "sess_32978a37bad7c4b2",
+          "failed": false,
+          "observed": {
+            "kind": "returned",
+            "iterations": 16,
+            "budgetHit": null,
+            "usageComplete": true,
+            "usage": {
+              "inputTokens": 213925,
+              "outputTokens": 16446,
+              "totalCost": 0.05069510999999999
+            },
+            "validationFailed": false
+          },
+          "errorType": null,
+          "error": null
+        }
+      ]
+    },
+    {
+      "cellId": "g8-engine-genie-existing-glm-5-3-flash-rlm-patched-r3",
+      "verifiedAfterAllowedRetry": true,
+      "observedSdkNominalKnownSubtotalUsd": 0.11451207999999999,
+      "sdkNominalTotalUsd": null,
+      "allAttempts": [
+        {
+          "id": "7bceca83-57a5-41d1-8da2-ab690c55c966",
+          "sessionId": "sess_b0257f03fe9b9750",
+          "failed": true,
+          "observed": {
+            "kind": "thrown",
+            "iterations": 16,
+            "usageComplete": false,
+            "usage": {
+              "inputTokens": 131280,
+              "outputTokens": 57677,
+              "totalCost": 0.07342905999999999,
+              "cacheReadTokens": 829952,
+              "cacheWriteTokens": 0,
+              "llmCalls": 16,
+              "reasoningTokens": 4670
+            },
+            "errorType": "BackendRunError",
+            "error": "RLM maxIterations exhausted without a complete final answer (16 model turns)"
+          },
+          "errorType": null,
+          "error": null
+        },
+        {
+          "id": "e043a6f6-b5da-4d03-befb-a5dfc3e78fb4",
+          "sessionId": "sess_953bfeb632875537",
+          "failed": false,
+          "observed": {
+            "kind": "returned",
+            "iterations": 16,
+            "budgetHit": null,
+            "usageComplete": true,
+            "usage": {
+              "inputTokens": 144020,
+              "outputTokens": 18393,
+              "totalCost": 0.041083020000000005
+            },
+            "validationFailed": false
+          },
+          "errorType": null,
+          "error": null
+        }
+      ]
+    },
+    {
+      "cellId": "g8-engine-brain-existing-glm-5-3-flash-rlm-patched-r1",
+      "verifiedAfterAllowedRetry": false,
+      "observedSdkNominalKnownSubtotalUsd": 0.06895949999999999,
+      "sdkNominalTotalUsd": null,
+      "allAttempts": [
+        {
+          "id": "e20a2625-98c8-46c3-8dab-3c1aaad57722",
+          "sessionId": "sess_4fb4871a6830ec8f",
+          "failed": true,
+          "observed": {
+            "kind": "thrown",
+            "iterations": 16,
+            "usageComplete": false,
+            "usage": {
+              "inputTokens": 136553,
+              "outputTokens": 10049,
+              "totalCost": 0.029900409999999995,
+              "cacheReadTokens": 146432,
+              "cacheWriteTokens": 0,
+              "llmCalls": 16,
+              "reasoningTokens": 1581
+            },
+            "errorType": "BackendRunError",
+            "error": "RLM maxIterations exhausted without a complete final answer (16 model turns)"
+          },
+          "errorType": null,
+          "error": null
+        },
+        {
+          "id": "6f01abfd-359f-4bfb-9fcf-ebe5b3d6ea91",
+          "sessionId": "sess_faee4ed4706bc0ec",
+          "failed": true,
+          "observed": {
+            "kind": "thrown",
+            "iterations": 16,
+            "usageComplete": false,
+            "usage": {
+              "inputTokens": 163503,
+              "outputTokens": 9514,
+              "totalCost": 0.03905909,
+              "cacheReadTokens": 325888,
+              "cacheWriteTokens": 0,
+              "llmCalls": 16,
+              "reasoningTokens": 2390
+            },
+            "errorType": "BackendRunError",
+            "error": "RLM maxIterations exhausted without a complete final answer (16 model turns)"
+          },
+          "errorType": null,
+          "error": null
+        }
+      ]
+    },
+    {
+      "cellId": "g8-engine-brain-existing-glm-5-3-flash-rlm-patched-r3",
+      "verifiedAfterAllowedRetry": false,
+      "observedSdkNominalKnownSubtotalUsd": 0.07132279999999999,
+      "sdkNominalTotalUsd": null,
+      "allAttempts": [
+        {
+          "id": "bccee72f-5935-42e5-9d72-c98ec2d07330",
+          "sessionId": "sess_63a55c39cc7fa9f8",
+          "failed": true,
+          "observed": {
+            "kind": "thrown",
+            "iterations": 16,
+            "usageComplete": false,
+            "usage": {
+              "inputTokens": 231459,
+              "outputTokens": 12012,
+              "totalCost": 0.04580901,
+              "cacheReadTokens": 169472,
+              "cacheWriteTokens": 0,
+              "llmCalls": 16,
+              "reasoningTokens": 2657
+            },
+            "errorType": "BackendRunError",
+            "error": "RLM maxIterations exhausted without a complete final answer (16 model turns)"
+          },
+          "errorType": null,
+          "error": null
+        },
+        {
+          "id": "e82c99c3-46a6-49e0-8cd2-b84c15c65e8c",
+          "sessionId": "sess_0dff339205865731",
+          "failed": true,
+          "observed": {
+            "kind": "thrown",
+            "iterations": 16,
+            "usageComplete": false,
+            "usage": {
+              "inputTokens": 109583,
+              "outputTokens": 7585,
+              "totalCost": 0.02551379,
+              "cacheReadTokens": 176128,
+              "cacheWriteTokens": 0,
+              "llmCalls": 16,
+              "reasoningTokens": 1168
+            },
+            "errorType": "BackendRunError",
+            "error": "RLM maxIterations exhausted without a complete final answer (16 model turns)"
+          },
+          "errorType": null,
+          "error": null
+        }
+      ]
+    },
+    {
+      "cellId": "g8-engine-brain-new-directory-glm-5-3-flash-rlm-patched-r3",
+      "verifiedAfterAllowedRetry": false,
+      "observedSdkNominalKnownSubtotalUsd": 0.09830784000000001,
+      "sdkNominalTotalUsd": null,
+      "allAttempts": [
+        {
+          "id": "853017f6-5e21-4ad2-80e8-55071c059f40",
+          "sessionId": "sess_9ac559cca77b36fc",
+          "failed": true,
+          "observed": {
+            "kind": "thrown",
+            "iterations": 16,
+            "usageComplete": false,
+            "usage": {
+              "inputTokens": 153780,
+              "outputTokens": 34118,
+              "totalCost": 0.053819439999999996,
+              "cacheReadTokens": 456448,
+              "cacheWriteTokens": 0,
+              "llmCalls": 16,
+              "reasoningTokens": 765
+            },
+            "errorType": "BackendRunError",
+            "error": "RLM maxIterations exhausted without a complete final answer (16 model turns)"
+          },
+          "errorType": null,
+          "error": null
+        },
+        {
+          "id": "4fdf31fd-0835-4445-9189-c3fa7cf889c6",
+          "sessionId": "sess_09cffc93a229890c",
+          "failed": true,
+          "observed": {
+            "kind": "thrown",
+            "iterations": 16,
+            "usageComplete": false,
+            "usage": {
+              "inputTokens": 180724,
+              "outputTokens": 18478,
+              "totalCost": 0.044488400000000004,
+              "cacheReadTokens": 271360,
+              "cacheWriteTokens": 0,
+              "llmCalls": 16,
+              "reasoningTokens": 1740
+            },
+            "errorType": "BackendRunError",
+            "error": "RLM maxIterations exhausted without a complete final answer (16 model turns)"
+          },
+          "errorType": null,
+          "error": null
+        }
+      ]
+    },
+    {
+      "cellId": "g8-engine-genie-existing-mimo-2-6-pi-r1",
+      "verifiedAfterAllowedRetry": true,
+      "observedSdkNominalKnownSubtotalUsd": 0.0138665744,
+      "sdkNominalTotalUsd": null,
+      "allAttempts": [
+        {
+          "id": "186c0541-042d-4469-9189-a2deca173da5",
+          "sessionId": "sess_08b49809e88d8f49",
+          "failed": true,
+          "observed": {
+            "kind": "thrown",
+            "iterations": 12,
+            "usageComplete": false,
+            "usage": {
+              "inputTokens": 43243,
+              "outputTokens": 2992,
+              "totalCost": 0.0073938984000000004,
+              "cacheReadTokens": 179328,
+              "cacheWriteTokens": 0,
+              "llmCalls": 11,
+              "reasoningTokens": 2469
+            },
+            "errorType": "BackendRunError",
+            "error": "LLM stopped with reason \"error\": Provider diagnostic omitted for file-reference authentication"
+          },
+          "errorType": null,
+          "error": null
+        },
+        {
+          "id": "48ad900b-3186-46e1-9612-2eb673df9df9",
+          "sessionId": "sess_b6428b50f7cf20be",
+          "failed": false,
+          "observed": {
+            "kind": "returned",
+            "iterations": 16,
+            "budgetHit": null,
+            "usageComplete": true,
+            "usage": {
+              "inputTokens": 23891,
+              "outputTokens": 8768,
+              "totalCost": 0.006472675999999999,
+              "cacheReadTokens": 240320,
+              "cacheWriteTokens": 0,
+              "llmCalls": 16,
+              "reasoningTokens": 6446
+            },
+            "validationFailed": false
+          },
+          "errorType": null,
+          "error": null
+        }
+      ]
+    }
+  ]
+}

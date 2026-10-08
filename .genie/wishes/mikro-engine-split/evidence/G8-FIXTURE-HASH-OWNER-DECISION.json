@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "ownerAuthorized": true,
+  "approvalRef": "Current-session fixtureHash answer: Repair fixture hash, preserve parent",
+  "recordedAt": "2026-10-06T14:32:19.782990Z",
+  "problem": "Actual consumed physical parent hashing rejects Genie tracked root docs symlink before approved unchanged fixtures reach preflight.",
+  "approvedOldToNew": {
+    "old": "Reject every root fixture symlink and use executable/dependency directory sealing for physical checkout subdirectories",
+    "new": "Complete physical checkout structural hash records symlink relative path and link text recursively without following any target; keep every parent unchanged and keep executable/dependency directory sealing rules unchanged"
+  },
+  "correctnessRepairBudgetOverride": {
+    "oldBudget": 3,
+    "newBudget": 4,
+    "authorizedAdditionalCycles": 1
+  },
+  "qualityRepairCap": 1,
+  "independentReReviewsRequired": true,
+  "notAuthorized": [
+    "alter frozen fixture parents or flatten symlinks",
+    "weaken executable/dependency directory seal checks",
+    "change SDK/caller/native observer/wish/API/model/provider",
+    "rerun/resample scored cells",
+    "Pro or Claude inference",
+    "production push/merge/install"
+  ],
+  "scoredCellsAtDecision": 0,
+  "genuineNativeOutcomeObservedAtDecision": false,
+  "decisionTimingBasis": "Owner answer occurred before bg43 actual second native outcome auto-delivery; this record timestamp is persistence time, not a fabricated approval timestamp."
+}

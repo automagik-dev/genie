@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "ownerDecision": "G8-NATIVE-REPAIR5-OWNER-DECISION.json",
+  "rows": [
+    {
+      "id": "g8-native-smoke",
+      "cwd": "/home/genie/.local/share/mikro-engine-split/experiments-g8/native-contained-facts/g8-native-smoke",
+      "gitCommonDir": "/home/genie/.local/share/mikro-engine-split/experiments-g8/native-contained-facts/g8-native-smoke/.git",
+      "head": "a73db92d26ff99cb1cc91adbec1e0294c793bb2f",
+      "tree": "61617fb0a737ef9342952c8a3463b1c11d82d573",
+      "origin": "/home/genie/.local/share/mikro-engine-split/experiments-g8/native-smoke-origin.git",
+      "shallow": false,
+      "alternates": false,
+      "status": "",
+      "localGitExclusion": "/.g8-runtime/"
+    }
+  ],
+  "actualGithubFetchCommands": 0,
+  "modelCalls": 0,
+  "originalSourcesMovedOrChanged": false,
+  "priorInvocation": "bg_49 failed before cloning because seed had no local dev branch; no source/model mutation"
+}

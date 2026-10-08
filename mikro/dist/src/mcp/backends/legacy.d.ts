@@ -12,7 +12,7 @@ import { rlmLoop } from "../../rlm.js";
 import { loadPythonPlugins } from "../../sdk/python-plugin.js";
 import { loadPluginTools } from "../../sdk/tool-loader.js";
 import type { Microagent } from "../agents.js";
-import type { BackendRequest, MicroagentResult, RuntimeBackend } from "../backend.js";
+import { type BackendRequest, type MicroagentResult, type RuntimeBackend } from "../backend.js";
 /** Test seam: alternate engine loop (the contract test injects a stub). */
 export interface LegacyMikroBackendOptions {
     readonly loop?: typeof rlmLoop;

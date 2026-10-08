@@ -46,6 +46,8 @@ import { createProvider, envApiKeyAuth } from "@earendil-works/pi-ai";
 import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completions.lazy";
 import { anthropicMessagesApi } from "@earendil-works/pi-ai/api/anthropic-messages.lazy";
 import { openAIResponsesApi } from "@earendil-works/pi-ai/api/openai-responses.lazy";
+import { isAbsolute } from "node:path";
+import { readPrivateKeyFile } from "./juice.js";
 // ─── Types ───────────────────────────────────────────────
 /** Wire protocols a config-declared provider can speak. */
 export const CUSTOM_PROVIDER_APIS = [
@@ -131,14 +133,14 @@ function parseModel(id, raw, source, path) {
         fail(source, `${path}.reasoning`, "must be true or false.");
     }
     const costRaw = pick(raw, "cost");
-    let cost = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+    let cost;
     if (costRaw !== undefined && costRaw !== null) {
         if (!isRecord(costRaw))
             fail(source, `${path}.cost`, "must be a mapping (input/output/cache-read/cache-write).");
         const costPath = `${path}.cost`;
         cost = {
-            input: readNumber(costRaw, "input", source, costPath) ?? 0,
-            output: readNumber(costRaw, "output", source, costPath) ?? 0,
+            input: readNumber(costRaw, "input", source, costPath),
+            output: readNumber(costRaw, "output", source, costPath),
             cacheRead: readNumber(costRaw, "cache-read", source, costPath) ?? 0,
             cacheWrite: readNumber(costRaw, "cache-write", source, costPath) ?? 0,
         };
@@ -236,12 +238,20 @@ export function parseCustomProviders(raw, source) {
         if (!CUSTOM_PROVIDER_APIS.includes(apiRaw)) {
             fail(source, `${id}.api`, `"${apiRaw}" is not supported. Must be one of: ${CUSTOM_PROVIDER_APIS.join(", ")}.`);
         }
+        const apiKeyFile = readString(entry, "api-key-file", source, id);
+        const apiKeyEnv = readApiKeyEnv(entry, source, id);
+        if (apiKeyFile && (!isAbsolute(apiKeyFile) || apiKeyEnv.length)) {
+            fail(source, `${id}.api-key-file`, "must be absolute and cannot be combined with api-key-env.");
+        }
+        if (pick(entry, "api-key") !== undefined)
+            fail(source, `${id}.api-key`, "secret values are not supported; use a credential reference.");
         out.push({
             id,
             name: readString(entry, "name", source, id) ?? id,
             api: apiRaw,
             baseUrl: baseUrl.replace(/\/+$/, ""),
-            apiKeyEnv: readApiKeyEnv(entry, source, id),
+            apiKeyEnv,
+            ...(apiKeyFile ? { apiKeyFile } : {}),
             headers: readHeaders(entry, source, id),
             models: parseModels(entry, source, id),
         });
@@ -282,7 +292,12 @@ export function toPiModel(provider, model) {
         baseUrl: provider.baseUrl,
         reasoning: model.reasoning,
         input: [...model.input],
-        cost: { ...model.cost },
+        // The SDK requires numeric rates. Keep declaration provenance on CustomModelConfig;
+        // Pi must reject absent input/output declarations before authorizing inference.
+        cost: {
+            input: model.cost?.input ?? 0, output: model.cost?.output ?? 0,
+            cacheRead: model.cost?.cacheRead ?? 0, cacheWrite: model.cost?.cacheWrite ?? 0,
+        },
         contextWindow: model.contextWindow,
         maxTokens: Math.min(model.maxTokens, model.contextWindow),
     };
@@ -298,12 +313,19 @@ export function buildCustomProvider(config) {
     const envVars = config.apiKeyEnv.length
         ? config.apiKeyEnv
         : [`${config.id.toUpperCase().replace(/[^A-Z0-9]/g, "_")}_API_KEY`];
+    const apiKeyFile = config.apiKeyFile;
     return createProvider({
         id: config.id,
         name: config.name,
         baseUrl: config.baseUrl,
         headers: config.headers,
-        auth: { apiKey: envApiKeyAuth(`${config.id} API key`, envVars) },
+        auth: { apiKey: apiKeyFile ? {
+                name: `${config.id} private project key`,
+                resolve: async ({ signal }) => ({
+                    auth: { apiKey: await readPrivateKeyFile(apiKeyFile, signal) },
+                    source: "private key-file reference",
+                }),
+            } : envApiKeyAuth(`${config.id} API key`, envVars) },
         models: config.models.map((m) => toPiModel(config, m)),
         api: streamsFor(config.api),
     });
@@ -345,6 +367,8 @@ export function findCustomProvider(providers, id) {
 }
 /** Which of a provider's key env vars is set, if any. */
 export function customProviderKeySource(config) {
+    if (config.apiKeyFile)
+        return "private key-file reference";
     return config.apiKeyEnv.find((name) => Boolean(process.env[name]?.trim()));
 }
 /**

@@ -41,9 +41,9 @@
  * attempt is ok; exit 1 otherwise (the result JSON still names every error).
  */
 import { createHash, randomUUID } from 'node:crypto';
-import { appendFileSync, existsSync, lstatSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { basename, dirname, join, resolve } from 'node:path';
+import { basename, dirname, join, relative, resolve } from 'node:path';
 import type { ZodTypeAny } from 'zod';
 import { BoundaryError, type BoundaryMode, type BoundarySession, isBoundaryMode, openBoundary } from './boundary';
 import { type FactsGhSource, type FactsRunner, buildFacts, inferFactsMode, renderFacts } from './facts';
@@ -142,6 +142,7 @@ export interface Citation {
   reason?: string;
   /** Set when a bare file name resolved to exactly one tracked path (and the line exists there): the answer is rewritten to it. */
   resolvedTo?: string;
+  proposal?: boolean;
 }
 
 const CITE_RE = /(?<![\w/@-])((?:[\w.@-]+\/)*[\w.-]+\.(?:tsx?|m?[cj]s|mdx?|ya?ml|json|sh|toml|py)):(\d{1,6})\b/g;
@@ -266,16 +267,37 @@ export function verifyCitations(parsed: unknown, dir: string): Citation[] {
     }
     return n;
   };
-  const check = (path: string, line: number | null, deletedOk: boolean, declaredNew = false) => {
-    const key = `${path}:${line ?? ''}`;
+  const check = (path: string, line: number | null, deletedOk: boolean, declaredNew = false, resolvedPath?: string) => {
+    const key = `${declaredNew ? 'proposal' : 'evidence'}:${path}:${line ?? ''}`;
     if (seen.has(key)) return;
-    const clean = path.replace(/^\.\//, '').split('#')[0];
+    const clean = (resolvedPath ?? path).replace(/^\.\//, '').split('#')[0];
     if (!clean || clean.startsWith('/') || clean.includes('..')) {
       seen.set(key, { path, line, ok: false, reason: 'not a repository-relative path' });
       return;
     }
     const abs = resolve(dir, clean);
-    if (existsSync(abs) && !isTracked(dir, clean) && !deletedOk) {
+    let ancestor = abs;
+    for (;;) {
+      try { lstatSync(ancestor); break; }
+      catch { if (ancestor === dirname(ancestor)) break; ancestor = dirname(ancestor); }
+    }
+    const root = realpathSync(dir);
+    let realAncestor: string;
+    try { realAncestor = realpathSync(ancestor); }
+    catch {
+      seen.set(key, { path, line, ok: false, reason: 'unresolvable path ancestor' });
+      return;
+    }
+    const rel = relative(root, realAncestor);
+    if (rel === '..' || rel.startsWith('../') || rel.startsWith('/')) {
+      seen.set(key, { path, line, ok: false, reason: 'path escapes repository containment' });
+      return;
+    }
+    if (declaredNew && (existsSync(abs) || line !== null)) {
+      seen.set(key, { path, line, ok: false, proposal: true, reason: 'NEW requires an absent path without a line' });
+      return;
+    }
+    if (existsSync(abs) && !isTracked(dir, clean)) {
       seen.set(key, {
         path,
         line,
@@ -285,15 +307,17 @@ export function verifyCitations(parsed: unknown, dir: string): Citation[] {
       return;
     }
     if (!existsSync(abs)) {
-      if (!clean.includes('/')) {
+      if (!declaredNew && !resolvedPath && !clean.includes('/')) {
         byBase ??= trackedByBasename(dir);
         const unique = byBase.get(clean) ?? [];
         if (unique.length === 1) {
-          const target = resolve(dir, unique[0]);
-          if (line === null || line <= countLines(target)) {
-            seen.set(key, { path, line, ok: true, reason: 'resolved from a bare file name', resolvedTo: unique[0] });
-            return;
+          check(path, line, deletedOk, false, unique[0]);
+          const checked = seen.get(key);
+          if (checked?.ok) {
+            checked.reason = 'resolved from a bare file name';
+            checked.resolvedTo = unique[0];
           }
+          return;
         }
       }
       // A PLAN may name a file that does not exist yet: the prompts allow a `plan.files`
@@ -302,12 +326,30 @@ export function verifyCitations(parsed: unknown, dir: string): Citation[] {
       // directory that exists and holds tracked content, and a `path:line` citation of
       // the same file elsewhere in the answer still fails on its own.
       if (declaredNew && line === null) {
-        const parent = clean.includes('/') ? clean.slice(0, clean.lastIndexOf('/')) : '';
-        const parentOk = parent === '' || (existsSync(resolve(dir, parent)) && isTracked(dir, parent));
+        let component = abs;
+        while (component !== resolve(dir)) {
+          try {
+            if (lstatSync(component).isSymbolicLink()) {
+              seen.set(key, { path, line, ok: false, proposal: true, reason: 'symlink components cannot anchor NEW proposals' });
+              return;
+            }
+          } catch { /* Absent components are expected for NEW declarations. */ }
+          component = dirname(component);
+        }
+        const ignored = Bun.spawnSync(['git', 'check-ignore', '--', clean], { cwd: dir, env: gitProbeEnv() });
+        if (ignored.exitCode === 0) {
+          seen.set(key, { path, line, ok: false, proposal: true, reason: 'ignored paths cannot be NEW proposals' });
+          return;
+        }
+        const parent = relative(resolve(dir), ancestor);
+        const tracked = Bun.spawnSync(['git', 'ls-files'], { cwd: dir, env: gitProbeEnv() });
+        const parentOk = lstatSync(ancestor).isDirectory() && tracked.exitCode === 0 &&
+          tracked.stdout.toString().split('\n').some((p) => p && (!parent || p.startsWith(`${parent}/`)));
         seen.set(key, {
           path,
           line,
           ok: parentOk,
+          proposal: true,
           reason: parentOk
             ? 'new file (declared NEW: under a tracked directory)'
             : `declared NEW:, but ${parent}/ is not a tracked directory${hint(clean)}`,
@@ -347,13 +389,17 @@ export function verifyCitations(parsed: unknown, dir: string): Citation[] {
   const text = JSON.stringify(parsed);
   for (const m of text.matchAll(CITE_RE)) check(m[1], Number(m[2]), false);
   // Only a `plan.files` record may carry the marker: a `NEW:` reason anywhere else is prose.
-  const plan = (parsed as { plan?: { files?: unknown } } | null)?.plan?.files;
-  const planned = new Set<unknown>(Array.isArray(plan) ? plan : []);
+  const record = parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  const plan = 'plan' in record ? record.plan : undefined;
+  const files = plan !== null && typeof plan === 'object' && !Array.isArray(plan) && 'files' in plan
+    ? plan.files : undefined;
+  const planned = new Set<unknown>(Array.isArray(files) ? files : []);
   walk(parsed, (p, ctx) => {
     const bare = p.split(':')[0];
     if (/\s/.test(bare)) return; // a command or a sentence, not a path
     const declaredNew = planned.has(ctx) && typeof ctx.reason === 'string' && ctx.reason.startsWith('NEW:');
-    check(bare, null, ctx.change === 'deleted', declaredNew);
+    const explicitLine = /:(\d+)$/.exec(p);
+    check(bare, explicitLine ? Number(explicitLine[1]) : null, ctx.change === 'deleted', declaredNew);
   });
   return [...seen.values()];
 }
@@ -526,9 +572,25 @@ export interface RunResult {
   agentSourceReason?: string;
 }
 
+export type Engine = 'rlm' | 'pi' | 'prime' | 'prime-sdk';
+
+export function parseEngine(value: unknown): Engine {
+  if (value !== 'rlm' && value !== 'pi' && value !== 'prime' && value !== 'prime-sdk')
+    throw new Error('engine must be rlm, pi, prime, or prime-sdk');
+  return value;
+}
+
+export function parseEngineFlag(argv: string[]): Engine | undefined {
+  const indexes = argv.flatMap((arg, i) => arg === '--engine' || arg.startsWith('--engine=') ? [i] : []);
+  if (indexes.length > 1) throw new Error('--engine may only be supplied once');
+  if (!indexes.length) return undefined;
+  const token = argv[indexes[0]];
+  return parseEngine(token.startsWith('--engine=') ? token.slice('--engine='.length) : argv[indexes[0] + 1]);
+}
 export interface RunOptions {
   agent: string;
   prompt: string;
+  engine?: Engine;
   dir?: string;
   /**
    * Where the agent.yaml folders live. Given, it is operator trust and decides the
@@ -1219,6 +1281,7 @@ export function unavailableReason(error: unknown): string | null {
 }
 
 export async function runAgent(options: RunOptions): Promise<RunResult> {
+  if (options.engine !== undefined) parseEngine(options.engine);
   const dir = resolve(options.dir ?? process.cwd());
   const genieHome = options.genieHome ?? resolveMikroGenieHome();
   const resolvedAgents = resolveAgentsDir({
@@ -1230,7 +1293,7 @@ export async function runAgent(options: RunOptions): Promise<RunResult> {
   });
   const timeoutMs = options.timeoutMs ?? 600_000;
   const retries = options.retries ?? 1;
-  const tags = options.tags ?? {};
+  const tags = { ...options.tags, ...(options.engine === undefined ? {} : { engine: options.engine }) };
   const runId = randomUUID();
   const traceId = options.traceId ?? runId;
   const schema =
@@ -1373,7 +1436,7 @@ export async function runAgent(options: RunOptions): Promise<RunResult> {
         client.notify('notifications/initialized');
         const result = (await client.request(
           'tools/call',
-          { name: toolName(options.agent), arguments: facts ? { prompt, context: facts.contextPath } : { prompt } },
+          { name: toolName(options.agent), arguments: { prompt, ...(facts ? { context: facts.contextPath } : {}), ...(options.engine === undefined ? {} : { engine: options.engine }) } },
           timeoutMs + 15_000,
         )) as { content?: { type: string; text?: string }[]; isError?: boolean };
         raw = (result.content ?? []).map((c) => c.text ?? '').join('\n');
@@ -1477,7 +1540,7 @@ export async function runAgent(options: RunOptions): Promise<RunResult> {
       runId,
       traceId,
       dir,
-      answer,
+      answer: attempts.at(-1)?.ok ? answer : undefined,
       attempts,
       elapsedMs: Date.now() - started,
       costUsd: cost,
@@ -1508,7 +1571,7 @@ export function parseBoundaryFlag(argv: string[]): BoundaryMode {
   return value;
 }
 
-export const CALL_USAGE = `usage: genie mikro call <${AGENT_NAMES.join('|')}> --prompt "<text>" [--prompt-file f] [--dir repo] [--agents-dir dir] [--agents-ref ref] [--facts auto|<path>] [--timeout-ms n] [--retries n] [--tag k=v] [--trace id] [--boundary none|bwrap] [--no-phoenix] [--no-ledger] [--raw]
+export const CALL_USAGE = `usage: genie mikro call <${AGENT_NAMES.join('|')}> --prompt "<text>" [--engine rlm|pi|prime|prime-sdk] [--prompt-file f] [--dir repo] [--agents-dir dir] [--agents-ref ref] [--facts auto|<path>] [--timeout-ms n] [--retries n] [--tag k=v] [--trace id] [--boundary none|bwrap] [--no-phoenix] [--no-ledger] [--raw]
        (inside this checkout the same code runs as: bun scripts/mikro/call.ts <agent> …)
 `;
 
@@ -1560,8 +1623,10 @@ export async function runCallCli(argv: string[]): Promise<number> {
     if (bad) return usage(`--agents-ref ${bad}`);
   }
   let boundary: ReturnType<typeof parseBoundaryFlag>;
+  let engine: Engine | undefined;
   try {
     boundary = parseBoundaryFlag(argv);
+    engine = parseEngineFlag(argv);
   } catch (error) {
     process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
     return 2;
@@ -1572,6 +1637,7 @@ export async function runCallCli(argv: string[]): Promise<number> {
       agent,
       prompt,
       boundary,
+      engine,
       dir: opt('--dir'),
       agentsDir: opt('--agents-dir'),
       agentsRef,

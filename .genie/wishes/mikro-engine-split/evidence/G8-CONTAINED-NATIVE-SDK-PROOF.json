@@ -1,0 +1,212 @@
+{
+  "schemaVersion": 1,
+  "scope": "Actual consumed B5 environment seam and public SDK native bash under unchanged workspace-write sandbox, no inference",
+  "actualJob": "bg_55",
+  "actualExitCode": 0,
+  "actualWallSeconds": 4.19,
+  "actualArgv": [
+    "/home/genie/.hermes/node/bin/node",
+    "/home/genie/.local/share/mikro-engine-split/experiments-g8/verify-contained-native.mjs"
+  ],
+  "source": "import { mkdtemp, mkdir, readFile, writeFile, symlink, chmod, readdir, unlink } from 'node:fs/promises';\nimport { randomUUID } from 'node:crypto';\nimport { createRequire } from 'node:module';\nimport { pathToFileURL } from 'node:url';\nimport { join } from 'node:path';\nimport { prepareNativeEnvironment } from 'file:///home/genie/orca/workspaces/genie/mikro-engine-split/.genie/wishes/mikro-engine-split/experiments/native-workflow-observer.mjs';\nimport { reconcileSessions } from 'file:///home/genie/orca/workspaces/genie/mikro-engine-split/.genie/wishes/mikro-engine-split/experiments/native-session-accounting.mjs';\nconst base = '/home/genie/.local/share/mikro-engine-split/experiments-g8';\nconst proofRoot = await mkdtemp(join(base, 'contained-native-proof-'));\nconst prepared = JSON.parse(await readFile(join(base, 'prepared-native-contained-workflow.json'), 'utf8')).workflow.smoke;\nconst cell = { ...prepared, runRoot: proofRoot };\nconst env = await prepareNativeEnvironment(cell);\nconst external = join(proofRoot, 'external');\nawait mkdir(external, { mode: 0o700 });\nawait writeFile(join(external, 'sentinel'), 'UNCHANGED');\nconst negatives = [];\nfor (const kind of ['root-symlink', 'home-symlink', 'tmp-symlink', 'root-file', 'nonprivate-root', 'cwd-alias', 'HOME-override', 'GENIE_HOME-override', 'TMPDIR-override', 'DSH_HOME-override', 'XDG_CONFIG_HOME-override', 'XDG_CACHE_HOME-override']) {\n  const cwd = join(proofRoot, kind); await mkdir(cwd, { mode: 0o700 });\n  const candidate = { ...cell, cwd, launch: { ...cell.launch, env: { ...cell.launch.env } } };\n  const runtime = join(cwd, '.g8-runtime');\n  if (kind === 'root-symlink') await symlink(external, runtime);\n  if (kind === 'root-file') await writeFile(runtime, 'not a directory');\n  if (kind === 'nonprivate-root') { await mkdir(runtime, { mode: 0o700 }); await chmod(runtime, 0o755); }\n  if (kind === 'home-symlink' || kind === 'tmp-symlink') { await mkdir(runtime, { mode: 0o700 }); await symlink(external, join(runtime, kind.startsWith('home') ? 'home' : 'tmp')); }\n  if (kind === 'cwd-alias') { candidate.cwd = join(proofRoot, 'cwd-alias-link'); await symlink(cwd, candidate.cwd); }\n  if (kind.endsWith('-override')) candidate.launch.env[kind.slice(0, -9)] = external;\n  try { await prepareNativeEnvironment(candidate); throw new Error(`unexpectedly accepted ${kind}`); }\n  catch (error) { if (error.message.startsWith('unexpectedly accepted')) throw error; negatives.push({ kind, rejected: true, message: error.message }); }\n}\nif ((await readdir(external)).join(',') !== 'sentinel' || await readFile(join(external, 'sentinel'), 'utf8') !== 'UNCHANGED') throw new Error('negative fixture followed/wrote outside target');\nawait mkdir(env.DSH_HOME, { mode: 0o700 });\nfor (const key of Object.keys(process.env)) delete process.env[key];\nObject.assign(process.env, env); process.chdir(cell.cwd);\nconst require = createRequire('/home/genie/.dsh/runtime/0.2.0-rc.1/node_modules/@deepseek-ai/dsh/package.json');\nconst load = specifier => import(pathToFileURL(require.resolve(specifier)).href);\nconst { initializeProfileFromDefault, runProfile } = await load('@deepseek-ai/dsh/profile-boot');\nconst { createLaunchEnvironmentSnapshot } = await load('@deepseek-ai/dsh-launch-environment');\nconst { installModelSelection } = await load('@deepseek-ai/dsh-agent');\nconst { deriveTurnTokenUsage } = await load('@deepseek-ai/dsh-token-meter/client');\nconst profile = 'contained-filesystem-proof'; initializeProfileFromDefault(profile, 'headless', env.DSH_HOME);\nconst patch = [\n  { id: 'headless-runner', disabled: true }, { id: 'headless-startup', disabled: true }, { id: 'session-title-llm', disabled: true },\n  { id: 'agent-default-model', config: { provider: 'deepseek-official', model: 'deepseek-flash' } },\n  { id: 'tools', config: { mode: 'native' } },\n  { id: 'session-persistence-jsonl', config: { root: join(proofRoot, 'sessions'), compression: 'none' } },\n  { id: 'credentials', config: { path: join(env.DSH_HOME, '.credentials.yaml'), dshHome: env.DSH_HOME, watch: false } },\n  { id: 'llm-deepseek', config: { apiKeyEnv: 'DEEPSEEK_API_KEY' } },\n];\nconst patchPath = join(proofRoot, 'proof.patch.yml'); await writeFile(patchPath, JSON.stringify(patch), { flag: 'wx', mode: 0o600 });\nlet boot; let handle; let requestCount = 0;\nconst proof = { schemaVersion: 1, kind: 'actual-public-sdk-contained-native-filesystem-proof', proofRoot, credentialsProvided: false, nativeWorkflowLaunched: false, negatives, environment: { HOME: env.HOME, GENIE_HOME: env.GENIE_HOME, TMPDIR: env.TMPDIR, DSH_HOME: env.DSH_HOME, XDG_CONFIG_HOME: env.XDG_CONFIG_HOME, XDG_CACHE_HOME: env.XDG_CACHE_HOME } };\ntry {\n  boot = await runProfile({ environment: createLaunchEnvironmentSnapshot([{ source: 'process', values: env }]), profile, patchFiles: [patchPath], args: [] });\n  boot.ctx.on('agent/request', () => { requestCount++; throw new Error('no-inference filesystem proof forbids model requests'); });\n  handle = await boot.ctx.agents.create({ sessionId: randomUUID(), meta: { cwd: cell.cwd, delegationDepth: 0 }, agentOptions: { provider: 'deepseek-official', model: 'deepseek-flash' }, signal: new AbortController().signal, setup(agentCtx) { installModelSelection(agentCtx, { current: { provider: 'deepseek-official', model: 'deepseek-flash' }, assembled: undefined }); } });\n  await handle.agent.whenIdle();\n  proof.policy = boot.ctx.sandboxPolicy.resolve({ session: handle.agent.session });\n  if (proof.policy.mode !== 'workspace-write' || proof.policy.workspaceRoot !== cell.cwd) throw new Error('native sandbox boundary changed');\n  const marker = randomUUID();\n  const paths = [join(env.HOME, `fs-proof-${marker}`), join(env.GENIE_HOME, `fs-proof-${marker}`), join(env.TMPDIR, `fs-proof-${marker}`), join(cell.cwd, '.g8-runtime/caller/.mikro/runs', `fs-proof-${marker}`), join(cell.cwd, '.g8-runtime/sdk-receipts', `fs-proof-${marker}`)];\n  const forbidden = join(external, `must-not-exist-${marker}`);\n  const body = `const fs=require('node:fs');const path=require('node:path');const files=${JSON.stringify(paths)};for(const file of files){fs.mkdirSync(path.dirname(file),{recursive:true,mode:448});fs.writeFileSync(file,'SANDBOX-WRITE-PROVEN');}let deniedCode=null;try{fs.writeFileSync(${JSON.stringify(forbidden)},'FORBIDDEN');}catch(error){deniedCode=error.code;}if(!['EROFS','EACCES','EPERM'].includes(deniedCode))throw Error('external sandbox write was not denied');console.log(JSON.stringify({containedWrites:files,externalWriteDenied:true,deniedCode,home:process.env.HOME,tmpdir:process.env.TMPDIR}));`;\n  const quote = value => `'${value.replaceAll(\"'\", \"'\\\\''\")}'`;\n  proof.toolCommand = `${quote('/home/genie/.hermes/node/bin/node')} -e ${quote(body)}`;\n  proof.toolResult = await boot.ctx.tools.execute({ callId: randomUUID(), name: 'bash', arguments: { command: proof.toolCommand, description: 'Verify native operational directories under unchanged sandbox without inference', timeoutMs: 15000 }, agent: handle.agent, signal: new AbortController().signal });\n  for (const file of paths) { if (await readFile(file, 'utf8') !== 'SANDBOX-WRITE-PROVEN') throw new Error(`native write failed ${file}`); await unlink(file); }\n  try { await readFile(forbidden); throw new Error('external write escaped sandbox'); } catch (error) { if (error.code !== 'ENOENT') throw error; }\n  proof.reconciliation = await reconcileSessions(boot.ctx, [handle.agent.session.id], deriveTurnTokenUsage);\n  if (proof.reconciliation.blockers.length || proof.reconciliation.sessions.some(session => session.blockers.length)) throw new Error('exact root reconciliation failed');\n  proof.success = requestCount === 0;\n} catch (error) { proof.failure = { name: error.name, message: error.message, code: error.code ?? null }; proof.success = false; }\nfinally {\n  proof.requestCount = requestCount;\n  await handle?.dispose();\n  await writeFile(join(proofRoot, 'proof.json'), `${JSON.stringify(proof, null, 2)}\\n`, { flag: 'wx', mode: 0o600 });\n  console.log(JSON.stringify({ proofPath: join(proofRoot, 'proof.json'), success: proof.success, requestCount, failure: proof.failure ?? null, policy: proof.policy }));\n  await boot?.shutdown.shutdown(proof.success ? 0 : 2);\n}\nif (!proof.success) process.exitCode = 2;\n",
+  "originalProof": {
+    "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/contained-native-proof-LJsZ0b/proof.json",
+    "sha256": "4d8e1849531ecd33e5b0f7d69380c1c6aa9bc707a88a6734723a0d0575611cc0"
+  },
+  "proof": {
+    "schemaVersion": 1,
+    "kind": "actual-public-sdk-contained-native-filesystem-proof",
+    "proofRoot": "/home/genie/.local/share/mikro-engine-split/experiments-g8/contained-native-proof-LJsZ0b",
+    "credentialsProvided": false,
+    "nativeWorkflowLaunched": false,
+    "negatives": [
+      {
+        "kind": "root-symlink",
+        "rejected": true,
+        "message": "native runtime directory must not be a symlink: /home/genie/.local/share/mikro-engine-split/experiments-g8/contained-native-proof-LJsZ0b/root-symlink/.g8-runtime"
+      },
+      {
+        "kind": "home-symlink",
+        "rejected": true,
+        "message": "native runtime directory must not be a symlink: /home/genie/.local/share/mikro-engine-split/experiments-g8/contained-native-proof-LJsZ0b/home-symlink/.g8-runtime/home"
+      },
+      {
+        "kind": "tmp-symlink",
+        "rejected": true,
+        "message": "native runtime directory must not be a symlink: /home/genie/.local/share/mikro-engine-split/experiments-g8/contained-native-proof-LJsZ0b/tmp-symlink/.g8-runtime/tmp"
+      },
+      {
+        "kind": "root-file",
+        "rejected": true,
+        "message": "native runtime directory must not be a symlink: /home/genie/.local/share/mikro-engine-split/experiments-g8/contained-native-proof-LJsZ0b/root-file/.g8-runtime"
+      },
+      {
+        "kind": "nonprivate-root",
+        "rejected": true,
+        "message": "native runtime directory must be private: /home/genie/.local/share/mikro-engine-split/experiments-g8/contained-native-proof-LJsZ0b/nonprivate-root/.g8-runtime"
+      },
+      {
+        "kind": "cwd-alias",
+        "rejected": true,
+        "message": "native environment repository cwd must be canonical"
+      },
+      {
+        "kind": "HOME-override",
+        "rejected": true,
+        "message": "non-reference launch environment name refused: HOME"
+      },
+      {
+        "kind": "GENIE_HOME-override",
+        "rejected": true,
+        "message": "isolated root override refused: GENIE_HOME"
+      },
+      {
+        "kind": "TMPDIR-override",
+        "rejected": true,
+        "message": "isolated root override refused: TMPDIR"
+      },
+      {
+        "kind": "DSH_HOME-override",
+        "rejected": true,
+        "message": "isolated root override refused: DSH_HOME"
+      },
+      {
+        "kind": "XDG_CONFIG_HOME-override",
+        "rejected": true,
+        "message": "observer-derived XDG root overrides refused"
+      },
+      {
+        "kind": "XDG_CACHE_HOME-override",
+        "rejected": true,
+        "message": "observer-derived XDG root overrides refused"
+      }
+    ],
+    "environment": {
+      "HOME": "/home/genie/.local/share/mikro-engine-split/experiments-g8/native-contained/g8-native-smoke/.g8-runtime/home",
+      "GENIE_HOME": "/home/genie/.local/share/mikro-engine-split/experiments-g8/native-contained/g8-native-smoke/.g8-runtime/genie",
+      "TMPDIR": "/home/genie/.local/share/mikro-engine-split/experiments-g8/native-contained/g8-native-smoke/.g8-runtime/tmp",
+      "DSH_HOME": "/home/genie/.local/share/mikro-engine-split/experiments-g8/contained-native-proof-LJsZ0b/dsh",
+      "XDG_CONFIG_HOME": "/home/genie/.local/share/mikro-engine-split/experiments-g8/native-contained/g8-native-smoke/.g8-runtime/home/.config",
+      "XDG_CACHE_HOME": "/home/genie/.local/share/mikro-engine-split/experiments-g8/native-contained/g8-native-smoke/.g8-runtime/home/.cache"
+    },
+    "policy": {
+      "mode": "workspace-write",
+      "workspaceRoot": "/home/genie/.local/share/mikro-engine-split/experiments-g8/native-contained/g8-native-smoke",
+      "sessionId": "1f94bac4-b19c-4365-b9db-bd5671ac3405"
+    },
+    "toolCommand": "'/home/genie/.hermes/node/bin/node' -e 'const fs=require('\\''node:fs'\\'');const path=require('\\''node:path'\\'');const files=[\"/home/genie/.local/share/mikro-engine-split/experiments-g8/native-contained/g8-native-smoke/.g8-runtime/home/fs-proof-8bbb2879-8b9a-4cba-a7f6-5a127aea956a\",\"/home/genie/.local/share/mikro-engine-split/experiments-g8/native-contained/g8-native-smoke/.g8-runtime/genie/fs-proof-8bbb2879-8b9a-4cba-a7f6-5a127aea956a\",\"/home/genie/.local/share/mikro-engine-split/experiments-g8/native-contained/g8-native-smoke/.g8-runtime/tmp/fs-proof-8bbb2879-8b9a-4cba-a7f6-5a127aea956a\",\"/home/genie/.local/share/mikro-engine-split/experiments-g8/native-contained/g8-native-smoke/.g8-runtime/caller/.mikro/runs/fs-proof-8bbb2879-8b9a-4cba-a7f6-5a127aea956a\",\"/home/genie/.local/share/mikro-engine-split/experiments-g8/native-contained/g8-native-smoke/.g8-runtime/sdk-receipts/fs-proof-8bbb2879-8b9a-4cba-a7f6-5a127aea956a\"];for(const file of files){fs.mkdirSync(path.dirname(file),{recursive:true,mode:448});fs.writeFileSync(file,'\\''SANDBOX-WRITE-PROVEN'\\'');}let deniedCode=null;try{fs.writeFileSync(\"/home/genie/.local/share/mikro-engine-split/experiments-g8/contained-native-proof-LJsZ0b/external/must-not-exist-8bbb2879-8b9a-4cba-a7f6-5a127aea956a\",'\\''FORBIDDEN'\\'');}catch(error){deniedCode=error.code;}if(!['\\''EROFS'\\'','\\''EACCES'\\'','\\''EPERM'\\''].includes(deniedCode))throw Error('\\''external sandbox write was not denied'\\'');console.log(JSON.stringify({containedWrites:files,externalWriteDenied:true,deniedCode,home:process.env.HOME,tmpdir:process.env.TMPDIR}));'",
+    "toolResult": {
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"containedWrites\":[\"/home/genie/.local/share/mikro-engine-split/experiments-g8/native-contained/g8-native-smoke/.g8-runtime/home/fs-proof-8bbb2879-8b9a-4cba-a7f6-5a127aea956a\",\"/home/genie/.local/share/mikro-engine-split/experiments-g8/native-contained/g8-native-smoke/.g8-runtime/genie/fs-proof-8bbb2879-8b9a-4cba-a7f6-5a127aea956a\",\"/home/genie/.local/share/mikro-engine-split/experiments-g8/native-contained/g8-native-smoke/.g8-runtime/tmp/fs-proof-8bbb2879-8b9a-4cba-a7f6-5a127aea956a\",\"/home/genie/.local/share/mikro-engine-split/experiments-g8/native-contained/g8-native-smoke/.g8-runtime/caller/.mikro/runs/fs-proof-8bbb2879-8b9a-4cba-a7f6-5a127aea956a\",\"/home/genie/.local/share/mikro-engine-split/experiments-g8/native-contained/g8-native-smoke/.g8-runtime/sdk-receipts/fs-proof-8bbb2879-8b9a-4cba-a7f6-5a127aea956a\"],\"externalWriteDenied\":true,\"deniedCode\":\"EROFS\",\"home\":\"/home/genie/.local/share/mikro-engine-split/experiments-g8/native-contained/g8-native-smoke/.g8-runtime/home\",\"tmpdir\":\"/home/genie/.local/share/mikro-engine-split/experiments-g8/native-contained/g8-native-smoke/.g8-runtime/tmp\"}\n"
+        }
+      ],
+      "value": {
+        "kind": "foreground",
+        "exitCode": 0,
+        "signal": null,
+        "timedOut": false,
+        "aborted": false,
+        "timeoutMs": 15000,
+        "stdout": {
+          "text": "{\"containedWrites\":[\"/home/genie/.local/share/mikro-engine-split/experiments-g8/native-contained/g8-native-smoke/.g8-runtime/home/fs-proof-8bbb2879-8b9a-4cba-a7f6-5a127aea956a\",\"/home/genie/.local/share/mikro-engine-split/experiments-g8/native-contained/g8-native-smoke/.g8-runtime/genie/fs-proof-8bbb2879-8b9a-4cba-a7f6-5a127aea956a\",\"/home/genie/.local/share/mikro-engine-split/experiments-g8/native-contained/g8-native-smoke/.g8-runtime/tmp/fs-proof-8bbb2879-8b9a-4cba-a7f6-5a127aea956a\",\"/home/genie/.local/share/mikro-engine-split/experiments-g8/native-contained/g8-native-smoke/.g8-runtime/caller/.mikro/runs/fs-proof-8bbb2879-8b9a-4cba-a7f6-5a127aea956a\",\"/home/genie/.local/share/mikro-engine-split/experiments-g8/native-contained/g8-native-smoke/.g8-runtime/sdk-receipts/fs-proof-8bbb2879-8b9a-4cba-a7f6-5a127aea956a\"],\"externalWriteDenied\":true,\"deniedCode\":\"EROFS\",\"home\":\"/home/genie/.local/share/mikro-engine-split/experiments-g8/native-contained/g8-native-smoke/.g8-runtime/home\",\"tmpdir\":\"/home/genie/.local/share/mikro-engine-split/experiments-g8/native-contained/g8-native-smoke/.g8-runtime/tmp\"}\n",
+          "truncated": false
+        },
+        "stderr": {
+          "text": "",
+          "truncated": false
+        },
+        "sandbox": {
+          "mode": "workspace-write",
+          "denied": false,
+          "enforcement": "full"
+        }
+      }
+    },
+    "reconciliation": {
+      "sessions": [
+        {
+          "sessionId": "1f94bac4-b19c-4365-b9db-bd5671ac3405",
+          "header": {
+            "version": 4,
+            "id": "1f94bac4-b19c-4365-b9db-bd5671ac3405",
+            "createdAt": 1791299621015,
+            "cwd": "/home/genie/.local/share/mikro-engine-split/experiments-g8/native-contained/g8-native-smoke",
+            "isSeeded": false,
+            "delegationDepth": 0
+          },
+          "inheritedEventCount": 0,
+          "observation": {
+            "source": "live",
+            "cursor": 2,
+            "revision": null,
+            "synthesizedSuffix": []
+          },
+          "durableEventCount": 3,
+          "durableEventsSha256": "db3cbdaed18f1dfedc4a80ca3e39f688c04268f9b1f54d995d219765dfd54b0b",
+          "ownEventCount": 3,
+          "events": [
+            {
+              "type": "permission/preset",
+              "seq": 0,
+              "time": 1791299621033,
+              "data": {
+                "preset": "workspace-write"
+              }
+            },
+            {
+              "type": "sandbox/mode",
+              "seq": 1,
+              "time": 1791299621039,
+              "data": {
+                "mode": "workspace-write"
+              }
+            },
+            {
+              "type": "approval/policy",
+              "seq": 2,
+              "time": 1791299621040,
+              "data": {
+                "policy": "ask"
+              }
+            }
+          ],
+          "accounting": {
+            "totals": {
+              "totalTokens": 0,
+              "uncachedInputTokens": 0,
+              "outputTokens": 0,
+              "cacheReadTokens": null,
+              "cacheWriteTokens": null,
+              "reasoningTokens": null
+            },
+            "turns": [],
+            "requests": [],
+            "servedRoutes": [],
+            "toolCalls": 0,
+            "modelToolCalls": [],
+            "attempts": [],
+            "retries": [],
+            "blockers": []
+          },
+          "blockers": []
+        }
+      ],
+      "blockers": []
+    },
+    "success": true,
+    "requestCount": 0
+  },
+  "priorProbe": {
+    "job": "bg_53",
+    "actualExitCode": 1,
+    "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/contained-native-proof-vtAyP4/proof.json",
+    "behaviorSucceeded": true,
+    "failure": "Throwaway teardown guessed boot.dispose instead of proven public boot.shutdown.shutdown; original success data retained, no production source or model change"
+  },
+  "modelRequests": 0,
+  "nativeWorkflowLaunched": false,
+  "ownerDecision": "G8-NATIVE-REPAIR5-OWNER-DECISION.json"
+}

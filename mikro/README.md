@@ -138,15 +138,31 @@ belonging to another tool, and an id with a call already in flight each get thei
 own named error. Resume is conversation replay, not REPL state — the Python REPL
 is rebuilt per call and its state is deliberately not promised across turns.
 
+`engine` on an MCP call overrides the agent's `engine`. Without either selector,
+the default is `rlm`. Supported values are `rlm`, `pi`, `prime`, and `prime-sdk`; the old
+`backend` field is rejected. Pi uses an isolated SDK session with scoped
+read/grep/glob and hermetic read-only git, not a Python REPL or shell.
+It rejects legacy `TOOLS.md` functions, plugin tools, and writable scopes.
+Its only final-answer channel is `emit_done({answer: "..."})`: prose or
+`FINAL(...)` alone is not an accepted result. Existing RLM-specific agent
+prompts may need explicit native-tool/final-channel instructions when opting in.
+
+Complete receipts retain the numeric token/cost footer. An incomplete failure
+instead includes `observed_usage` JSON with unrounded known `subtotal`,
+`coverage: "partial"`, and `totals: null`; missing billing remains unknown.
+That shape is deliberately not a complete-run footer accepted by the host.
+
 A run that fails **without throwing** comes back as `isError` with the reason in
 `answer`. mikro's two designed aborts — three consecutive empty LLM responses and
 the wall-clock timeout — return their reason as the answer rather than raising,
 so without this a host model would read the abort reason as the agent's report.
 Both are matched by exact signal (the abort's `budgetHit`, the timeout's
 verbatim answer), never by sniffing the answer for an `Error:` prefix — a report
-that quotes a failing log line legitimately starts that way. A genuine
-`max-cost`/`max-tokens`/`max-depth` budget hit still forces a real final answer
-and stays a success: shorter, not failed.
+that quotes a failing log line legitimately starts that way.
+`max-cost`/`max-tokens`/`max-depth` limits do not authorize an extra final call.
+An accepted final within the remaining envelope can stay successful; exhaustion
+without a final is an error, and a rejected terminal payload is explicitly
+`validation_failed`, not verified success.
 
 **The tool set is live.** Every `tools/list` *and* every `tools/call` re-scans
 the agent roots from one shared scan, and `notifications/tools/list_changed`
@@ -209,6 +225,7 @@ your own schema without forking the parser.
 | `schema_version` | `1` | Schema generation. Stable at 1; prior versions stay loadable. |
 | `tools_api` | `1` | Tool-contract generation. Same guarantee. |
 | `shape` | `single-step` | `single-step` \| `loop` \| `recurse`. An unknown value is a hard error. |
+| `engine` | `rlm` | `rlm` \| `pi` \| `prime` \| `prime-sdk`. Explicit MCP call selection outranks this declaration. |
 | `model` | ambient config | `"<provider>/<model>"` — `station/…`, `khal/…`, or any pi/ai provider. A bare model id keeps the configured provider. |
 | `description` | — | One line the MCP client shows the host model. Falls back to the first meaningful line of the system prompt, then a generic string — an agent with neither is effectively invisible. |
 | `system` | — | Path to the system prompt, relative to the agent directory. |
@@ -216,7 +233,7 @@ your own schema without forking the parser.
 | `budget.max_cost` | — | USD ceiling per run. |
 | `budget.max_iterations` | — | Iteration ceiling. Threaded into `runAgent({ maxIterations })`. |
 | `budget.max_depth` | — | Recursion depth ceiling, for `shape: recurse`. |
-| `scope.reads` / `scope.writes` | — | Advisory glob hints. The SDK does **not** enforce them; individual tool handlers do. |
+| `scope.reads` / `scope.writes` | — | Pi enforces read globs and refuses write scopes. Other SDK tool handlers own enforcement of these hints. |
 | `thinking` | ambient config | `minimal` \| `low` \| `medium` \| `high` — reasoning effort for this agent's own model calls. An unknown value is a hard error. The four levels are graded only on providers that accept a reasoning effort; on `station/` models they collapse to on/off, where **on breaks the Qwen GGUF models** — see the two notes below. |
 | `temperature` | ambient config | Sampling temperature `0`–`2` for this agent's own model calls, the `agent.yaml` twin of `--temperature`. Writes the same `config.temperature` mikro.yaml's top-level `temperature:` writes, so an agent's value outranks the project's. `0` is greedy decoding — a real pin, not a synonym for unset — while an explicit `null` or an omitted key inherits. A non-number or an out-of-range value is a hard error, unlike most type drift in this parser: a temperature that silently fell back would be indistinguishable from one that took. Best-effort: pi/ai sends `temperature` on every api family and drops it only on the `anthropic-messages` api — when a reasoning level is set, or when the resolved model declares `compat.supportsTemperature: false`. Claude reached via OpenRouter or Bedrock does not get that guard, so the model family alone does not tell you whether the pin took. |
 
