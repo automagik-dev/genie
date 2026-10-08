@@ -1,0 +1,52 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-10-08T03:30:56.905600+00:00",
+  "job": "bg_115",
+  "actualExitCode": 0,
+  "actualSeconds": 572.17,
+  "actualTestSeconds": 549.05,
+  "command": "bun install --frozen-lockfile && env -u NO_COLOR TMPDIR=/var/tmp flock /var/tmp/genie-full-check.lock bun run check",
+  "actualSuccessMarker": "G9_SOURCE_PUBLICATION_FINAL_ROOT_GATE_EXIT=0",
+  "rawOutputArtifact": "artifact://908",
+  "rawFullTextSha256": "fcf52457f7517a95650daa35fff89d3465861441a5fa47894b90153fb1bb7dc3",
+  "rawFullLineCount": 871,
+  "fullRawReadNotJustTail": true,
+  "candidateManifestSha256": "4ddc8d2bfa688fdf3efbaff1617bea43d9e26c85d6d0c7207b9d23f388d2407f",
+  "candidateRecordCount": 2414,
+  "allCandidateRecordsActuallyCheckedUnchangedAfterGate": true,
+  "currentKnipSha256": "7fa6db016de4e67da023ca00a17850db4e52d70416af8ca0bb75d0b8717aa701",
+  "frozenInstall": {
+    "bunVersion": "1.3.14",
+    "installs": 296,
+    "packages": 367,
+    "changed": 0
+  },
+  "allStagesCompleted": [
+    "typecheck",
+    "Biome",
+    "Knip actual final root configuration",
+    "skills-lint",
+    "wishes-lint",
+    "complexity-budget",
+    "complete Bun tests"
+  ],
+  "tests": {
+    "pass": 3215,
+    "skip": 2,
+    "fail": 0,
+    "assertions": 19185,
+    "files": 156,
+    "total": 3217
+  },
+  "retainedWarnings": [
+    "Existing doctor bounded read-only manifest classifier cognitivecomplexity26 independently architecturally reviewed",
+    "Four explicit Knip configuration hints retained: docs-vendor ignore, mikro ignoredworkspace, react ignoreddep, redundant boardbuildtest entry"
+  ],
+  "failedDraftsNotOverwritten": [
+    "bg_114 failedwholegate24.76sexit1",
+    "changedconfigurationKnipsmoke3.21sexit1"
+  ],
+  "unchangedSDKProofsRetained": "WholeMicro1228pass0fail andactualcompiled/Python/MCP/Genieparser/install/all4release proofsalreadybindidenticalsourcebytes; no repeatedpaidmodels",
+  "comparisonAndWholeWishIncomplete": true,
+  "notYetCurrentSourceShipOrRemoteCIClaim": true
+}

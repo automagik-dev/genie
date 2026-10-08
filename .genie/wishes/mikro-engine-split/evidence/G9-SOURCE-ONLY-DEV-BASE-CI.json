@@ -1,0 +1,108 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-10-08T03:21:53.854617+00:00",
+  "actualDevBase": "27739552066c18cde858d9bd2f8f9b1e041220c4",
+  "actualCheckRuns": [
+    {
+      "id": 112622315069,
+      "name": "Quality Gate (typecheck + lint + test)",
+      "head_sha": "27739552066c18cde858d9bd2f8f9b1e041220c4",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-10-07T03:52:02Z",
+      "completed_at": "2026-10-07T03:52:06Z",
+      "html_url": "https://github.com/automagik-dev/genie/actions/runs/37568186878/job/112622315069"
+    },
+    {
+      "id": 112620647922,
+      "name": "Socket Security: Pull Request Alerts",
+      "head_sha": "27739552066c18cde858d9bd2f8f9b1e041220c4",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-10-07T03:45:00Z",
+      "completed_at": "2026-10-07T03:45:11Z",
+      "html_url": "https://github.com/automagik-dev/genie/runs/112620647922"
+    },
+    {
+      "id": 112620634481,
+      "name": "Socket Security: Project Report",
+      "head_sha": "27739552066c18cde858d9bd2f8f9b1e041220c4",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-10-07T03:44:57Z",
+      "completed_at": "2026-10-07T03:45:00Z",
+      "html_url": "https://github.com/automagik-dev/genie/runs/112620634481"
+    },
+    {
+      "id": 112620630566,
+      "name": "GitGuardian Security Checks",
+      "head_sha": "27739552066c18cde858d9bd2f8f9b1e041220c4",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-10-07T03:44:57Z",
+      "completed_at": "2026-10-07T03:44:58Z",
+      "html_url": "https://github.com/automagik-dev/genie/runs/112620630566"
+    },
+    {
+      "id": 112620628594,
+      "name": "Secrets Scan (GitGuardian)",
+      "head_sha": "27739552066c18cde858d9bd2f8f9b1e041220c4",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-10-07T03:45:02Z",
+      "completed_at": "2026-10-07T03:45:09Z",
+      "html_url": "https://github.com/automagik-dev/genie/actions/runs/37568186878/job/112620628594"
+    },
+    {
+      "id": 112620628574,
+      "name": "Skills Inventory Parity (skills.sh --list)",
+      "head_sha": "27739552066c18cde858d9bd2f8f9b1e041220c4",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-10-07T03:44:58Z",
+      "completed_at": "2026-10-07T03:45:06Z",
+      "html_url": "https://github.com/automagik-dev/genie/actions/runs/37568186878/job/112620628574"
+    },
+    {
+      "id": 112620628547,
+      "name": "Unit (build + typecheck + lint + dead-code + test)",
+      "head_sha": "27739552066c18cde858d9bd2f8f9b1e041220c4",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-10-07T03:45:02Z",
+      "completed_at": "2026-10-07T03:47:36Z",
+      "html_url": "https://github.com/automagik-dev/genie/actions/runs/37568186878/job/112620628547"
+    },
+    {
+      "id": 112620628533,
+      "name": "E2E (v5 lifecycle)",
+      "head_sha": "27739552066c18cde858d9bd2f8f9b1e041220c4",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-10-07T03:45:03Z",
+      "completed_at": "2026-10-07T03:45:17Z",
+      "html_url": "https://github.com/automagik-dev/genie/actions/runs/37568186878/job/112620628533"
+    },
+    {
+      "id": 112620628521,
+      "name": "Action Pin Resolvability",
+      "head_sha": "27739552066c18cde858d9bd2f8f9b1e041220c4",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-10-07T03:45:03Z",
+      "completed_at": "2026-10-07T03:45:12Z",
+      "html_url": "https://github.com/automagik-dev/genie/actions/runs/37568186878/job/112620628521"
+    },
+    {
+      "id": 112620628374,
+      "name": "Unit (darwin \u2014 build + typecheck + test)",
+      "head_sha": "27739552066c18cde858d9bd2f8f9b1e041220c4",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-10-07T03:45:05Z",
+      "completed_at": "2026-10-07T03:51:55Z",
+      "html_url": "https://github.com/automagik-dev/genie/actions/runs/37568186878/job/112620628374"
+    }
+  ],
+  "doesNotCertifySourceBranchOrFuturePRHead": true
+}

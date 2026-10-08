@@ -1,0 +1,53 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-10-08T03:10:40.589963+00:00",
+  "sourceDeliveryCommit": "8b67ca0e90d10c4c38e10e5786dd129cf216a47e",
+  "sourceDeliveryTree": "122ca533747db340140ee7801a4231761a5cdeec",
+  "originalReviewedManifestSha256": "423ab63772c9b93c2b86657f997a7b960acecc2bf63516d57f29b3dbc04212c5",
+  "actualCurrentDevBase": "27739552066c18cde858d9bd2f8f9b1e041220c4",
+  "actualReadOnlyPreflightConflict": {
+    "command": [
+      "git",
+      "merge-tree",
+      "--write-tree",
+      "27739552066c18cde858d9bd2f8f9b1e041220c4",
+      "8b67ca0e90d10c4c38e10e5786dd129cf216a47e"
+    ],
+    "exitCode": 1,
+    "stdout": "9b976c433cce975df5af9b9403b6fc3e78d63c6e\n100644 91aa0bad3487842ed6d2230f821b5f87e28ed092 1\tknip.json\n100644 890b08cb7dda663eeb5c212809266ebb4bcecc45 2\tknip.json\n100644 c782d7247328827b668ef6189d63e495c6850e58 3\tknip.json\n\nAuto-merging README.md\nAuto-merging knip.json\nCONFLICT (content): Merge conflict in knip.json\n",
+    "stderr": "",
+    "doesNotMergeMoveHEADOrModifyIndexOrWorkingFiles": true
+  },
+  "resolutionIntent": "Preserve live dev flat root Knip defaults and docs-vendor ignore, preserve imported SDK isolated explicit root/mikro workspaces and ignored mikro workspace. Move identical root defaults to existing flat convention, leave named workspace entries empty to inherit defaults; no SDK/source/lock/API/default/budget change. No local merge/rebase/branch-base ref move performed.",
+  "configurationBefore": {
+    "path": "knip.json",
+    "kind": "file",
+    "mode": "0600",
+    "sha256": "cc941fc54d89858a21dd755a6b4d52782afb2f6dee28433f838ddf5736bd3d01"
+  },
+  "configurationAfter": {
+    "path": "knip.json",
+    "kind": "file",
+    "mode": "0600",
+    "sha256": "68e1893baada83a8c7b1b44487cdbf066f2bcfc3b970f81be36ca8c8611c3ac0"
+  },
+  "currentManifestSha256": "4725d6a95ef44a9fb1cb06406c2db1992c9efffcbc63d5af9d56c27976683111",
+  "currentManifestRecordCount": 2414,
+  "reviewInvalidationHonest": "Prior423manifest source-onlySHIP is not claimed for new knip configuration until current fullRootgate and bounded independent re-review. Existing wholeMikro1228, localterminal/MCP/installsmokes remain actual same-byte SDK evidence.",
+  "wholeRootGateRunning": "bg_114: frozeninstall plus exactcompletebunruncheck, not check-fast",
+  "sourceBudget": "G3combined4/B4 quality1/cap1 G8 5/B5 effort0 unchanged; this is sourcepublication/current-base configuration reconciliation, no new source-accounting pass",
+  "originalHistoricalEvidencePreserved": true,
+  "noPaidInferenceJevRefreezeResamplingRegrading": true,
+  "realIndexPreservation": {
+    "beforeSha256": "89a81c65da1a2c9aaa6bad075f5ae2a8ddaf5882401d0fd40d0f01c8b56cb4d5",
+    "nonTargetExactEntriesVerifiedUnchanged": 2132,
+    "ownedEntriesAdvancedOnlyAfterExactCommit": true
+  },
+  "observedPublicationToolFailuresRetained": [
+    "Exact normalgitadd partially staged266paths and refused16explicitlyignored newoutputs; readbackcompletedonly16force.",
+    "Repeat normaladd encounteredalready-staged obsolete deletionmissingpath; noSourceChange.",
+    "Initialcommit-msg hook rejectedoverlong100-characterbody; sameSourceTree retrywithwrappedbody passednormalhooks.",
+    "Heartbeatwith--worker unsupported; actualCLIid-onlyheartbeat succeeds."
+  ],
+  "publicationChecksNotYetProved": true
+}
