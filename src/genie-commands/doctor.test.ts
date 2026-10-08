@@ -663,8 +663,11 @@ describe('checkV4Residue — accounting + uncertain keeps + json fix', () => {
     writeFileSync(join(fxGenieHome, 'serve.pid'), '77\n', 'utf-8');
     const repoRoot = join(import.meta.dir, '..', '..');
 
+    // Run from the fixture home, not this checkout: from the repository root `doctor --fix` scans
+    // (and may repair modes in) every worktree git registered for it, which makes the run as slow
+    // as the host is cluttered — about 4 s with 24 worktrees — and lets a test touch a real tree.
     const proc = Bun.spawnSync([process.execPath, join(repoRoot, 'src', 'genie.ts'), 'doctor', '--fix', '--json'], {
-      cwd: repoRoot,
+      cwd: fxHome,
       env: { ...process.env, HOME: fxHome, GENIE_HOME: fxGenieHome },
     });
 
