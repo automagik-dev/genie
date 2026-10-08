@@ -24,9 +24,9 @@
 
 import { closeSync, existsSync, openSync, readFileSync, readSync, readdirSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { basename, dirname, join, sep } from 'node:path';
+import { join, sep } from 'node:path';
 import { resolveClaudeDir, resolveCodexDir } from './genie-home.js';
-import type { RuntimeSession } from './metrics-capture.js';
+import { type RuntimeSession, isCanonicalRepoDb } from './metrics-capture.js';
 import { repoCheckouts, repoRootOfDb } from './metrics-offload.js';
 
 export interface UsageSample {
@@ -677,7 +677,7 @@ export function matchOmpSessionByEvidence(
   cache: OmpEvidenceCache = newOmpEvidenceCache([event.task]),
 ): PiSessionMatch {
   // Only a per-repo database names a repository; any other path (a test fixture, a foreign file) names none.
-  if (basename(event.db) !== 'genie.db' || basename(dirname(event.db)) !== '.genie') return null;
+  if (!isCanonicalRepoDb(event.db)) return null;
   const checkouts = repoCheckouts(repoRootOfDb(event.db));
   if (!checkouts.some((c) => event.cwd === c || event.cwd.startsWith(`${c}${sep}`))) return null;
   const alive = ompSessionsOverlapping(event.at, env, () => true);

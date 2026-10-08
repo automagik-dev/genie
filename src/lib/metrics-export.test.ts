@@ -701,6 +701,22 @@ describe('ledger → verified intervals', () => {
       omp('test-runner', fixtures, [claimCall('2026-10-04T09:59:58Z')]);
       expect(interval(join(fixtures, 'run-1'), testDb)).toMatchObject({ sessionMatch: null, usage: null });
     });
+
+    test('a RELATIVE .genie/genie.db names no repository either: it never reaches the evidence fallback', () => {
+      const writer = omp('writer', repoRoot, [claimCall('2026-10-04T09:59:58Z')]);
+      // The absolute spelling of the same database is matched by that session's logged claim call.
+      expect(interval()).toMatchObject({ sessionMatch: 'window', session: { id: 'writer', file: writer } });
+      const saved = process.cwd();
+      process.chdir(repoRoot);
+      try {
+        // Relative to the repository root this IS the seeded database, so the interval exists.
+        const relativeDb = interval(worktree, join('.genie', 'genie.db'));
+        expect(relativeDb).toBeDefined();
+        expect(relativeDb).toMatchObject({ task: 't1', sessionMatch: null, usage: null });
+      } finally {
+        process.chdir(saved);
+      }
+    });
   });
 
   test('mikro offload runs inside the window are priced on the interval; a repo with no mikro ledger is unknown', () => {
