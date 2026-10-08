@@ -5,7 +5,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   CATALOG_CHECK_GAP,
+  collectCatalog,
   evaluateCatalogCheck,
+  historyRevisions,
   mergeCatalog,
   recordedCatalog,
   render,
@@ -153,7 +155,7 @@ describe('--check is an additive-union SUPERSET check', () => {
 });
 
 /**
- * The vacuous-green case: on a shallow clone `git log --all` sees nothing, the
+ * The vacuous-green case: on a shallow clone the history walk sees nothing, the
  * collected catalog is empty, and the additive union leaves the committed file
  * unchanged — so `--check` would pass having proven nothing at all. It refuses
  * instead, BEFORE any history walk or biome call. `--write` is untouched.
@@ -217,6 +219,126 @@ describe('--check refuses a shallow clone', () => {
     const run = runCheck(origin);
     expect(run.stderr).not.toContain('shallow clone');
     expect(run.stdout).toContain('LEGACY_SKILL_NAMES');
+  });
+});
+
+/**
+ * History is read from SHIPPED refs only. `git log --all` also walked every unmerged remote
+ * branch, so a pull request that added a skill turned `--check` red on every other branch
+ * (#3139's two new skills did exactly that), and a `--write` would have catalogued a skill
+ * nobody ever installed as a retired one.
+ */
+describe('history is read from shipped refs, never from an unmerged branch', () => {
+  const scratch: string[] = [];
+  afterEach(() => {
+    for (const dir of scratch.splice(0)) rmSync(dir, { recursive: true, force: true });
+  });
+
+  function git(cwd: string, ...args: string[]): string {
+    return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+  }
+
+  function commitSkill(dir: string, name: string): void {
+    mkdirSync(join(dir, 'skills', name), { recursive: true });
+    writeFileSync(
+      join(dir, 'skills', name, 'SKILL.md'),
+      `---\nname: ${name}\ndescription: "The ${name} skill."\n---\n`,
+    );
+    git(dir, 'add', '-A');
+    git(dir, 'commit', '-q', '-m', `add ${name}`);
+  }
+
+  /** A commit on top of `base` that adds one skill, reachable ONLY through `ref`. */
+  function sideRef(dir: string, base: string, ref: string, skill: string): void {
+    git(dir, 'checkout', '-q', '--detach', base);
+    commitSkill(dir, skill);
+    git(dir, 'update-ref', ref, 'HEAD');
+    git(dir, 'checkout', '-q', 'main');
+  }
+
+  /**
+   * `kept` ships today; `old` shipped in the tagged release v1 and was removed afterwards;
+   * `new` lives only on the unmerged `origin/feature`. No `origin/main`, no `origin/dev` and no
+   * `refs/archive/*` exist yet, so the base fixture is also the absent-ref case.
+   */
+  function seedRepo(): { dir: string; base: string } {
+    const dir = mkdtempSync(join(tmpdir(), 'legacy-catalog-refs-'));
+    scratch.push(dir);
+    mkdirSync(join(dir, 'scripts'), { recursive: true });
+    writeFileSync(
+      join(dir, 'scripts', 'legacy-skills-catalog.ts'),
+      readFileSync(join(ROOT, 'scripts', 'legacy-skills-catalog.ts'), 'utf8'),
+    );
+    git(dir, 'init', '-q', '-b', 'main');
+    git(dir, 'config', 'user.email', 'test@example.com');
+    git(dir, 'config', 'user.name', 'Test');
+    git(dir, 'config', 'commit.gpgsign', 'false');
+    commitSkill(dir, 'kept');
+    commitSkill(dir, 'old');
+    git(dir, 'tag', 'v1');
+    // Rewrite main so `old` is reachable through the TAG alone, never through HEAD.
+    git(dir, 'reset', '-q', '--hard', 'HEAD~1');
+    writeFileSync(join(dir, 'README.md'), 'after the release\n');
+    git(dir, 'add', '-A');
+    git(dir, 'commit', '-q', '-m', 'move on');
+    const base = git(dir, 'rev-parse', 'HEAD').trim();
+    sideRef(dir, base, 'refs/remotes/origin/feature', 'new');
+    return { dir, base };
+  }
+
+  /** The `--check` verdict for a committed catalog that carries nothing. */
+  function verdictAgainstEmptyCatalog(dir: string) {
+    const merged = mergeCatalog(
+      collectCatalog(dir),
+      { names: [], descriptions: [] },
+      new Set(['kept']),
+      new Set(['The kept skill.']),
+    );
+    return evaluateCatalogCheck('// committed', '// regenerated', {
+      merged,
+      recorded: { names: [], descriptions: [] },
+    });
+  }
+
+  test('a tagged-then-removed skill is reported; a skill on an unmerged remote branch is not', () => {
+    const { dir } = seedRepo();
+
+    const verdict = verdictAgainstEmptyCatalog(dir);
+    expect(verdict.stale).toBe(true);
+    expect(verdict.missingNames).toEqual(['old']);
+    expect(verdict.missingDescriptions).toEqual(['The old skill.']);
+    expect(verdict.lines.join('\n')).toContain('1 name(s) and 1 description(s)');
+    expect(verdict.lines.join('\n')).toContain('(old)');
+  });
+
+  test('the CLI derives the same set: the generator run inside that repo names old and never new', () => {
+    const { dir } = seedRepo();
+
+    const run = spawnSync('bun', [join(dir, 'scripts', 'legacy-skills-catalog.ts')], { encoding: 'utf8' });
+    expect(run.status).toBe(0);
+    expect(run.stdout).toContain('LEGACY_SKILL_NAMES: readonly string[] = ["old"]');
+    expect(run.stdout).toContain('"The old skill."');
+    expect(run.stdout).not.toContain('The new skill.');
+  });
+
+  test('origin/main, origin/dev and refs/archive/* join the walk when present, and only those', () => {
+    const { dir, base } = seedRepo();
+    expect(historyRevisions(dir)).toEqual(['HEAD', '--tags', '--glob=refs/archive/*']);
+
+    sideRef(dir, base, 'refs/remotes/origin/main', 'on-main');
+    sideRef(dir, base, 'refs/remotes/origin/dev', 'on-dev');
+    sideRef(dir, base, 'refs/archive/shelved', 'archived');
+    // A branch whose NAME merely starts like a shipped one is still unmerged work.
+    sideRef(dir, base, 'refs/remotes/origin/dev-experiment', 'lookalike');
+
+    expect(historyRevisions(dir)).toEqual([
+      'HEAD',
+      '--tags',
+      'refs/remotes/origin/dev',
+      'refs/remotes/origin/main',
+      '--glob=refs/archive/*',
+    ]);
+    expect([...collectCatalog(dir).keys()].sort()).toEqual(['archived', 'kept', 'old', 'on-dev', 'on-main']);
   });
 });
 
