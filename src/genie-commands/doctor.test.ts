@@ -22,6 +22,7 @@ import {
   type CheckResult,
   MINIMUM_BUN_VERSION,
   checkBudgets,
+  checkContextBudget,
   checkGlobalDbContamination,
   checkIndexLaneDrift,
   checkRetiredJsonMcpEntry,
@@ -214,6 +215,64 @@ describe('budget echo', () => {
     const genieHome = process.env.GENIE_HOME as string;
     await checkBudgets();
     expect(existsSync(join(genieHome, 'config.json'))).toBe(false);
+  });
+});
+
+describe('context budget', () => {
+  let configDir: string;
+
+  beforeEach(() => {
+    configDir = mkdtempSync(join(tmpdir(), 'genie-context-budget-'));
+  });
+
+  afterEach(() => {
+    rmSync(configDir, { recursive: true, force: true });
+  });
+
+  // The env object is injected whole, so a host-set CLAUDE_CODE_AUTO_COMPACT_WINDOW is never read.
+  function run(extra: NodeJS.ProcessEnv = {}) {
+    const results = checkContextBudget({ CLAUDE_CONFIG_DIR: configDir, ...extra });
+    expect(results).toHaveLength(1);
+    return results[0];
+  }
+
+  test('the env var wins over the settings key', () => {
+    writeFileSync(join(configDir, 'settings.json'), JSON.stringify({ autoCompactWindow: 250000 }));
+    const check = run({ CLAUDE_CODE_AUTO_COMPACT_WINDOW: '400000' });
+    expect(check.status).toBe('pass');
+    expect(check.name).toBe('context budget: auto-compact window 400000 (env CLAUDE_CODE_AUTO_COMPACT_WINDOW)');
+    expect(check.contextBudget).toEqual({ value: 400000, source: 'env' });
+  });
+
+  test('the settings key is read from the Claude config dir when the env var is unset', () => {
+    writeFileSync(join(configDir, 'settings.json'), JSON.stringify({ autoCompactWindow: 250000 }));
+    const check = run();
+    expect(check.status).toBe('pass');
+    expect(check.name).toBe('context budget: auto-compact window 250000 (settings.json autoCompactWindow)');
+    expect(check.contextBudget).toEqual({ value: 250000, source: 'settings' });
+  });
+
+  test('neither set: the Claude Code default applies and 400k is the recommendation', () => {
+    const absent = run();
+    writeFileSync(join(configDir, 'settings.json'), JSON.stringify({ model: 'opus' }));
+    const keyless = run();
+    for (const check of [absent, keyless]) {
+      expect(check.status).toBe('pass');
+      expect(check.name).toStartWith('context budget:');
+      expect(check.name).toContain('Claude Code default applies');
+      expect(check.name).toContain('400k');
+      expect(check.contextBudget).toEqual({ value: null, source: 'default' });
+    }
+  });
+
+  test('malformed settings are reported as unknown, still a pass, and nothing is written', () => {
+    const settingsPath = join(configDir, 'settings.json');
+    writeFileSync(settingsPath, '{ "autoCompactWindow": ');
+    const check = run();
+    expect(check.status).toBe('pass');
+    expect(check.name).toBe('context budget: auto-compact window unknown (settings.json unreadable or malformed)');
+    expect(check.contextBudget).toEqual({ value: null, source: 'unknown' });
+    expect(readFileSync(settingsPath, 'utf8')).toBe('{ "autoCompactWindow": ');
   });
 });
 

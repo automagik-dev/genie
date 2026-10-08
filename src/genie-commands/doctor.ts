@@ -114,6 +114,18 @@ export interface CheckResult {
    * `skills: channel` line carries no agent and therefore no rider.
    */
   skillsChannel?: SkillsChannelStatus;
+  /**
+   * Machine-readable payload rider (survives `--json` as `checks[].contextBudget`).
+   * Only the `context budget:` line sets it: the resolved Claude Code auto-compact
+   * window (`null` when none is set or it could not be read) and where it came from.
+   */
+  contextBudget?: ContextBudgetStatus;
+}
+
+/** Where the `context budget:` line resolved the auto-compact window from. */
+export interface ContextBudgetStatus {
+  value: number | null;
+  source: 'env' | 'settings' | 'default' | 'unknown';
 }
 
 // ============================================================================
@@ -1299,6 +1311,62 @@ export function checkSubagentModelOverride(env: NodeJS.ProcessEnv = process.env)
   ];
 }
 
+/** A positive finite token count, or `null` for anything Claude Code could not mean as a window. */
+function parseCompactWindow(raw: unknown): number | null {
+  const parsed =
+    typeof raw === 'number' ? raw : typeof raw === 'string' && raw.trim() !== '' ? Number(raw) : Number.NaN;
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
+function contextBudgetLine(status: ContextBudgetStatus, where: string): CheckResult[] {
+  const window = status.value === null ? 'unknown' : String(status.value);
+  return [{ name: `context budget: auto-compact window ${window} (${where})`, status: 'pass', contextBudget: status }];
+}
+
+/**
+ * Echo the Claude Code auto-compact window this host resolves: the
+ * `CLAUDE_CODE_AUTO_COMPACT_WINDOW` env var first, else `autoCompactWindow` in
+ * the Claude config dir's `settings.json`, else the Claude Code default with
+ * 400k named as the recommendation. Informational and read-only: every path is
+ * a pass, nothing is written, and a settings file that cannot be read or parsed
+ * is reported as unknown — genie recommends a budget, it never sets one.
+ */
+export function checkContextBudget(env: NodeJS.ProcessEnv = process.env): CheckResult[] {
+  const fromEnv = env.CLAUDE_CODE_AUTO_COMPACT_WINDOW;
+  if (fromEnv !== undefined && fromEnv !== '') {
+    return contextBudgetLine(
+      { value: parseCompactWindow(fromEnv), source: 'env' },
+      'env CLAUDE_CODE_AUTO_COMPACT_WINDOW',
+    );
+  }
+  const settingsPath = join(env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude'), 'settings.json');
+  let settings: unknown = {};
+  if (existsSync(settingsPath)) {
+    try {
+      settings = JSON.parse(readFileSync(settingsPath, 'utf8'));
+    } catch {
+      settings = null;
+    }
+  }
+  if (settings === null || typeof settings !== 'object' || Array.isArray(settings)) {
+    return contextBudgetLine({ value: null, source: 'unknown' }, 'settings.json unreadable or malformed');
+  }
+  const fromSettings = (settings as Record<string, unknown>).autoCompactWindow;
+  if (fromSettings !== undefined) {
+    return contextBudgetLine(
+      { value: parseCompactWindow(fromSettings), source: 'settings' },
+      'settings.json autoCompactWindow',
+    );
+  }
+  return [
+    {
+      name: 'context budget: Claude Code default applies (auto-compact window not set); 400k recommended',
+      status: 'pass',
+      contextBudget: { value: null, source: 'default' },
+    },
+  ];
+}
+
 // ============================================================================
 // v4 residue check (detect-only; --fix runs the backup-first cleanup)
 // ============================================================================
@@ -1835,6 +1903,7 @@ export async function doctorCommand(
     ...checkBun(deps.bunVersion, deps.bunPath),
     ...(await checkBudgets()),
     ...checkSubagentModelOverride(),
+    ...checkContextBudget(),
     ...(await checkCodexIntegration(root, pluginProbe)),
     // Live context resolution only when the root itself was live-resolved: an
     // injected root without an injected context is a unit-test seam, not a repo.
