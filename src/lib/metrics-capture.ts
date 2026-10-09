@@ -21,7 +21,7 @@
  */
 
 import { closeSync, mkdirSync, openSync, rmSync, statSync, writeFileSync, writeSync } from 'node:fs';
-import { join } from 'node:path';
+import { basename, dirname, isAbsolute, join } from 'node:path';
 import { resolveGenieHome } from './genie-home.js';
 import { VERSION } from './version.js';
 
@@ -57,6 +57,18 @@ export function isCaptureEnabled(env: NodeJS.ProcessEnv = process.env): boolean 
   } catch {
     return false;
   }
+}
+
+/**
+ * A real per-repo database is always `<repo root>/.genie/genie.db` (`genie-db.ts`; worktrees share the
+ * main checkout's). Anything else — a test's `race.db`, a scratch script's file — is not a card
+ * lifecycle anyone measures, so capture skips it and the export ignores it. Where the repository lives
+ * is irrelevant: a fixture repo under `/tmp` is canonical. A relative path is not: it names no
+ * repository without a cwd the line does not carry, and the opener always hands over an absolute one.
+ * String checks only — this runs on every card event.
+ */
+export function isCanonicalRepoDb(path: string): boolean {
+  return isAbsolute(path) && basename(path) === 'genie.db' && basename(dirname(path)) === '.genie';
 }
 
 export type SessionSource = 'claude-code' | 'codex' | 'pi';
@@ -157,8 +169,12 @@ export function buildCaptureLine(input: LifecycleEventInput, env: NodeJS.Process
  * key. A consumer joins on `(db, task, event, kind, at)`: the stray line's
  * `at` (the rolled-back row's `created_at`) matches no stored row, and the line
  * is reported unmatched, never attributed.
+ *
+ * An event of a database that is not a per-repo one ({@link isCanonicalRepoDb}) is skipped, silently
+ * like every other skip.
  */
 export function recordLifecycleEvent(input: LifecycleEventInput, env: NodeJS.ProcessEnv = process.env): void {
+  if (!isCanonicalRepoDb(input.db)) return;
   if (!isCaptureEnabled(env)) return;
   try {
     mkdirSync(metricsDir(), { recursive: true, mode: 0o700 });

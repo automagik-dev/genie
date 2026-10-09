@@ -4,17 +4,17 @@
  *
  * The catalog is how `genie update` and `genie doctor` recognise a skill
  * directory genie shipped BEFORE the install record existed: every skill name
- * that ever lived under a `skills/` directory on any ref and is no longer
- * delivered, plus every frontmatter `description` any genie skill ever shipped
+ * that ever lived under a `skills/` directory on a SHIPPED ref
+ * ({@link historyRevisions}) and is no longer delivered, plus every frontmatter `description` any genie skill ever shipped
  * under any name that NO currently shipped skill carries. A retired description
  * under a genie name proves a directory is genie's own pre-record install — a
  * third party does not copy genie's description verbatim, and a user's fork of a
  * CURRENT skill keeps a current description, which is deliberately absent here.
  *
- * Run from a FULL clone (`git log --all` needs the whole history; a shallow
- * checkout would silently produce an incomplete catalog, which is why this is
- * not part of `bun run check` — `bun run check` has no say over checkout
- * depth):
+ * Run from a FULL clone (the walk over the shipped refs needs their whole
+ * history; a shallow checkout would silently produce an incomplete catalog,
+ * which is why this is not part of `bun run check` — `bun run check` has no say
+ * over checkout depth):
  *
  *   bun scripts/legacy-skills-catalog.ts --write
  *   bun scripts/legacy-skills-catalog.ts --check   # exits 1 when the file is stale
@@ -34,8 +34,45 @@ const ROOT = join(import.meta.dir, '..');
 const OUTPUT = join(ROOT, 'src', 'lib', 'legacy-skills-catalog.ts');
 const MARKER_DIRS = ['.genie-codex-fallback-retirement'];
 
+function gitIn(cwd: string, ...args: string[]): string {
+  return execFileSync('git', args, { cwd, encoding: 'utf8', maxBuffer: 1 << 28 });
+}
+
 function git(...args: string[]): string {
-  return execFileSync('git', args, { cwd: ROOT, encoding: 'utf8', maxBuffer: 1 << 28 });
+  return gitIn(ROOT, ...args);
+}
+
+/** The two branches a release is cut from. Every other remote branch is unmerged work. */
+const SHIPPED_REMOTE_BRANCHES = ['refs/remotes/origin/main', 'refs/remotes/origin/dev'];
+
+/**
+ * The revisions history is read from — the refs that stand for SHIPPED or
+ * archived history, never every branch the clone happens to hold:
+ *
+ *   HEAD                      the tree under check
+ *   --tags                    every release
+ *   origin/main, origin/dev   the release branches, each only when it exists
+ *   --glob=refs/archive/*     archived work whose names the catalog already carries
+ *
+ * `git log --all` was the previous read, and `--all` includes every unmerged
+ * remote branch: a pull request that ADDED a skill made `--check` report the
+ * committed catalog stale on every OTHER branch, and a `--write` there would
+ * have catalogued a skill that never shipped as a retired one. A skill that
+ * only ever lived on an unmerged branch was never delivered, so nobody has it
+ * installed and there is nothing for the catalog to recognise.
+ *
+ * The two remote branches are resolved with `for-each-ref` rather than passed
+ * as `--remotes=origin/main`: a `--remotes`/`--glob` pattern with no wildcard
+ * has `/*` appended by git, so that spelling matches `origin/main/*` and never
+ * the branch itself (observed on git 2.55). `for-each-ref` prints nothing for
+ * an absent ref, and `--tags` / `--glob` match nothing without error, so a
+ * clone with no `origin`, no tags or no archive is not a failure.
+ */
+export function historyRevisions(root: string): string[] {
+  const shippedBranches = gitIn(root, 'for-each-ref', '--format=%(refname)', ...SHIPPED_REMOTE_BRANCHES)
+    .split('\n')
+    .filter((ref) => SHIPPED_REMOTE_BRANCHES.includes(ref));
+  return ['HEAD', '--tags', ...shippedBranches, '--glob=refs/archive/*'];
 }
 
 function parseDescription(markdown: string): string | null {
@@ -65,15 +102,26 @@ function currentSkillNames(): Set<string> {
   );
 }
 
-/** `{ name: Set<description> }` for every skill dir on any ref that is no longer shipped. */
-function collectCatalog(): Map<string, Set<string>> {
+/**
+ * `{ name: Set<description> }` for every skill dir in the history of a shipped ref
+ * ({@link historyRevisions}). `--write` and `--check` both read it, so they are one derivation.
+ */
+export function collectCatalog(root: string = ROOT): Map<string, Set<string>> {
   const catalog = new Map<string, Set<string>>();
-  const commits = git('log', '--all', '--pretty=format:%H', '--', 'skills/*/SKILL.md', '*/skills/*/SKILL.md')
+  const commits = gitIn(
+    root,
+    'log',
+    ...historyRevisions(root),
+    '--pretty=format:%H',
+    '--',
+    'skills/*/SKILL.md',
+    '*/skills/*/SKILL.md',
+  )
     .split('\n')
     .filter((line) => /^[0-9a-f]{40}$/.test(line));
   const seenBlobs = new Set<string>();
   for (const commit of commits) {
-    const tree = git('ls-tree', '-r', commit).split('\n');
+    const tree = gitIn(root, 'ls-tree', '-r', commit).split('\n');
     for (const row of tree) {
       // `(?:.*\/)?` — a root-level `skills/<name>/SKILL.md` has no leading
       // slash; anchoring on one silently skipped every skill genie ever shipped
@@ -91,7 +139,7 @@ function collectCatalog(): Map<string, Set<string>> {
       // `description:` at all — so the 2026-02 `gog` skill (which used `summary:`) could never be
       // recognised on disk under any roster, while listing it would only widen the `unproven`
       // reporting surface that already misfires on third-party products sharing a name.
-      const description = parseDescription(git('cat-file', 'blob', blob));
+      const description = parseDescription(gitIn(root, 'cat-file', 'blob', blob));
       if (description === null) continue;
       if (!catalog.has(name)) catalog.set(name, new Set());
       (catalog.get(name) as Set<string>).add(description);
@@ -117,9 +165,9 @@ function currentDescriptions(): Set<string> {
 }
 
 /**
- * What the committed catalog already carries. `git log --all` sees only the refs THIS clone holds,
- * so a description that lives on a branch another machine fetched would silently drop out of the
- * catalog on the next regeneration — and the proof it backs would weaken with it. The catalog is
+ * What the committed catalog already carries. The history walk sees only the shipped refs THIS clone
+ * holds ({@link historyRevisions}), so a description that lives on a tag or an archived ref another
+ * machine fetched would silently drop out of the catalog on the next regeneration — and the proof it backs would weaken with it. The catalog is
  * therefore additive: a run unions what it can see with what is already recorded, and only the
  * currently shipped names and descriptions are ever subtracted.
  */
@@ -197,7 +245,7 @@ export function render(
  * a hand-added entry or a shallow checkout goes unnoticed.
  */
 export const CATALOG_CHECK_GAP =
-  "legacy-skills-catalog: --check is an additive-union SUPERSET check: it proves the committed catalog carries everything THIS clone's history yields, never that it carries nothing more. An entry added by hand, or one retired on a ref this clone never fetched, is invisible to it — which is why it must run on a FULL clone (`fetch-depth: 0`), never a shallow checkout.";
+  "legacy-skills-catalog: --check is an additive-union SUPERSET check: it proves the committed catalog carries everything THIS clone's shipped history yields (HEAD, every tag, origin/main, origin/dev and refs/archive/* — never an unmerged branch, whose skills were never delivered), never that it carries nothing more. An entry added by hand, or one retired on a ref this clone never fetched, is invisible to it — which is why it must run on a FULL clone (`fetch-depth: 0`), never a shallow checkout.";
 
 export interface CatalogCheckVerdict {
   /** True when the committed file differs from what a regeneration would write. */
@@ -251,7 +299,7 @@ function formatted(source: string): string {
 }
 
 /**
- * The one refusal `--check` owns. On a shallow clone `git log --all` sees
+ * The one refusal `--check` owns. On a shallow clone the history walk sees
  * (almost) nothing, so the collected catalog is empty, the additive union
  * leaves the committed file unchanged, and the check passes having proven
  * NOTHING — the exact vacuous green the CI `fetch-depth: 0` exists to prevent.
@@ -259,7 +307,7 @@ function formatted(source: string): string {
  * only ever adds, and the union protects the rest.
  */
 export const SHALLOW_REFUSAL =
-  'legacy-skills-catalog: refusing --check on a shallow clone — `git log --all` cannot see the history this catalog is derived from, so the additive union would pass vacuously; re-run on a FULL clone (`fetch-depth: 0`). `--write` is still allowed.';
+  'legacy-skills-catalog: refusing --check on a shallow clone — the walk over the shipped refs cannot see the history this catalog is derived from, so the additive union would pass vacuously; re-run on a FULL clone (`fetch-depth: 0`). `--write` is still allowed.';
 
 function isShallowClone(): boolean {
   try {
