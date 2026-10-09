@@ -13,7 +13,7 @@
 
 ## Summary
 
-This is the first executable wave of the reviewed Genie Bench design (design SHIP 2026-10-04, digest `6acd07d9…`, preflight re-verified 2026-10-09). It builds the operator-invoked engine under `scripts/bench/`: versioned contracts, one durable per-attempt journal, the deterministic task-manifest freeze and preregistered schedule, a finite attempt supervisor bound to the original verifier, presence-preserving native OMP capture and request accounting, and the visible native OMP adapter. Its last group runs the native capability preflight, freezes the 20-task manifest and runs the two integration smoke tasks in both arms. That group is blocked until the design's hard prerequisites are proven. The 120 scored attempts, analysis/release export, Phoenix reconciliation, the other four harnesses, the website and the improvement engine are sibling wishes, named under `## Dependencies`. This plan claims no benchmark runtime, scored result or performance gain.
+This is the first executable wave of the reviewed Genie Bench design (design SHIP 2026-10-04, digest `6acd07d9…`, preflight re-verified 2026-10-09). It builds the operator-invoked engine under `scripts/bench/`: versioned contracts, one durable per-attempt journal, the deterministic task-manifest freeze and preregistered schedule, source-native task environment provisioning, a finite attempt supervisor bound to the original verifier, presence-preserving native OMP capture and request accounting, and the visible native OMP adapter. Its last group runs the native capability preflight, freezes the 20-task manifest and runs the two integration smoke tasks in both arms. That group is blocked until the design's hard prerequisites are proven. The 120 scored attempts, analysis/release export, Phoenix reconciliation, the other four harnesses, the website and the improvement engine are sibling wishes, named under `## Dependencies`. This plan claims no benchmark runtime, scored result or performance gain.
 
 ## Scope
 
@@ -22,9 +22,10 @@ This is the first executable wave of the reviewed Genie Bench design (design SHI
 - `scripts/bench/contracts.ts`: versioned task, eligibility, configuration, treatment-pin, attempt-identity, state-machine, event-envelope, native-request and adapter contracts (design IN 1, 10, 16). `scripts/bench/README.md` is the operator contract.
 - `scripts/bench/ledger.ts`: one host-owned per-attempt journal with durable checkpoints, fail-closed corruption handling and identity-checked recovery. The whole campaign is registered before any launch (design IN 2, 14; §5).
 - `scripts/bench/pilot.ts` (`freeze`, `replace`, `schedule`): eligible-pool freeze, deterministic pre-outcome replacement in bytewise original-task-ID order within source/category, a hard stop on insufficient quota, and seeded paired interleaving of 20 tasks × 3 repeats × 2 arms (design IN 3, 5; §3–4).
+- `scripts/bench/environment.ts` (`check`): source-native environment lifecycle. It reads the original instruction by digest and provisions/tears down each task through the source's own declared mechanism: a clean checkout at the pinned commit for DeepSWE, or the source's own container/harness (Harbor where it preserves semantics) with the original image digest and resource limits, e.g. a Terminal-Bench `/app` container at 2 CPU/4 GB. It runs nothing the source does not declare (design §1, §3; Group 9).
 - `scripts/bench/run.ts` (`preflight`, `attempt`, `recover`, `status`): a finite supervisor. It drives a native adapter through registered → running → execution stopped → verified | terminal failure → capture sealed, on an external monotonic clock. The original verifier runs outside solver mounts against the digest-bound collected artifact (design IN 2, 11; §1, §5).
 - `scripts/bench/capture.ts`: bounded native OMP evidence from the per-attempt isolated home: sessions, actor graph with parentage and pending work, model requests, input/approval/interruption origin events, and capture health. Unknown stays null (design IN 12, 13 origin capture; §5–7).
-- `scripts/bench/accounting.ts`: whole-attempt request economics. Distinct dispatch attempts, native token-convention validation, cache 5m/1h buckets, a pinned price basis, and cost/attempt plus cost/accepted-task that stay undefined when required costs are missing or acceptance is zero (design IN 2; §6).
+- `scripts/bench/accounting.ts`: whole-attempt request economics. Distinct dispatch attempts, native token-convention validation, cache 5m/1h buckets plus an undivided cache-write total, a pinned price basis, native-source coverage beside a delivery-coverage field, and cost/attempt plus cost/accepted-task that stay undefined when required costs are missing or acceptance is zero (design IN 2; §6).
 - `scripts/bench/adapters/omp.ts`: the stock interactive OMP client on a genuine PTY the operator can attach to. It consumes the pinned treatment contract for the Genie arm and leaves every discovery root Genie-free for the zero-Genie arm (design IN 10, 11; §2, §4).
 - Native capability preflight, the frozen `scripts/bench/tasks/public-pilot.json` manifest, `scripts/bench/tasks/omp-sol-medium.json` configuration, and both-arm smoke receipts for `actionlint-action-pinning-lint` and `session-window-debug`. These are **blocked-on-prerequisite** (Group 8; design IN 5 smoke; SC2–SC4).
 - `tsconfig.json` `include` gains `scripts/bench/**/*` so the repository gate type-checks the engine. This is the only validation-configuration change the new entry points require (design line 47).
@@ -48,15 +49,18 @@ This is the first executable wave of the reviewed Genie Bench design (design SHI
 | 2 | The engine is `bun scripts/bench/<file>.ts <verb>` operator tooling, not a `genie` CLI command | Design §1: operator infrastructure, not a Genie daemon or product surface. No `src/genie.ts`, CLAUDE.md command-table or knip `project` change |
 | 3 | Every verb requires an explicit `--root <dir>` for private receipts; there is no default location | Owner rule "nothing on by default and nothing hardcoded". Missing `--root` exits 2 and writes nothing |
 | 4 | Exit codes follow the mikro vocabulary: 0 ok, 1 not ok, 2 refusal that cost nothing | One house convention for operator scripts (`scripts/mikro/*`) |
-| 5 | `src/lib/metrics-*.ts` is consumed read-only: `matchOmpSessionByCwd`/`PiSessionMatch` (`metrics-usage.ts`), `loadPriceTable`/`tableCost`/`PriceTable` (`metrics-prices.ts`). `UsageSample` sums are NOT reused | `metrics-usage.ts` `num()` maps a missing count to 0, which violates "unknown is null". The bench parses records with per-field presence, and editing the capture owner's modules is out of scope (design §8) |
+| 5 | `src/lib/metrics-*.ts` is consumed read-only, and only `loadPriceTable`/`tableCost`/`PriceTable` (`metrics-prices.ts`) are used. Nothing from `metrics-usage.ts` is imported: neither `UsageSample` sums nor `matchOmpSessionByCwd` | `metrics-usage.ts` `num()` maps a missing count to 0, which violates "unknown is null". `matchOmpSessionByCwd` scans `$HOME/.omp` (the operator's real home unless `env` is overridden). Its `startedAt <= openedAt <= lastWrite` predicate needs an instant inside the session that the supervisor does not know independently, and with `HOME` = the isolated home it could only re-find the same candidates. Editing the capture owner's modules is out of scope (design §8) |
 | 6 | OMP launch = stock interactive client on a genuine PTY inside a per-attempt `tmux -L <attemptId>` session (argv array, tmux ≥ 3.2 recorded by preflight), no `--print`/`--mode` | Design §2 requires the visible native client and reports the launch mechanism. The machine-local NATIVE-OMP note recommends a genuine PTY with the task as one argv value. tmux makes it attachable and is already a Genie host dependency. Preflight must prove it, or G8 stays blocked |
-| 7 | With a fresh per-attempt native home, OMP session linkage is `match=isolated-home` when exactly one top-level session exists there. Otherwise null/ambiguous. Window matching (`matchOmpSessionByCwd`) is labelled `match=window` and used only as a fallback | Design §2: never call heuristic linkage exact. Isolation is the stronger, provable basis |
+| 7 | With a fresh per-attempt native home, OMP session linkage is `match=isolated-home` when exactly one top-level session exists there, `ambiguous` with two or more, and `none` with zero. There is no time-window fallback | Design §2: never call heuristic linkage exact. Isolation is the stronger, provable basis, and a window match inside an isolated home adds no information |
 | 8 | Settled state is the native authoritative signal only. With no such TUI signal, the adapter reports `settledSignal: 'unsupported'` and preflight fails | Design §2, §5: no quiet-interval polling or last-text heuristic. A missing capability is a named upstream requirement |
 | 9 | Proposed sibling slugs are listed as prose under Dependencies, and `**depends-on:**`/`**blocks:**` stay `none` until each sibling's WISH.md exists | `bun run wishes:lint` refuses a reference to a missing wish slug. Each sibling adds its edge when scaffolded |
+| 10 | Each task carries its own instruction reference, environment spec and verifier invocation, copied from the pinned source package and digest-checked. Group 9 alone owns provisioning; it executes the source-declared mechanism and never a re-implementation | Design §1, §3: source-native lifecycles, unaltered prompts/oracles. A task whose source mechanism (or the native client inside it) is unproven blocks on P5 and is never substituted |
+| 11 | Adapters are injected. `scripts/bench/adapters/index.ts` (created empty by G1) exports `ADAPTERS: AdapterMap`; G4 takes the map as an argument; G7 adds the `omp` entry. Imports carry no `.ts` extension | Keeps every merge type-clean under the `scripts/bench/**` tsconfig include (no TS2307 for a file a later group creates, no TS5097) |
+| 12 | The tmux process boundary sits behind an injected `TerminalHost`. Unit tests use a fake on both CI legs, and the real-tmux test is opt-in (`GENIE_BENCH_REAL_TMUX=1`) and FAILS rather than skips when tmux is missing under that flag | Neither CI leg installs tmux (`.github/workflows/ci.yml` has no tmux step, and this plan does not verify the runner images). Editing CI is a trust-boundary change outside this wish. Real-tmux coverage is therefore recorded as unavailable in CI and required on the operator host in G8 |
 
 ## Simplicity Case
 
-- **Simplest complete design:** five engine modules plus one adapter, on one append-only JSON-lines journal per attempt under an operator-named root. Contracts are zod schemas, and supervision is a finite fork-and-exit run. Nothing runs unless an operator invokes a verb with `--root`.
+- **Simplest complete design:** six engine modules (contracts, journal, pilot, environment, supervisor, capture + accounting) plus one adapter, on one append-only JSON-lines journal per attempt under an operator-named root. Contracts are zod schemas, and supervision is a finite fork-and-exit run. Nothing runs unless an operator invokes a verb with `--root`.
 - **Added machinery:** (a) the per-attempt journal and pre-launch campaign registration: scheduled failures must survive independently of traces (design §5, SC7). (b) The O_EXCL supervisor lock: "one supervisor owns journal mutation" (§5). (c) Per-field presence flags on request records: unknown must stay null (§6, SC5). (d) The seeded schedule: paired order must be fixed before outcomes (§4). Each is a present design contract.
 - **Deferred until measured:** a generic adapter registry (one adapter now; a map literal suffices), downloadable SQLite, distributed scheduling, caching and sharding. Reconsider each only against an observed host/export limit or a reviewed consumer requirement.
 - **Complexity removed:** no replacement agent loop, no telemetry model calls, no new task DB (the per-repo `genie.db` is untouched), no Phoenix network in this wish, no edits to `src/lib/metrics-*`, and no default paths or endpoints.
@@ -71,19 +75,20 @@ External and cross-wish prerequisites. Each one blocks the named group and is ne
 | # | Prerequisite | Blocks | Exact proof that unblocks |
 |---|--------------|--------|---------------------------|
 | P1 | Native OMP capability preflight in the actual visible client | G8 | `bun scripts/bench/run.ts preflight --root <private> --adapter omp --config scripts/bench/tasks/omp-sol-medium.json --arm <zero-genie\|genie>` exits 0 for **both** arms on the operator host. The stored `CapabilityReport` has every `REQUIRED_CAPABILITIES` field `proven`, including `settledSignal` (authoritative native settled state covering pending children/wakes), child/auxiliary model+effort control, request usage fields and input-origin fields. Any `unsupported` field names its upstream requirement and keeps G8 blocked |
-| P2 | Original-task/oracle eligibility clearance | G8 | An operator-authored eligibility pool file in which every candidate carries source revision, artifact-level license/provisioning clearance, image/input/verifier digests and judge settings. SWE-Atlas test-writing HOLDs are resolved against intact original grading, and SkillsBench native lifecycle parity is shown. `bun scripts/bench/pilot.ts freeze --pool <file> --out scripts/bench/tasks/public-pilot.json` exits 0 with 20 selected and quotas DeepSWE 6 / Terminal-Bench 4 / SWE-Atlas 6 (qa 2, tw 2, rf 2) / SkillsBench 4, and with no `unresolved` entry |
+| P2 | Original-task/oracle eligibility clearance | G8 | An operator-authored eligibility pool file in which every candidate carries source revision, artifact-level license/provisioning clearance, image/input/verifier digests and judge settings. SWE-Atlas test-writing HOLDs are resolved against intact original grading, and SkillsBench native lifecycle parity is shown. `bun scripts/bench/pilot.ts freeze --pool <file> --quotas <file> --smoke deepswe:actionlint-action-pinning-lint,terminal-bench:terminal-bench/session-window-debug --out scripts/bench/tasks/public-pilot.json` exits 0 with 20 selected and quotas DeepSWE 6 / Terminal-Bench 4 / SWE-Atlas 6 (qa 2, tw 2, rf 2) / SkillsBench 4, and with no `unresolved` entry |
 | P3 | Authenticated GPT-6.1 Sol medium route for OMP | G8 | The P1 preflight report records requested model/effort and the observed response/upstream model and effort for a lead, a natural child and an auxiliary call in both arms. A version string or catalog entry is not proof |
 | P4 | Pinned OMP-native Genie treatment (the `genie-omp` design's item 5 "pinned treatment contract for Genie Bench") | G8 Genie arm | The `genie-omp` wish (not yet planned; it waits on its own upstream P0, a supported pinned OMP build) is SHIPPED with a treatment contract naming resource paths + sha256. `preflight --arm genie` verifies those hashes in the fresh home |
-| P5 | The operator's Phoenix server | sibling `genie-bench-phoenix` | Operator-supplied endpoint/project/API-key env name. One exact span id + payload digest is posted and read back by id |
-| P6 | The future Automagik website project | sibling `genie-bench-website` | That project's repository and wish exist with owned consumer files |
+| P5 | Source-native environment tooling and parity on the operator host (the DeepSWE checkout lifecycle; the container runtime/harness Terminal-Bench, SWE-Atlas and SkillsBench declare, Harbor where it preserves their semantics) plus a proven way for the native OMP client to act inside a container task | G8 | For every smoke and selected task, `bun scripts/bench/environment.ts check --root <private> --manifest scripts/bench/tasks/public-pilot.json --sources <pinned package dir> --task <key>` exits 0. It shows: the instruction sha256 matches; provisioning used the source-declared mechanism with the original image digest and resource limits; the untouched environment is NOT accepted by the original verifier; where the source ships a reference solution, applying it in a verifier-only copy (never a solver mount) IS accepted. For container tasks, the P1 report also has `environmentExecution` `proven` |
+| P6 | The operator's Phoenix server | sibling `genie-bench-phoenix` | Operator-supplied endpoint/project/API-key env name. One exact span id + payload digest is posted and read back by id |
+| P7 | The future Automagik website project | sibling `genie-bench-website` | That project's repository and wish exist with owned consumer files |
 
 Proposed sibling wishes (not yet created; each adds `**depends-on:** genie-bench` when scaffolded):
 
 - `genie-bench-omp-pilot`: registers and runs the 120 scored OMP attempts with every disposition retained (SC2 full, SC3, SC4 full; design IN 5). Depends on `genie-bench` (G8 done) and `genie-omp`.
 - `genie-bench-analysis`: `scripts/bench/metrics.ts`, `scripts/bench/taxonomy.json`, `scripts/bench/analysis.ts`, `scripts/bench/export.ts`. Covers frozen extraction, Verified Autonomy Rate and versioned labels, paired task-cluster uncertainty, frozen-core/refreshed epochs, immutable release tables, the public allowlist and the website data contract (SC6 classification, SC9, SC12; design IN 3 analysis, 4, 13, 14 export, 16).
-- `genie-bench-phoenix`: `scripts/bench/phoenix.ts`. Reconciles by exact stored identity plus payload digest (not `projectToPhoenix`'s send-only-missing-id). Blocked on P5 (SC8; design IN 12 Phoenix).
+- `genie-bench-phoenix`: `scripts/bench/phoenix.ts`. Reconciles by exact stored identity plus payload digest (not `projectToPhoenix`'s send-only-missing-id). Blocked on P6 (SC8; design IN 12 Phoenix), and owns delivery-coverage reconciliation (SC5 remainder).
 - `genie-bench-harnesses`: `scripts/bench/adapters/{claude-code,codex,deepseek,hermes}.ts` plus their configuration manifests, one group per harness. Each is blocked on its own authenticated route and native preflight (SC11; design IN 6–9).
-- `genie-bench-website`: the rendered consumer in the website project. Blocked on P6 (SC10).
+- `genie-bench-website`: the rendered consumer in the website project. Blocked on P7 (SC10).
 - `genie-bench-improve`: `scripts/bench/improve.ts`, for isolated candidates, all-trial ledger, restricted locked evaluation and operator-approved promotion (SC13; design IN 15).
 
 ## Success Criteria
@@ -93,25 +98,25 @@ Design criterion → owner. A sibling-owned row is not closed by this wish.
 | Design SC / IN item | Owner in this wish | Remainder owned by |
 |---|---|---|
 | SC1 complete scope & planning | this plan (all 16 IN items mapped below) + independent plan review | — |
-| SC2 task/oracle integrity | G3 (freeze/replace), G4 (verifier isolation + artifact digest, tamper/refusal cases), G8 (frozen manifest, eligibility ledger; P2) | `genie-bench-omp-pilot` (20-task execution) |
+| SC2 task/oracle integrity | G1 (instruction/environment/verifier contract), G3 (freeze/replace), G9 (source-native environment + instruction digest), G4 (verifier isolation + artifact digest, tamper/refusal cases), G8 (frozen manifest, eligibility ledger; P2, P5) | `genie-bench-omp-pilot` (20-task execution) |
 | SC3 actual native OMP pair | G7 (adapter), G8 (preflight + smoke; P1, P3, P4) | `genie-bench-omp-pilot` |
 | SC4 smoke then full pilot | G3 (schedule registers 120), G2 (all dispositions retained), G8 (smoke both arms) | `genie-bench-omp-pilot` (120 dispositions) |
-| SC5 whole-attempt economics | G5 (request inventory), G6 (accounting), G8 (real main/child/aux capture) | — |
+| SC5 whole-attempt economics | G5 (request inventory), G6 (accounting, native-source coverage, `delivery` field fixed at `not-exported`), G8 (real main/child/aux capture) | `genie-bench-phoenix` (observed-record delivery coverage reconciled against stored readback) |
 | SC6 autonomy & input evidence | G5 (input/approval/interruption origin capture) | `genie-bench-analysis` (labels, VAR) |
 | SC7 durable recovery & authority | G2, G4, G7 (pending children in settled state) | — |
-| SC8 Phoenix reconciliation | — | `genie-bench-phoenix` (P5) |
+| SC8 Phoenix reconciliation | — | `genie-bench-phoenix` (P6) |
 | SC9 immutable release data | — | `genie-bench-analysis` |
-| SC10 static website consumer | — | `genie-bench-website` (P6) |
+| SC10 static website consumer | — | `genie-bench-website` (P7) |
 | SC11 later named harnesses | G1 (harness-neutral adapter contract) | `genie-bench-harnesses` |
 | SC12 longitudinal analysis | G1 (epoch/cohort fields) | `genie-bench-analysis` |
 | SC13 safe autonomous improvement | — | `genie-bench-improve` |
 | SC14 transparent lightweight behavior | G4 (no daemon, explicit `--root`), G5 (bounded, no model action), G8 (on/off overhead probe) | — |
 | SC15 verified integration quality | every group (`bun run check` + changed-path smoke) | every sibling |
 | IN 1 contracts | G1 | — |
-| IN 2 supervisor + accounting | G2, G4, G6 | — |
+| IN 2 supervisor + accounting | G2, G9, G4, G6 | — |
 | IN 3 paired pilot + analysis | G3 | `genie-bench-analysis` |
 | IN 4 static DB + website contract | — | `genie-bench-analysis`, `genie-bench-website` |
-| IN 5 execute OMP pilot | G8 (manifest + smoke) | `genie-bench-omp-pilot` |
+| IN 5 execute OMP pilot | G9 (task environments), G8 (manifest + smoke) | `genie-bench-omp-pilot` |
 | IN 6–9 Claude Code / Codex / DeepSeek / Hermes | — | `genie-bench-harnesses` |
 | IN 10 consume pinned OMP adaptation | G1 (`TreatmentPin`), G7 | `genie-omp` delivers it (P4) |
 | IN 11 actual native client + visible UI | G4, G7 | `genie-bench-harnesses` |
@@ -123,7 +128,7 @@ Design criterion → owner. A sibling-owned row is not closed by this wish.
 
 This wish is complete when:
 
-- [ ] G1–G7 are merged with `bun run check` green and every group's acceptance criteria met.
+- [ ] G1–G7 and G9 are merged with `bun run check` green and every group's acceptance criteria met.
 - [ ] G8 has stored P1 preflight reports for both arms, a frozen `public-pilot.json` that `pilot.ts verify` accepts, and smoke receipts for both integration tasks in both arms carrying original verifier output. It is otherwise recorded as BLOCKED with the failing prerequisite named. A blocked G8 leaves this wish IN_PROGRESS, never SHIPPED.
 - [ ] No file under `src/` changes. `src/lib/metrics-*.ts` is unchanged (`git diff --stat origin/dev -- src/` is empty).
 
@@ -141,6 +146,7 @@ This wish is complete when:
 |-------|-------|------------|-------|-------------|
 | 2 | engineer | high: durability, fail-closed corruption and recovery invariants | inherit | Attempt journal + campaign registration |
 | 5 | engineer | high: native log formats, presence semantics, untrusted input | inherit | Native OMP capture |
+| 9 | engineer | high: source-native lifecycles, container resources, verifier/solver separation | inherit | Source-native task environment provisioning |
 
 ### Wave 3 (parallel, disjoint files)
 
@@ -156,11 +162,11 @@ This wish is complete when:
 |-------|-------|------------|-------|-------------|
 | 7 | engineer | high: PTY/tmux control, discovery isolation, treatment-hash verification | inherit | Visible native OMP adapter |
 
-### Wave 5 (sequential, blocked-on-prerequisite P1–P4)
+### Wave 5 (sequential, blocked-on-prerequisite P1–P5)
 
 | Group | Agent | Complexity | Model | Description |
 |-------|-------|------------|-------|-------------|
-| 8 | engineer | high: real client, real oracles, operator-host evidence; blocked until P1–P4 are proven | inherit | Native preflight, manifest freeze, both-arm smoke |
+| 8 | engineer | high: real client, real oracles, operator-host evidence; blocked until P1–P5 are proven | inherit | Native preflight, manifest freeze, both-arm smoke |
 
 **Global constraints:**
 - Transparent instrumentation with zero added LLM actions: no agent-called span/start/end command, no telemetry model turn or stage; capture happens outside the solver context or through native metadata surfaces.
@@ -185,8 +191,9 @@ This wish is complete when:
 **Deliverables:**
 1. `scripts/bench/contracts.ts` (new) with the exports below. Every schema carries `schemaVersion: 1`, and unknown keys are refused.
 2. `scripts/bench/contracts.test.ts` (new): parse success/refusal per schema, the full legal/illegal `ATTEMPT_TRANSITIONS` matrix, a `null` vs `0` round-trip, and refusal of a request record that claims a known zero with no `presence` basis.
-3. `scripts/bench/README.md` (new): purpose, the "selected public tasks" label, the verbs and exit codes, the explicit `--root`, the prerequisites P1–P6, and what is never claimed.
-4. `tsconfig.json`: `"include": ["src/**/*", "scripts/bench/**/*"]`.
+3. `scripts/bench/adapters/index.ts` (new): the empty `ADAPTERS` map, so later imports always resolve.
+4. `scripts/bench/README.md` (new): purpose, the "selected public tasks" label, the verbs and exit codes, the explicit `--root`, the prerequisites P1–P7, and what is never claimed.
+5. `tsconfig.json`: `"include": ["src/**/*", "scripts/bench/**/*"]`.
 
 **Interfaces:**
 - Consumes: none
@@ -195,7 +202,10 @@ This wish is complete when:
   - `export type Result<T> = { ok: true; value: T } | { ok: false; issues: string[] }`
   - `export type Harness = 'omp' | 'claude-code' | 'codex' | 'deepseek' | 'hermes'`; `export type ArmId = 'zero-genie' | 'genie'`
   - `export type SourceKind = 'deepswe' | 'terminal-bench' | 'swe-atlas' | 'skillsbench'`; `export type ArtifactTransport = 'committed-patch' | 'directory' | 'answer'`
-  - `export interface TaskIdentity { source: SourceKind; sourceRevision: string; taskId: string; category: string; cluster: string; artifactTransport: ArtifactTransport; imageDigest: string | null; verifierDigest: string | null; timeLimitSec: number | null }`; `export const taskKey: (t: TaskIdentity) => string` (`<source>/<category>/<taskId>`)
+  - `export interface InstructionRef { path: string /* inside the pinned source package */; sha256: string }`
+  - `export interface EnvironmentSpec { kind: 'git-checkout' | 'source-container'; repository: { url: string; commit: string } | null; image: { ref: string; digest: string } | null; provision: string[] | null /* source-declared argv, run from the package dir */; teardown: string[] | null; resources: { cpus: number | null; memoryMb: number | null; network: string | null } /* source values verbatim; null = source declares none */; solverPath: string /* e.g. checkout root or /app */; artifactPath: string }`
+  - `export interface VerifierInvocation { command: string[] /* the source's own verifier argv */; runsIn: 'host-outside-solver' | 'source-container-fresh'; rewardFile: string | null; acceptWhen: 'binary-one' | 'source-declared'; timeoutSec: number | null; judge: { model: string; settings: Record<string, string> } | null }`
+  - `export interface TaskIdentity { source: SourceKind; sourceRevision: string; taskId: string; category: string; cluster: string; artifactTransport: ArtifactTransport; instruction: InstructionRef; environment: EnvironmentSpec; verifier: VerifierInvocation; verifierDigest: string; timeLimitSec: number | null }`; `export const taskKey: (t: TaskIdentity) => string` (`<source>/<category>/<taskId>`)
   - `export type Eligibility = { status: 'eligible'; clearance: EvidenceRef[] } | { status: 'ineligible'; reason: string } | { status: 'unresolved'; blocker: string }`
   - `export interface PoolEntry { task: TaskIdentity; eligibility: Eligibility }`; `export type Quotas = Record<string, number>` (key `<source>/<category>`)
   - `export interface ReplacementRecord { replaced: string; by: string; reason: string; recordedAt: string }`
@@ -208,15 +218,19 @@ This wish is complete when:
   - `export interface EvidenceRef { kind: string; path: string; sha256: string; bytes: number }`
   - `export interface EventEnvelope { schemaVersion: 1; experimentId: string; pairId: string; manifestId: string; taskKey: string; attemptId: string; eventId: string; sourceKind: string; sourceInstance: string; sourceSeq: number; actorId: string | null; parentActorId: string | null; nativeSessionId: string | null; observedAt: string; monotonicNs: string | null; traceId: string | null; spanId: string | null; evidence: EvidenceRef[]; availability: Record<string, 'observed' | 'absent' | 'unsupported'>; wish?: string; group?: string; phase?: string }`
   - `export type Presence = 'observed' | 'absent' | 'unsupported'`
-  - `export interface NativeRequestRecord { requestId: string | null; responseId: string | null; revision: string; actorId: string; parentActorId: string | null; role: 'lead' | 'worker' | 'auxiliary'; nativeSessionId: string | null; requestedModel: string | null; observedModel: string | null; effort: string | null; tokens: { input: number | null; cacheRead: number | null; cacheWrite5m: number | null; cacheWrite1h: number | null; output: number | null; reasoning: number | null }; reasoningIncludedInOutput: boolean | null; durationMs: number | null; failed: boolean | null; retryOf: string | null; presence: Record<string, Presence> }`
+  - `export interface NativeRequestRecord { requestId: string | null; responseId: string | null; revision: string; actorId: string; parentActorId: string | null; role: 'lead' | 'worker' | 'auxiliary'; nativeSessionId: string | null; requestedModel: string | null; observedModel: string | null; effort: string | null; tokens: { input: number | null; cacheRead: number | null; cacheWriteTotal: number | null; cacheWrite5m: number | null; cacheWrite1h: number | null; output: number | null; reasoning: number | null }; reasoningIncludedInOutput: boolean | null; durationMs: number | null; failed: boolean | null; retryOf: string | null; presence: Record<string, Presence> }`
   - `export type InputOrigin = 'human' | 'automated' | 'unknown'`; `export interface InputEvent { eventId: string; at: string; origin: InputOrigin; kind: 'initial-task' | 'approval' | 'message' | 'interrupt'; evidence: EvidenceRef[]; basis: string }`
   - `export const REQUIRED_CAPABILITIES: readonly string[]`; `export interface CapabilityReport { harness: Harness; arm: ArmId; executable: { path: string; build: string | null; sha256: string }; launchMechanism: string; discoveryRoots: string[]; resolved: { model: string | null; effort: string | null }; artifactTransport: ArtifactTransport; capabilities: Record<string, { status: 'proven' | 'unproven' | 'unsupported'; evidence: EvidenceRef[]; upstreamRequirement?: string }>; observedAt: string }`
-  - `export interface NativeAdapter { harness: Harness; preflight(ctx: AdapterContext): Promise<CapabilityReport>; launch(ctx: AdapterContext, prompt: string): Promise<LaunchHandle>; settled(h: LaunchHandle, signal: AbortSignal): Promise<SettledResult>; stop(h: LaunchHandle, reason: 'settled' | 'timeout' | 'interrupt'): Promise<StopReceipt>; collectArtifact(h: LaunchHandle, dest: string): Promise<EvidenceRef> }`, together with `AdapterContext { root: string; attempt: AttemptIdentity; config: HarnessConfiguration; task: TaskIdentity; workspace: string; nativeHome: string }`, `LaunchHandle { attemptId: string; session: string; startedMonotonicNs: string }`, `SettledResult { settled: boolean; pendingActors: string[]; basis: string }` and `StopReceipt { reason: string; remainingActors: string[]; usageUncertain: boolean; stoppedMonotonicNs: string }`
+  - `export interface NativeAdapter { harness: Harness; preflight(ctx: AdapterContext): Promise<CapabilityReport>; launch(ctx: AdapterContext, prompt: string): Promise<LaunchHandle>; settled(h: LaunchHandle, signal: AbortSignal): Promise<SettledResult>; stop(h: LaunchHandle, reason: 'settled' | 'timeout' | 'interrupt'): Promise<StopReceipt>; collectArtifact(h: LaunchHandle, dest: string): Promise<EvidenceRef> }`, together with `AdapterContext { root: string; attempt: AttemptIdentity; config: HarnessConfiguration; task: TaskIdentity; solver: SolverTarget; nativeHome: string }` and `SolverTarget = { kind: 'host'; cwd: string } | { kind: 'container'; containerId: string; cwd: string }` (from G9's provisioned environment), `LaunchHandle { attemptId: string; session: string; startedMonotonicNs: string }`, `SettledResult { settled: boolean; pendingActors: string[]; basis: string }` and `StopReceipt { reason: string; remainingActors: string[]; usageUncertain: boolean; stoppedMonotonicNs: string }`
+  - `export type AdapterMap = Partial<Record<Harness, NativeAdapter>>`
+  - `REQUIRED_CAPABILITIES` includes at least `launchVisible`, `discoveryIsolated`, `modelEffortResolved`, `childAuxModelEffort`, `settledSignal`, `requestUsage`, `inputOrigin`, `artifactTransport` and `environmentExecution`
+  - `scripts/bench/adapters/index.ts`: `export const ADAPTERS: AdapterMap = {}` (G7 adds `omp`)
   - `export function parseManifest(raw: unknown): Result<TaskManifest>`, `parseConfiguration(raw: unknown): Result<HarnessConfiguration>`, `parsePool(raw: unknown): Result<PoolEntry[]>`, `parseCapabilityReport(raw: unknown): Result<CapabilityReport>`
 
 **Acceptance Criteria:**
 - [ ] Every exported schema refuses unknown keys and a wrong `schemaVersion` with an issue naming the field.
 - [ ] `ATTEMPT_TRANSITIONS` admits exactly the design §5 chain: registered → running → execution-stopped → (verified | terminal-failure) → capture-sealed → reconciled → extraction-frozen. It also admits the pre-running and interrupted exits `registered → terminal-failure` and `running → terminal-failure`, and nothing else. The test enumerates all 64 pairs.
+- [ ] A `TaskIdentity` without `instruction.sha256`, `environment` or `verifier.command` is refused. `environment.resources` round-trips the source's values unchanged, including `null`.
 - [ ] A `NativeRequestRecord` with a token `0` whose `presence` entry is not `observed` is refused. `null` survives a JSON round-trip as `null`.
 - [ ] `bun run typecheck` covers `scripts/bench/**`: a deliberate type error in a scratch copy fails it (shown once in the PR body, not committed).
 
@@ -275,16 +289,16 @@ bun test scripts/bench/ledger.test.ts && bun run check
 **Interfaces:**
 - Consumes: G1 `PoolEntry`, `Quotas`, `TaskManifest`, `TaskIdentity`, `HarnessConfiguration`, `AttemptIdentity`, `parsePool`, `parseManifest`, `parseConfiguration`; G2 `registerCampaign`, `acquireSupervisor`.
 - Produces:
-  - `export function freezeManifest(pool: PoolEntry[], quotas: Quotas, smoke: string[], frozenAt: string): Result<TaskManifest>`. Per `<source>/<category>`, it takes eligible entries in bytewise `taskId` order. Any `unresolved` entry in a needed category refuses. An unfillable quota refuses with the category named, and nothing is ever silently shrunk. Smoke tasks are excluded from `selected`.
+  - `export function freezeManifest(pool: PoolEntry[], quotas: Quotas, smoke: string[] /* '<source>:<taskId>' */, frozenAt: string): Result<TaskManifest>`. Per `<source>/<category>`, it takes eligible entries in bytewise `taskId` order. Any `unresolved` entry in a needed category refuses. An unfillable quota refuses with the category named, and nothing is ever silently shrunk. Smoke tasks must be eligible pool entries. They are copied to `smoke` and may also be selected (both are candidates in the design's pilot list), but smoke attempts never enter a scored count.
   - `export function replaceIneligible(m: TaskManifest, pool: PoolEntry[], taskKey: string, reason: string, outcomesRecorded: boolean): Result<TaskManifest>`. It refuses when `outcomesRecorded` and takes the next bytewise eligible id in the same category.
   - `export function scheduleCampaign(m: TaskManifest, configs: [HarnessConfiguration, HarnessConfiguration], repeats: number, seed: string, experimentId: string): AttemptIdentity[]`. It is deterministic for the same inputs, interleaves arms within each task/repeat pair, records `seed`, and yields `kind: 'smoke'` rows for smoke tasks separately from `scored` rows.
-  - CLI: `bun scripts/bench/pilot.ts freeze --pool <file> --quotas <file> --smoke <id,id> --out <file>`; `replace --manifest <file> --pool <file> --task <key> --reason <text> --root <dir>` (reads G2 journals to decide `outcomesRecorded`); `verify <manifest>`; `schedule --manifest <file> --config-a <file> --config-b <file> --repeats 3 --seed <s> --experiment <id> --root <dir>`. Exit 0 ok, 1 not ok, 2 refusal.
+  - CLI: `bun scripts/bench/pilot.ts freeze --pool <file> --quotas <file> --smoke <source:taskId,source:taskId> --out <file>`; `replace --manifest <file> --pool <file> --task <key> --reason <text> --root <dir>` (reads G2 journals to decide `outcomesRecorded`); `verify <manifest>`; `schedule --manifest <file> --config-a <file> --config-b <file> --repeats 3 --seed <s> --experiment <id> --root <dir>`. Exit 0 ok, 1 not ok, 2 refusal.
 
 **Acceptance Criteria:**
 - [ ] With the fixture pool and quotas 6/4/2/2/2/4, `freeze` selects exactly 20, and the result is byte-identical across two runs.
 - [ ] An ineligible entry is replaced by the next bytewise id in its category. Replacement after a recorded outcome exits 2. A category short of quota exits 2 naming it.
 - [ ] `schedule` with 20 tasks × 3 repeats × 2 configs registers exactly 120 `scored` identities plus the smoke rows. The same seed gives an identical schedule, and a different seed gives a different order with the same multiset.
-- [ ] A `--root` missing from any verb that writes exits 2 with nothing written.
+- [ ] A `--root` missing from any verb that writes exits 2 with nothing written. `freeze` without `--quotas` or `--smoke` exits 2, and a smoke selector absent from the pool exits 2 naming it.
 
 **Validation:**
 ```bash
@@ -300,18 +314,19 @@ bun test scripts/bench/pilot.test.ts && bun run check
 **Goal:** Run one registered attempt end to end through a `NativeAdapter`, timing it on an external monotonic clock, and accept it only on the original verifier's receipt against the digest-bound collected artifact.
 
 **Deliverables:**
-1. `scripts/bench/run.ts` (new) with verbs `preflight`, `attempt`, `recover`, `status`. The adapter map is a literal `{ omp: () => import('./adapters/omp.ts') }`. Any other harness exits 2 `unsupported harness`, with no fallback.
-2. `scripts/bench/run.test.ts` (new). It uses a test-local fake adapter (never exported or registered) and a fixture verifier script. Cases: accepted; verifier rejects; verifier exit 0 without a binary reward refuses acceptance; timeout → `stop('timeout')` records remaining actors and `usageUncertain`; a settled result with pending actors is not treated as completion; a launch failure is `registered → terminal-failure/setup-failure`; the artifact is mutated after collection (the digest mismatch is refused); the verifier cannot see the solver workspace path; recovery of a killed run.
+1. `scripts/bench/run.ts` (new) with verbs `preflight`, `attempt`, `recover`, `status`. Adapters are injected: `runCli(argv, adapters)` takes an `AdapterMap`, and only the `import.meta.main` block passes `ADAPTERS` from `./adapters/index` (no `.ts` extension). A harness missing from the map exits 2 `unsupported harness`, with no fallback. The prompt is the original instruction read through G9 `readInstruction`, and the verifier is the task's own `VerifierInvocation`.
+2. `scripts/bench/run.test.ts` (new). It uses a test-local fake adapter passed through `runCli(argv, { omp: fake })` (never exported or registered), a fixture verifier script and a `git-checkout` fixture task. Cases: accepted; verifier rejects; verifier exit 0 without a binary reward refuses acceptance; timeout → `stop('timeout')` records remaining actors and `usageUncertain`; a settled result with pending actors is not treated as completion; a launch failure is `registered → terminal-failure/setup-failure`; the artifact is mutated after collection (the digest mismatch is refused); the verifier cannot see the solver workspace path; recovery of a killed run.
 
 **Interfaces:**
-- Consumes: G1 `NativeAdapter`, `AdapterContext`, `CapabilityReport`, `REQUIRED_CAPABILITIES`, `TaskIdentity`, `HarnessConfiguration`, `parseCapabilityReport`; G2 `acquireSupervisor`, `appendTransition`, `readJournal`, `planRecovery`, `campaignStatus`.
+- Consumes: G1 `NativeAdapter`, `AdapterMap`, `ADAPTERS`, `AdapterContext`, `CapabilityReport`, `REQUIRED_CAPABILITIES`, `TaskIdentity`, `VerifierInvocation`, `TaskManifest`, `HarnessConfiguration`, `parseCapabilityReport`; G2 `acquireSupervisor`, `appendTransition`, `readJournal`, `planRecovery`, `campaignStatus`; G9 `readInstruction`, `provisionEnvironment`, `teardownEnvironment`, `ProvisionedEnvironment`.
 - Produces:
-  - `export interface VerifierSpec { command: string[]; timeoutMs: number; rewardFile: string; acceptWhen: 'binary-one' | 'source-declared' }`. The command is the source's own verifier invocation from the manifest's pinned package. The supervisor never edits it.
+  - The supervisor never edits `task.verifier.command`. It runs it as `runsIn` declares: on the host outside every solver mount, or in a fresh source container that receives only the collected artifact.
   - `export interface VerifierReceipt { exitCode: number | null; reward: number | null; accepted: boolean; artifact: EvidenceRef; output: EvidenceRef; startedMonotonicNs: string; endedMonotonicNs: string }`
   - `export interface MonotonicClock { nowNs(): bigint; wall(): string }`; `export const hostClock: MonotonicClock` (`process.hrtime.bigint()`)
   - `export async function runPreflight(root: string, adapter: NativeAdapter, ctx: AdapterContext): Promise<Result<CapabilityReport>>`. It stores the report under `<root>/preflight/` and fails when any `REQUIRED_CAPABILITIES` entry is not `proven`.
-  - `export async function runAttempt(root: string, attemptId: string, adapter: NativeAdapter, verifier: VerifierSpec, clock?: MonotonicClock): Promise<Result<{ state: AttemptState; disposition: Disposition; receipt: VerifierReceipt | null }>>`
-  - CLI: `bun scripts/bench/run.ts preflight --root <dir> --adapter <harness> --config <file> --arm <arm>`; `attempt --root <dir> --attempt <id> --manifest <file> --config <file>`; `recover --root <dir> --attempt <id>`; `status --root <dir> --experiment <id> [--json]`.
+  - `export async function runAttempt(root: string, attemptId: string, deps: { adapter: NativeAdapter; manifest: TaskManifest; config: HarnessConfiguration; sourcesDir: string; clock?: MonotonicClock }): Promise<Result<{ state: AttemptState; disposition: Disposition; receipt: VerifierReceipt | null }>>`
+  - `export async function runCli(argv: string[], adapters: AdapterMap): Promise<number>`
+  - CLI: `bun scripts/bench/run.ts preflight --root <dir> --adapter <harness> --config <file> --arm <arm> [--manifest <file> --sources <dir> --task <key>]`; `attempt --root <dir> --attempt <id> --manifest <file> --config <file> --sources <dir>`; `recover --root <dir> --attempt <id>`; `status --root <dir> --experiment <id> [--json]`.
 
 **Acceptance Criteria:**
 - [ ] Acceptance needs the original verifier's own acceptance (`binary-one` reward = 1, or the source-declared rule). Process exit 0 alone never marks `accepted`, and no new threshold converts a fractional reward.
@@ -319,13 +334,15 @@ bun test scripts/bench/pilot.test.ts && bun run check
 - [ ] Execution elapsed, verification elapsed and setup come from `MonotonicClock` and are journaled separately. Wall time is recorded only alongside them.
 - [ ] Every failure case in Deliverable 2 leaves exactly one terminal entry, and `campaignStatus().scheduled` is unchanged.
 - [ ] Nothing persists after exit: the command spawns no detached process (checked by listing children after `runAttempt` resolves in the test).
+- [ ] The adapter receives exactly the bytes of the instruction file whose sha256 matches the manifest. A digest mismatch is `registered → terminal-failure/setup-failure` before launch.
+- [ ] `run.ts` type-checks with `ADAPTERS` empty (G1 state), and a harness absent from the injected map exits 2.
 
 **Validation:**
 ```bash
 bun test scripts/bench/run.test.ts && bun run check
 ```
 
-**depends-on:** Group 1, Group 2
+**depends-on:** Group 1, Group 2, Group 9
 
 ---
 
@@ -338,20 +355,20 @@ bun test scripts/bench/run.test.ts && bun run check
 2. `scripts/bench/capture.test.ts` (new) plus synthetic OMP session fixtures under `scripts/bench/fixtures/omp/` (new; hand-built JSONL in the native shape: lead + child + auxiliary, a retry, a failed request, a streaming usage revision, a malformed line, a duplicate, a missing usage block, a message steered into an existing run, and a runner-injected user-role message).
 
 **Interfaces:**
-- Consumes: G1 `NativeRequestRecord`, `InputEvent`, `EvidenceRef`, `Presence`, `Result`. Read-only from `src/lib/metrics-usage.ts`: `matchOmpSessionByCwd(cwd: string, openedAt: number, env?: NodeJS.ProcessEnv): PiSessionMatch` (window fallback only).
+- Consumes: G1 `NativeRequestRecord`, `InputEvent`, `EvidenceRef`, `Presence`, `Result`. Nothing from `src/lib/metrics-usage.ts` (Decision 5).
 - Produces:
-  - `export type SessionLinkage = { match: 'isolated-home'; file: string } | { match: 'window'; file: string } | { match: 'ambiguous'; candidates: string[] } | { match: 'none' }`
+  - `export type SessionLinkage = { match: 'isolated-home'; file: string } | { match: 'ambiguous'; candidates: string[] } | { match: 'none' }`
   - `export interface ActorRecord { actorId: string; parentActorId: string | null; role: 'lead' | 'worker' | 'auxiliary'; sessionFile: string; pending: boolean }`
   - `export interface CaptureHealth { malformed: number; duplicate: number; conflicting: number; unmatched: number; truncated: boolean; bytesRead: number }`
   - `export interface CaptureBundle { linkage: SessionLinkage; actors: ActorRecord[]; requests: NativeRequestRecord[]; inputs: InputEvent[]; health: CaptureHealth; evidence: EvidenceRef[] }`
-  - `export function captureOmpAttempt(nativeHome: string, workspace: string, opts: { maxBytes: number; openedAtMs: number }): Result<CaptureBundle>`
+  - `export function captureOmpAttempt(nativeHome: string, opts: { maxBytes: number }): Result<CaptureBundle>`. It reads only `<nativeHome>/.omp/agent/sessions/**`, and no environment variable or `homedir()` is consulted.
 
 **Acceptance Criteria:**
 - [ ] With exactly one top-level session in the isolated home, linkage is `isolated-home`. With two it is `ambiguous`, and requests are still inventoried but carry `nativeSessionId: null`.
 - [ ] Requests are deduplicated by native run/request id + revision. A steering message inside an existing run adds no attempt. A streaming usage revision replaces, and never adds, a billable record. Same id + revision with a changed payload counts as `conflicting`.
-- [ ] A missing usage block gives `tokens.* = null` with `presence = 'absent'`, never 0. A reasoning subset reported inside output sets `reasoningIncludedInOutput: true`.
+- [ ] A missing usage block gives `tokens.* = null` with `presence = 'absent'`, never 0. OMP's single undivided `usage.cacheWrite` is kept as `cacheWriteTotal` (`observed`), with `cacheWrite5m`/`cacheWrite1h` `null` and `presence = 'unsupported'`. A reasoning subset reported inside output sets `reasoningIncludedInOutput: true`.
 - [ ] A user-role message injected by a runner/tool/peer gets `origin: 'automated'` or `'unknown'`, never `'human'` without a native submission-provenance basis.
-- [ ] `maxBytes` is honoured (`truncated: true`), and the capture never reads outside `nativeHome`/`workspace`. It makes no network call (enforced in a test by stubbing `globalThis.fetch` to throw).
+- [ ] `maxBytes` is honoured (`truncated: true`), and the capture never reads outside `nativeHome`. A test plants a session in a decoy `$HOME/.omp` and sets `HOME` to it, and the bundle must not contain it. It makes no network call (enforced in a test by stubbing `globalThis.fetch` to throw).
 
 **Validation:**
 ```bash
@@ -368,13 +385,13 @@ bun test scripts/bench/capture.test.ts && bun run check
 
 **Deliverables:**
 1. `scripts/bench/accounting.ts` (new).
-2. `scripts/bench/accounting.test.ts` (new). It reuses G5's fixtures read-only. Cases: lead+child+aux sum; a root rollup alongside its descendants (the rollup is excluded); a reasoning subset not re-added; cache 5m/1h priced separately; an unknown model price → `null`; a missing 1h split → normalized cost `null`; a failed request kept in the count; zero accepted → cost/accepted `undefined`; a subscription route reported as `subscription`, never 0.
+2. `scripts/bench/accounting.test.ts` (new). It reuses G5's fixtures read-only. Cases: lead+child+aux sum; a root rollup alongside its descendants (the rollup is excluded); a reasoning subset not re-added; cache 5m/1h priced separately; an OMP `cacheWriteTotal` with no split priced at the single cache-write rate when the price entry has no distinct TTL rate, and `null` when it has one; an unknown model price → `null`; a failed request kept in the count; zero accepted → cost/accepted `undefined`; a subscription route reported as `subscription`, never 0.
 
 **Interfaces:**
 - Consumes: G1 `NativeRequestRecord`, `Disposition`; G5 `CaptureBundle`. Read-only from `src/lib/metrics-prices.ts`: `loadPriceTable(path: string): PriceTable | null`, `tableCost(table: PriceTable, model: string | null, tokens: PricedTokens): number | null`, `PriceTable['meta']` (`source`, `fetchedAt`, `sha256`).
 - Produces:
   - `export interface PriceBasis { path: string; source: string; fetchedAt: string; sha256: string; currency: 'USD'; route: 'api' | 'subscription' | 'unknown' }`
-  - `export interface AttemptEconomics { attemptId: string; requests: number; failedRequests: number; retries: number | null; tokens: Record<'input' | 'cacheRead' | 'cacheWrite5m' | 'cacheWrite1h' | 'output' | 'reasoning', number | null>; normalizedCostUsd: number | null; coverage: { nativeSource: 'complete' | 'partial' | 'unknown'; pricedRequests: number; unpricedRequests: number }; basis: PriceBasis }`
+  - `export interface AttemptEconomics { attemptId: string; requests: number; failedRequests: number; retries: number | null; tokens: Record<'input' | 'cacheRead' | 'cacheWriteTotal' | 'cacheWrite5m' | 'cacheWrite1h' | 'output' | 'reasoning', number | null>; normalizedCostUsd: number | null; coverage: { nativeSource: 'complete' | 'partial' | 'unknown'; pricedRequests: number; unpricedRequests: number }; delivery: { status: 'not-exported' | 'complete' | 'partial' | 'unknown'; expected: number; storedVerified: number | null }; basis: PriceBasis }`. Native-source coverage and observed-record delivery coverage are separate fields. Wave 1 always sets `delivery.status = 'not-exported'` with `storedVerified: null`, and `genie-bench-phoenix` fills it from stored readback.
   - `export function attemptEconomics(bundle: CaptureBundle, attemptId: string, table: PriceTable, basis: PriceBasis): AttemptEconomics`
   - `export interface CohortEconomics { scheduled: number; accepted: number; costPerAttemptUsd: number | null; costPerAcceptedUsd: number | null; partial: boolean }`
   - `export function cohortEconomics(rows: Array<{ econ: AttemptEconomics | null; disposition: Disposition }>): CohortEconomics`. It divides by **scheduled** attempts and by compliant accepted attempts, and returns `null` when any required cost is null or acceptance is 0.
@@ -385,6 +402,7 @@ bun test scripts/bench/capture.test.ts && bun run check
 - [ ] `costPerAcceptedUsd` is `null` with 0 accepted and with any null attempt cost. `partial: true` labels any subtotal of known spend.
 - [ ] A provider-internal retry absent from the native log yields `retries: null` (capture gap), not 0.
 - [ ] `basis.sha256` equals the price table's `meta.sha256`, and a mismatched table is refused.
+- [ ] `delivery` is never inferred from `coverage.nativeSource`: complete native capture with `delivery.status = 'not-exported'` stays as written.
 
 **Validation:**
 ```bash
@@ -401,25 +419,27 @@ bun test scripts/bench/accounting.test.ts && bun run check
 
 **Deliverables:**
 1. `scripts/bench/adapters/omp.ts` (new). It does the following:
-   - Prepares a fresh native home and workspace per attempt, with an allowlisted environment and no `CLAUDE_CODE_SESSION_ID` or other outer session id inherited, never beneath the Genie checkout.
-   - Launches `tmux -L <attemptId> new-session -d -s <attemptId> -- <omp executable> <prompt>` (argv, no shell interpolation, no `--print`/`--mode`).
+   - Prepares a fresh native home per attempt and runs against G9's provisioned `SolverTarget` (a `host` checkout, never beneath the Genie checkout). It uses an allowlisted environment and inherits no `CLAUDE_CODE_SESSION_ID` or other outer session id. For a `container` target, it reports `environmentExecution: 'unsupported'` with the upstream requirement, unless a source-native way for the OMP client to act inside the container is proven (P5). It does not invent one.
+   - Launches through an injected `TerminalHost`. The production host runs `tmux -L <attemptId> new-session -d -s <attemptId> -- <omp executable> <prompt>` (argv, no shell interpolation, no `--print`/`--mode`).
    - Inventories the discovery roots, with a canary proving zero Genie resources in the `zero-genie` arm.
    - Installs and verifies the `TreatmentPin` resources by sha256 in the `genie` arm.
    - Uses only the native settled signal for `settled` and returns `unsupported` with an upstream requirement when none is exposed.
    - Collects the artifact per `ArtifactTransport` into the supervisor's directory.
    - Runs G5 capture at seal time.
-2. `scripts/bench/adapters/omp.test.ts` (new). It uses a stub `omp` executable on `PATH` inside a temp dir, plus a real tmux when one is available (skipped with a printed reason otherwise). Cases: argv preserved byte-exact, including quotes/newlines; a stray Genie skill planted in a would-be discovery root fails the zero-genie canary; a treatment hash mismatch refuses launch; the environment allowlist drops outer session ids; `settled` without a native signal reports `unsupported`; `stop('timeout')` kills the tmux server and records remaining actors.
+2. `scripts/bench/adapters/index.ts` (modify): adds `omp: ompAdapter` to `ADAPTERS`.
+3. `scripts/bench/adapters/omp.test.ts` (new) runs on both CI legs with no tmux. It uses a fake `TerminalHost` and a stub `omp` on `PATH` in a temp dir. Cases: argv handed to the host byte-exact, including quotes/newlines; a stray Genie skill planted in a would-be discovery root fails the zero-genie canary; a treatment hash mismatch refuses launch; the environment allowlist drops outer session ids; `settled` without a native signal reports `unsupported`; `stop('timeout')` calls the host's `kill` and records remaining actors; a `container` target reports `environmentExecution: 'unsupported'`.
+4. `scripts/bench/adapters/omp.tmux.test.ts` (new) runs only with `GENIE_BENCH_REAL_TMUX=1`, and FAILS (does not skip) when `tmux` is not on `PATH` under that flag. It drives the real `tmuxHost` with the stub `omp` and asserts a genuine TTY on the stub's stdin, then that no server remains on the `-L` socket after `stop`. **CI coverage of this file is unavailable:** neither the `unit` nor the `unit-darwin` job installs tmux, so CI runs it as a flag-off skip. The operator host runs it with the flag in G8.
 
 **Interfaces:**
-- Consumes: G1 `NativeAdapter`, `AdapterContext`, `CapabilityReport`, `REQUIRED_CAPABILITIES`, `TreatmentPin`, `ArtifactTransport`; G4 `runPreflight` (caller); G5 `captureOmpAttempt`.
-- Produces: `export const ompAdapter: NativeAdapter`; `export function zeroGenieCanary(nativeHome: string, workspace: string): { clean: boolean; found: string[] }`; `export function verifyTreatment(pin: TreatmentPin, nativeHome: string): Result<void>`.
+- Consumes: G1 `NativeAdapter`, `AdapterContext`, `SolverTarget`, `AdapterMap`, `ADAPTERS`, `CapabilityReport`, `REQUIRED_CAPABILITIES`, `TreatmentPin`, `ArtifactTransport`; G4 `runPreflight` (caller); G5 `captureOmpAttempt`.
+- Produces: `export interface TerminalHost { start(argv: string[], env: Record<string, string>, cwd: string, session: string): Promise<void>; alive(session: string): Promise<boolean>; kill(session: string): Promise<void>; version(): Promise<string | null> }`; `export const tmuxHost: TerminalHost`; `export function createOmpAdapter(host: TerminalHost): NativeAdapter`; `export const ompAdapter: NativeAdapter` (= `createOmpAdapter(tmuxHost)`); `export function zeroGenieCanary(nativeHome: string, workspace: string): { clean: boolean; found: string[] }`; `export function verifyTreatment(pin: TreatmentPin, nativeHome: string): Result<void>`.
 
 **Acceptance Criteria:**
 - [ ] The adapter never invokes OMP with `--print`, `--mode` or piped stdin (asserted on the stub's recorded argv/isatty).
 - [ ] The zero-genie canary fails on any Genie skill, guidance, agent/workflow catalog, plugin or state under any discovery root, including the planted one.
 - [ ] The Genie arm refuses to launch unless every `TreatmentPin.resources` hash matches.
 - [ ] `preflight` never marks a capability `proven` from a declaration or version string. Only observed native evidence (an `EvidenceRef` to captured output) can prove one. The test asserts that `settledSignal` stays `unsupported` against the stub.
-- [ ] The adapter's process tree is gone after `stop` (no tmux server left on the `-L` socket).
+- [ ] With the fake host, `stop` always calls `kill` for the session. With `GENIE_BENCH_REAL_TMUX=1` on a host with tmux, no tmux server is left on the `-L` socket (operator-host proof, recorded in G8).
 
 **Validation:**
 ```bash
@@ -430,11 +450,11 @@ bun test scripts/bench/adapters/omp.test.ts && bun run check
 
 ---
 
-### Group 8: Native preflight, frozen manifest and both-arm smoke (blocked-on-prerequisite P1–P4)
+### Group 8: Native preflight, frozen manifest and both-arm smoke (blocked-on-prerequisite P1–P5)
 
 **Goal:** On the operator host, prove native capability in both arms, freeze the 20-task manifest from the cleared pool, and run the two original integration tasks in both arms as unscored smoke with original verifier receipts.
 
-**Status:** BLOCKED until P1 (native capability preflight), P2 (task/oracle eligibility), P3 (authenticated Sol-medium route) and P4 (pinned `genie-omp` treatment) each show the exact proof in `## Dependencies`. A partial result (e.g. zero-genie preflight only) is recorded as evidence and does not complete the group. No smaller pilot, headless client, altered oracle or OMP-only substitute is allowed.
+**Status:** BLOCKED until P1 (native capability preflight), P2 (task/oracle eligibility), P3 (authenticated Sol-medium route) P4 (pinned `genie-omp` treatment) and P5 (source-native environment tooling/parity) each show the exact proof in `## Dependencies`. A partial result (e.g. zero-genie preflight only) is recorded as evidence and does not complete the group. No smaller pilot, headless client, altered oracle or OMP-only substitute is allowed.
 
 **Deliverables:**
 1. `scripts/bench/tasks/omp-sol-medium.json` (new): two `HarnessConfiguration`s (`zero-genie`, `genie`) with identical executable, requested model/effort, epoch and cohort. The Genie arm carries the `genie-omp` `TreatmentPin` verbatim.
@@ -443,7 +463,7 @@ bun test scripts/bench/adapters/omp.test.ts && bun run check
 4. `scripts/bench/README.md`: a "Wave 1 evidence" section recording the commands run, the digests, and every `unsupported`/blocked item verbatim.
 
 **Interfaces:**
-- Consumes: G3 `freeze`/`verify`/`schedule` CLI; G4 `preflight`/`attempt`/`status` CLI; G6 `attemptEconomics`; G7 `ompAdapter`; `genie-omp` treatment contract (P4).
+- Consumes: G3 `freeze`/`verify`/`schedule` CLI; G9 `environment.ts check` CLI; G4 `preflight`/`attempt`/`status` CLI; G6 `attemptEconomics`; G7 `ompAdapter`; `genie-omp` treatment contract (P4).
 - Produces: `scripts/bench/tasks/public-pilot.json` and `scripts/bench/tasks/omp-sol-medium.json`, the frozen inputs `genie-bench-omp-pilot` consumes unchanged.
 
 **Acceptance Criteria:**
@@ -452,16 +472,51 @@ bun test scripts/bench/adapters/omp.test.ts && bun run check
 - [ ] Each smoke task has, in both arms, a terminal journal entry and an original verifier receipt, accepted or not. Smoke rows are `kind: 'smoke'` and excluded from any scored count.
 - [ ] Each smoke attempt's `attemptEconomics` lists lead/child/auxiliary requests with coverage. Any `null` is explained in the README evidence section.
 - [ ] The overhead probe reports both timings without adjustment. No "zero overhead" claim is made.
+- [ ] `environment.ts check` exits 0 for both smoke tasks and every selected task (P5). The real-tmux adapter test passes on the operator host.
 
 **Validation:**
 ```bash
 bun scripts/bench/pilot.ts verify scripts/bench/tasks/public-pilot.json \
+  && GENIE_BENCH_REAL_TMUX=1 bun test scripts/bench/adapters/omp.tmux.test.ts \
   && bun scripts/bench/run.ts status --root "$GENIE_BENCH_EVIDENCE_ROOT" --experiment "$GENIE_BENCH_SMOKE_EXPERIMENT" --json \
   && bun run check
 ```
 (`GENIE_BENCH_EVIDENCE_ROOT` and `GENIE_BENCH_SMOKE_EXPERIMENT` are operator-supplied for this one validation. The engine itself reads no environment default.)
 
-**depends-on:** Group 3, Group 4, Group 6, Group 7
+**depends-on:** Group 3, Group 4, Group 6, Group 7, Group 9
+
+---
+
+### Group 9: Source-native task environment provisioning
+
+**Goal:** Own, in one module, the source-native lifecycle every attempt and verifier run uses. It reads the original instruction by digest, provisions and tears down each task through the source's own declared mechanism with its original image and resource limits, and never re-implements an environment.
+
+**Deliverables:**
+1. `scripts/bench/environment.ts` (new) with verb `check`. For `git-checkout`, it makes a clean clone at `repository.commit` in a fresh directory outside the Genie checkout and confirms HEAD. For `source-container`, it runs exactly the source-declared `provision` argv (e.g. the source's Harbor/compose invocation) and confirms the running image digest and that the cpu/memory/network limits equal `resources`. It hands back a `SolverTarget`. It runs the declared `teardown` on every exit path. The verifier-only copy for `runsIn: 'source-container-fresh'` is provisioned separately and never mounted into a solver target.
+2. `scripts/bench/environment.test.ts` (new). It covers a real temp git repo for `git-checkout`, and a stub `docker`/harness executable on `PATH` that records argv for `source-container`: argv passed verbatim, resource limits unchanged, a digest mismatch refused, teardown run after a failure. Further cases: an instruction sha256 mismatch refused; a path traversal in `instruction.path` refused; `check` without `--root`/`--sources` exits 2.
+
+**Interfaces:**
+- Consumes: G1 `TaskIdentity`, `InstructionRef`, `EnvironmentSpec`, `VerifierInvocation`, `SolverTarget`, `TaskManifest`, `EvidenceRef`, `Result`, `parseManifest`.
+- Produces:
+  - `export function readInstruction(task: TaskIdentity, sourcesDir: string): Result<{ text: string; ref: EvidenceRef }>`. It refuses a sha256 mismatch or a path outside the package.
+  - `export interface ProvisionedEnvironment { attemptId: string; solver: SolverTarget; artifactPath: string; image: { ref: string; digest: string } | null; resources: EnvironmentSpec['resources']; evidence: EvidenceRef[] }`
+  - `export async function provisionEnvironment(root: string, attemptId: string, task: TaskIdentity, sourcesDir: string): Promise<Result<ProvisionedEnvironment>>`
+  - `export async function provisionVerifierCopy(root: string, attemptId: string, task: TaskIdentity, sourcesDir: string, artifact: EvidenceRef): Promise<Result<{ cwd: string; containerId: string | null }>>`
+  - `export async function teardownEnvironment(env: ProvisionedEnvironment): Promise<Result<void>>`
+  - CLI: `bun scripts/bench/environment.ts check --root <dir> --manifest <file> --sources <dir> --task <key>`. Exit 0 ok, 1 not ok, 2 refusal.
+
+**Acceptance Criteria:**
+- [ ] No provisioning path runs a command that is not in the task's `EnvironmentSpec`/`VerifierInvocation`, apart from git clone/checkout for `git-checkout` (asserted on recorded argv).
+- [ ] A container whose observed image digest or resource limits differ from the spec is refused before any solver launch.
+- [ ] `teardown` runs after success, after a refused check and after a thrown error.
+- [ ] A verifier copy contains the collected artifact and nothing from the solver target or the native home.
+
+**Validation:**
+```bash
+bun test scripts/bench/environment.test.ts && bun run check
+```
+
+**depends-on:** Group 1
 
 ---
 
@@ -485,7 +540,9 @@ _What must be verified on dev after merge. The QA agent tests each criterion._
 | The `genie-omp` treatment (P4) is itself blocked on its upstream OMP P0 | High | G1–G7 do not depend on it. The Genie arm of G8 waits, and zero-genie preflight evidence is recorded without completing G8 |
 | Eligibility holds (SWE-Atlas test-writing, SkillsBench third-party inputs) cannot be cleared | High | `freeze` refuses a short category. The operator resolves the manifest, and the cohort is never silently shrunk |
 | `tmux` introduces environment or terminal differences from a bare PTY | Medium | Preflight records the tmux version and env. If a difference proves material, the launch mechanism is changed in G7 by a reviewed decision, never in a scored run |
-| `metrics-usage.ts` session-file format drifts under the capture owner | Medium | The bench imports only `matchOmpSessionByCwd`, as a labelled fallback. Its own parser keeps the presence semantics, and fixtures pin the native shape |
+| OMP's native session-file format drifts | Medium | The bench imports nothing from `metrics-usage.ts`. Its own parser keeps the presence semantics, and fixtures pin the native shape |
+| No source-native way exists for OMP to act inside a container task (Terminal-Bench `session-window-debug`, SkillsBench) | High | `environmentExecution` stays `unsupported` and P5 keeps G8 blocked. No host-side substitute environment or altered task |
+| Real-tmux behaviour is not exercised in CI | Medium | The fake `TerminalHost` covers logic on both legs. The opt-in real test fails loudly when its flag is set without tmux, and is required on the operator host in G8 |
 | Adding `scripts/bench/**` to `tsconfig.json` surfaces type errors in later sibling files | Low | Intended. Every sibling inherits the same gate |
 | An evidence root is committed by accident | Medium | `--root` is required and outside the repo by README convention. The G8 PR diff is limited to the two task JSONs and the README |
 
@@ -504,11 +561,14 @@ tsconfig.json                                   (G1: include scripts/bench/**/*)
 scripts/bench/contracts.ts                      (G1, new)
 scripts/bench/contracts.test.ts                 (G1, new)
 scripts/bench/README.md                         (G1 new; G8 appends "Wave 1 evidence")
+scripts/bench/adapters/index.ts                 (G1 new, empty map; G7 adds omp)
 scripts/bench/ledger.ts                         (G2, new)
 scripts/bench/ledger.test.ts                    (G2, new)
 scripts/bench/pilot.ts                          (G3, new)
 scripts/bench/pilot.test.ts                     (G3, new)
 scripts/bench/fixtures/pool.fixture.json        (G3, new)
+scripts/bench/environment.ts                    (G9, new)
+scripts/bench/environment.test.ts               (G9, new)
 scripts/bench/run.ts                            (G4, new)
 scripts/bench/run.test.ts                       (G4, new)
 scripts/bench/capture.ts                        (G5, new)
@@ -518,6 +578,7 @@ scripts/bench/accounting.ts                     (G6, new)
 scripts/bench/accounting.test.ts                (G6, new)
 scripts/bench/adapters/omp.ts                   (G7, new)
 scripts/bench/adapters/omp.test.ts              (G7, new)
-scripts/bench/tasks/omp-sol-medium.json         (G8, new; blocked P1-P4)
+scripts/bench/adapters/omp.tmux.test.ts         (G7, new; opt-in GENIE_BENCH_REAL_TMUX=1)
+scripts/bench/tasks/omp-sol-medium.json         (G8, new; blocked P1-P5)
 scripts/bench/tasks/public-pilot.json           (G8, new; blocked P2)
 ```
