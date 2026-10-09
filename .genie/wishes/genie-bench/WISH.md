@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | DRAFT |
+| **Status** | APPROVED |
 | **Slug** | `genie-bench` |
 | **Date** | 2026-10-09 |
 | **Author** | Felipe Rosa |
@@ -560,6 +560,15 @@ _What must be verified on dev after merge. The QA agent tests each criterion._
 ## Review Results
 
 _The read-only reviewer returns evidence; the invoking orchestrator appends a timestamped block here after plan, execution, and PR reviews._
+
+### 2026-10-09 — plan review (independent, read-only)
+
+- **Verdict:** SHIP at head `db59accc7` (PR #3145), after two repair rounds.
+- **Round 0** at `db17b47f8`: FIX-FIRST. Two HIGH findings: the task contract could not provision or verify a task, and G4 imported a file G7 creates later. Five MEDIUM findings: capture read the operator's `~/.omp`, OMP's cache-write total was dropped, SC5 lacked delivery coverage, the P2 command was missing flags, and the tmux test could skip itself.
+- **Round 1** at `9bf030a41`: FIX-FIRST. Six of the seven fixes held. New: P5's verifier-sanity proof had no owner (HIGH), G9's command rule contradicted its read-back of the image digest, the pricing fields were ambiguous, and G4's interfaces were incomplete.
+- **Round 2** at `db59accc7`: SHIP. All findings resolved. The `SolverTask` reduction enforces design SC2 (the solver cannot read hidden grading).
+- **Carried, LOW:** a task with no reference solution passes P5 on the negative check alone. G8's README evidence section must list every such task, so the gap in verifier parity is disclosed.
+- **Design author:** the OMP coordinator was asked for a design-fidelity read on 2026-10-09 and had not answered when this was persisted. Its later findings reopen the plan through this section.
 
 ---
 
