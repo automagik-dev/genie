@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "sourceOnly": true,
   "sourceCandidateSha256": "7241a0a39d2a270093e6ae0d1af905f9603b3092eff373795146f493ff8e29e9",
-  "status": "POSTMERGE_COMPLETE_GATE_GREEN_NORMAL_MERGE_COMMIT_NEXT",
+  "status": "CURRENT_SOURCE_GRAPH_GATES_REVIEWS_CORRESPONDENCE_READY_FOR_OWN_DEV_PUBLICATION_ONLY",
   "normalHookAuthority": {
     "command": [
       "git",
@@ -652,5 +652,94 @@
     "assertions": 19656,
     "retainedWarnings": "Same inheriteddoctor26+3Kniphints, no skipsuppression/oracle/testtimeout/sourcechange.",
     "purpose": "Mandatorycompletegateonactualfa846resolvedmergedtree beforefinishingnormalmerge; no reviewedcode/runtimechange, WISHpublicationonlyprefixappend allowed. Firstpriorgate19664expectcalls keptdistinct; thisrun19656observed, no fabricatedsameassertcount."
-  }
+  },
+  "normalMergeFinish": {
+    "command": [
+      "git",
+      "commit",
+      "-m",
+      "chore: integrate dev source-only delivery"
+    ],
+    "cwd": "/home/genie/.local/share/mikro-engine-split/experiments-g8/final-local-smokes/history-only-reword-6qjyzwas/tree",
+    "exitCode": 0,
+    "stdout": "[detached HEAD 568d459df] chore: integrate dev source-only delivery\n",
+    "stderr": "Checked 0 files in 343\u00b5s. No fixes applied.\n",
+    "seconds": 2.304660107009113
+  },
+  "mergedHead": "568d459df5300b52b7ba8b13f4d14bdea5887a22",
+  "mergedTree": "7f23183f058fa71bb9468215936b737a7be5345f",
+  "mergedParents": [
+    "4e75cb814a59b1ba60fe71bae9e8c56c80658698",
+    "fa8469e0e1beb953823bb2619ed0a39fe581dba7"
+  ],
+  "actualMergedFullCloneCatalogCheck": {
+    "command": [
+      "bun",
+      "scripts/legacy-skills-catalog.ts",
+      "--check"
+    ],
+    "cwd": "/home/genie/.local/share/mikro-engine-split/experiments-g8/final-local-smokes/history-only-reword-6qjyzwas/tree",
+    "exitCode": 0,
+    "stdout": "legacy-skills-catalog: current \u2014 40 retired name(s), 95 retired description(s)\nlegacy-skills-catalog: --check is an additive-union SUPERSET check: it proves the committed catalog carries everything THIS clone's shipped history yields (HEAD, every tag, exact origin/main, origin/dev and refs/archive/*, plus exact trusted Genie archive proof \u2014 never an ordinary unmerged branch), never that it carries nothing more. An entry added by hand, or one retired on a ref this clone never fetched, is invisible to it \u2014 which is why it must run on a FULL clone (`fetch-depth: 0`), never a shallow checkout.\n",
+    "stderr": "",
+    "seconds": 8.476912944111973
+  },
+  "actualMergedStrictGenreCommitRange": {
+    "command": [
+      "bun",
+      "scripts/commitlint.ts",
+      "--from",
+      "fa8469e0e1beb953823bb2619ed0a39fe581dba7",
+      "--to",
+      "568d459df5300b52b7ba8b13f4d14bdea5887a22"
+    ],
+    "cwd": "/home/genie/.local/share/mikro-engine-split/experiments-g8/final-local-smokes/history-only-reword-6qjyzwas/tree",
+    "exitCode": 0,
+    "stdout": "dd77518c978759ff4e99a163c3230709ea1e645c: valid\nc844ea6fdb7bf4ffacf1b68c2eeb0b2597231cf5: valid\n1c00fbe8c88e9e51bae7d47e7585de915bcd5cb3: valid\n81245a699b2b88536278eab336c3b12e5efe280a: valid\n40ddcadbe9ae5690bafae23f523179bf91a8e4eb: valid\n4e75cb814a59b1ba60fe71bae9e8c56c80658698: valid\n568d459df5300b52b7ba8b13f4d14bdea5887a22: valid\nChecked 7 Genie-owned commits; excluded 455 proven foreign-only Mikro commits.\n",
+    "stderr": "",
+    "seconds": 0.7327440059743822
+  },
+  "actualMergedSourceCorrespondence": {
+    "head": "568d459df5300b52b7ba8b13f4d14bdea5887a22",
+    "tree": "7f23183f058fa71bb9468215936b737a7be5345f",
+    "committedBoundRecords": 2472,
+    "committedMismatches": [],
+    "sourcePhysicalDriftExceptDeclaredWishAppend": [],
+    "gitModeNormalization": "Physical nonexecutable permissionbits areboundinmanifest; Git uses100644/100755 executablebit, exactsymlink120000targetblob/gitlink160000oid.",
+    "unversionedBoundGeneratedOutputs": [
+      "dist/genie.js"
+    ],
+    "unversionedScope": "Ignored actualbuildoutputs remainbytebound forcompiledtest/installed/releaseproof, not silentlyforcepublishedasnewrepositorybinaries. Manifestsourceunion includesgeneratedMikodistandactualRootbundle evenwhenunversioned; allsource/config/locks/newhelpers/evidenceversioned.",
+    "wishPrefixPreserved": true
+  },
+  "nativeG1SourceDone": {
+    "command": [
+      "bun",
+      "dist/genie.js",
+      "task",
+      "done",
+      "t_mv1xtis991708849"
+    ],
+    "cwd": "/home/genie/orca/workspaces/genie/mikro-engine-split",
+    "exitCode": 0,
+    "stdout": "Task t_mv1xtis991708849 marked done.\n",
+    "stderr": "",
+    "seconds": 0.2523835578467697
+  },
+  "noUnmanifestedDeliveredTreePaths": [],
+  "deliveryTaskUnblock": {
+    "command": [
+      "bun",
+      "dist/genie.js",
+      "task",
+      "unblock",
+      "t_muywbtbs77e69d64"
+    ],
+    "cwd": "/home/genie/orca/workspaces/genie/mikro-engine-split",
+    "exitCode": 0,
+    "stdout": "Unblocked task t_muywbtbs77e69d64.\n",
+    "stderr": "",
+    "seconds": 0.24704707693308592
+  },
+  "publicationMetadataClosure": "Postcommit HEAD/remote receipts inherently followpublishedcommit; final live readbackwillpersistinthisdeclaredfuturelocalreceipt and publicPRcomment, no recursiveclaim ofselfcommittedfutureCI evidence. Metadata-only precursorcommit below carries mergedgraph/sourcecorrespondence/currentfullgate/refrozencriteria reviews; allsourceunchanged."
 }
