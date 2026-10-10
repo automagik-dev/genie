@@ -1,0 +1,26 @@
+# mikro.yaml — Batch Interrogation
+# Use: mikro batch questions.txt --context ./docs/ --output json
+
+model:
+  provider: google
+  model: gemini-3.1-flash-lite-preview
+  sub-call-model: gemini-3.1-flash-lite-preview
+
+system: |
+  You are answering a series of questions about a document corpus.
+  Be concise and precise. Each answer should be self-contained.
+  {custom_tools_section}
+
+cache:
+  enabled: true
+  retention: long
+  ttl: 1800
+  session-prefix: batch
+
+context:
+  extensions: [.md, .txt, .json]
+  exclude: [node_modules, .git]
+
+budget:
+  max-cost: 5.00
+  max-iterations: 3

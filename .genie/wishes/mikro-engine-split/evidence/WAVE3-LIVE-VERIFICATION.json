@@ -1,0 +1,1983 @@
+{
+  "schema": 1,
+  "recordedAt": "2026-10-05T22:05:07.191334+00:00",
+  "sourceSeal": "WAVE3-REPAIR2-REVIEW-SNAPSHOT.json",
+  "standaloneAfterProofsAndRootGate": "WAVE3-AFTER-VERIFICATION.json",
+  "independentRepair2Verdicts": {
+    "G3CorrectnessResume": {
+      "overallCorrectness": "correct",
+      "verdict": "Conditional source SHIP",
+      "findings": [],
+      "source": "agent://G3CorrectnessResume"
+    },
+    "G3QualityResumeReview": {
+      "overallCorrectness": "correct",
+      "verdict": "Conditional source SHIP",
+      "findings": [],
+      "source": "agent://G3QualityResumeReview"
+    },
+    "G4CorrectnessResume": {
+      "overallCorrectness": "correct",
+      "verdict": "Conditional source SHIP",
+      "findings": [],
+      "source": "agent://G4CorrectnessResume"
+    },
+    "G4QualityResumeReview": {
+      "overallCorrectness": "correct",
+      "verdict": "Conditional source SHIP",
+      "findings": [],
+      "source": "agent://G4QualityResumeReview"
+    }
+  },
+  "currentChildGate": {
+    "build": 0,
+    "typeCheck": 0,
+    "focused": {
+      "pass": 366,
+      "fail": 0,
+      "suites": 76,
+      "marker": "WAVE3_REPAIR2_FOCUSED_EXIT=0",
+      "artifact": "artifact://236"
+    },
+    "full": {
+      "pass": 1224,
+      "fail": 0,
+      "suites": 218,
+      "reportedSkipped": 0,
+      "liveTestLogSaysSkip": true,
+      "marker": "WAVE3_REPAIR2_CHILD_EXIT=0",
+      "artifact": "artifact://252",
+      "wallSeconds": 199.94
+    }
+  },
+  "juiceProvisionAndCatalog": {
+    "juiceProvision": {
+      "origin": "https://juice.labs.khal.ai",
+      "compiledCli": "mikro/dist/src/cli.js",
+      "projects": [
+        "genie",
+        "brain"
+      ],
+      "keysDistinct": true,
+      "keysBefore": 15,
+      "keysAfter": 17,
+      "allPreexistingKeysRetained": true,
+      "repeatProvisionIdempotent": true,
+      "privateDirectoryMode": "0o700",
+      "privateFileModes": {
+        "genie": "0o600",
+        "brain": "0o600"
+      },
+      "keyFilesOutsideRepositories": true,
+      "credentialsPrinted": false,
+      "operatorReferencesUnchanged": true,
+      "inferenceCalls": 0,
+      "initialPreconditionFailure": "Missing dedicated parent directory; no key file or remote mutation. Parent created mode0700 before actual provisioning."
+    },
+    "juiceCatalog": {
+      "origin": "https://juice.labs.khal.ai",
+      "projects": {
+        "genie": {
+          "modelCount": 10,
+          "contentSha256": "a2f376a6a6e4773a00d8623738a548a3ad5020cc43d8fa5a0cc4b9faf482d60f",
+          "fetchedAt": "2026-10-05T21:11:07.360Z",
+          "projectKeyAuthenticated": true
+        },
+        "brain": {
+          "modelCount": 10,
+          "contentSha256": "a2f376a6a6e4773a00d8623738a548a3ad5020cc43d8fa5a0cc4b9faf482d60f",
+          "fetchedAt": "2026-10-05T21:11:08.742Z",
+          "projectKeyAuthenticated": true
+        }
+      },
+      "requestedAdvertisements": {
+        "genie": [
+          {
+            "id": "glm-5.3-juiced",
+            "ownedBy": "juiced-pool-glm-5.3-juiced-baseten"
+          },
+          {
+            "id": "deepseek-v4.1-flash-juiced",
+            "ownedBy": "juiced-pool-deepseek-v4.1-flash-juiced-deepseek"
+          },
+          {
+            "id": "mimo-v2.6-pro-ultraspeed",
+            "ownedBy": "xiaomi-mimo-v2.6-pro-ultraspeed"
+          },
+          {
+            "id": "glm-5.3-flash-juiced",
+            "ownedBy": "juiced-pool-glm-5.3-flash-juiced-zai-api"
+          },
+          {
+            "id": "mimo-v2.6-flash",
+            "ownedBy": "xiaomi-mimo-v2.6-flash"
+          },
+          {
+            "id": "mimo-v2.6-pro",
+            "ownedBy": "xiaomi-mimo-v2.6-pro"
+          },
+          {
+            "id": "gpt-6-luna",
+            "ownedBy": "openai"
+          }
+        ],
+        "brain": [
+          {
+            "id": "glm-5.3-juiced",
+            "ownedBy": "juiced-pool-glm-5.3-juiced-baseten"
+          },
+          {
+            "id": "deepseek-v4.1-flash-juiced",
+            "ownedBy": "juiced-pool-deepseek-v4.1-flash-juiced-deepseek"
+          },
+          {
+            "id": "mimo-v2.6-pro-ultraspeed",
+            "ownedBy": "xiaomi-mimo-v2.6-pro-ultraspeed"
+          },
+          {
+            "id": "glm-5.3-flash-juiced",
+            "ownedBy": "juiced-pool-glm-5.3-flash-juiced-zai-api"
+          },
+          {
+            "id": "mimo-v2.6-flash",
+            "ownedBy": "xiaomi-mimo-v2.6-flash"
+          },
+          {
+            "id": "mimo-v2.6-pro",
+            "ownedBy": "xiaomi-mimo-v2.6-pro"
+          },
+          {
+            "id": "gpt-6-luna",
+            "ownedBy": "openai"
+          }
+        ]
+      },
+      "literalIdsNotAliased": true,
+      "inferenceCalls": 0
+    }
+  },
+  "juiceCompiledSdk": {
+    "exitCode": 0,
+    "projects": [
+      {
+        "project": "genie",
+        "origin": "https://juice.labs.khal.ai",
+        "literalAdvertisedModel": "deepseek-v4.1-flash-juiced",
+        "api": "openai-responses",
+        "credentialReference": "/home/genie/.local/share/mikro-engine-split/juice/genie.key",
+        "credentialResolution": "Compiled SDK per-invocation apiKeyFile",
+        "text": "JUICE_GENIE_READY",
+        "usage": {
+          "inputTokens": 41,
+          "outputTokens": 40,
+          "cacheReadTokens": 0,
+          "cacheWriteTokens": 0,
+          "totalCost": 6.03e-05,
+          "llmCalls": 1,
+          "reasoningTokens": 30
+        },
+        "pricingBasis": {
+          "kind": "Declared estimate only, not gateway billing",
+          "source": "@earendil-works/pi-ai 1.0.2 nominal DeepSeek V4.1 Flash catalog",
+          "nominalSku": "deepseek/deepseek-flash",
+          "rates": {
+            "input": 0.3,
+            "output": 1.2,
+            "cacheRead": 0.006,
+            "cacheWrite": 0
+          },
+          "privatePoolUpstreamBindingVerified": false,
+          "actualGatewayCostUsd": null
+        },
+        "maxRetries": 0,
+        "expectedTextMatched": true,
+        "exit": "success"
+      },
+      {
+        "project": "brain",
+        "origin": "https://juice.labs.khal.ai",
+        "literalAdvertisedModel": "deepseek-v4.1-flash-juiced",
+        "api": "openai-responses",
+        "credentialReference": "/home/genie/.local/share/mikro-engine-split/juice/brain.key",
+        "credentialResolution": "Compiled SDK per-invocation apiKeyFile",
+        "text": "JUICE_BRAIN_READY",
+        "usage": {
+          "inputTokens": 41,
+          "outputTokens": 32,
+          "cacheReadTokens": 0,
+          "cacheWriteTokens": 0,
+          "totalCost": 5.07e-05,
+          "llmCalls": 1,
+          "reasoningTokens": 22
+        },
+        "pricingBasis": {
+          "kind": "Declared estimate only, not gateway billing",
+          "source": "@earendil-works/pi-ai 1.0.2 nominal DeepSeek V4.1 Flash catalog",
+          "nominalSku": "deepseek/deepseek-flash",
+          "rates": {
+            "input": 0.3,
+            "output": 1.2,
+            "cacheRead": 0.006,
+            "cacheWrite": 0
+          },
+          "privatePoolUpstreamBindingVerified": false,
+          "actualGatewayCostUsd": null
+        },
+        "maxRetries": 0,
+        "expectedTextMatched": true,
+        "exit": "success"
+      }
+    ],
+    "stderr": "",
+    "productionFilesUnchanged": true,
+    "priorHarnessCorrection": "Constructed typed config omitted required apiKeyEnv array; source buildCustomProvider failed before provider registration/HTTP dispatch. Actual probe uses existing parseCustomProviders."
+  },
+  "keeperSummary": [
+    {
+      "project": "genie",
+      "keeperVersion": "v1.15.9",
+      "requests": 1,
+      "totalTokens": 81,
+      "matchesOneActualSdkCall": true,
+      "costAvailable": true,
+      "gatewayAggregateCostUsd": 3.015e-05,
+      "sdkNominalEstimateUsd": 6.03e-05,
+      "combinedOrSubstitutedCosts": false,
+      "timezone": "America/Sao_Paulo",
+      "analysisModelComposition": [
+        {
+          "key": "dee*********-Flash",
+          "label": "deepseek-ai/DeepSeek-V4.1-Flash",
+          "total_tokens": 81,
+          "requests": 1,
+          "percent": 100,
+          "input_tokens": 41,
+          "output_tokens": 40,
+          "cache_read_tokens": 0,
+          "cache_creation_tokens": 0,
+          "reasoning_tokens": 30,
+          "cost_usd": 3.015e-05,
+          "cost_available": true
+        }
+      ],
+      "latencySupported": true,
+      "latencyPoints": 1,
+      "query": {
+        "range": "today"
+      },
+      "sourcesHash": "59da71136b238201054729afd098d0715c1360e0b0f5eeca83ad837dee923548"
+    },
+    {
+      "project": "brain",
+      "keeperVersion": "v1.15.9",
+      "requests": 1,
+      "totalTokens": 73,
+      "matchesOneActualSdkCall": true,
+      "costAvailable": true,
+      "gatewayAggregateCostUsd": 2.535e-05,
+      "sdkNominalEstimateUsd": 5.07e-05,
+      "combinedOrSubstitutedCosts": false,
+      "timezone": "America/Sao_Paulo",
+      "analysisModelComposition": [
+        {
+          "key": "dee*********-Flash",
+          "label": "deepseek-ai/DeepSeek-V4.1-Flash",
+          "total_tokens": 73,
+          "requests": 1,
+          "percent": 100,
+          "input_tokens": 41,
+          "output_tokens": 32,
+          "cache_read_tokens": 0,
+          "cache_creation_tokens": 0,
+          "reasoning_tokens": 22,
+          "cost_usd": 2.535e-05,
+          "cost_available": true
+        }
+      ],
+      "latencySupported": true,
+      "latencyPoints": 1,
+      "query": {
+        "range": "today"
+      },
+      "sourcesHash": "ac6fe0ca2b8b03434806cf20eae1234feebddc44f013dff9141c9d1d7b65ec6e"
+    }
+  ],
+  "keeperActualSanitizedSnapshots": [
+    {
+      "project": "genie",
+      "compiledCli": "mikro/dist/src/cli.js",
+      "command": "juice analyze",
+      "range": "today",
+      "exitCode": 0,
+      "stderr": "",
+      "managementCredentialUsed": false,
+      "snapshot": {
+        "version": 1,
+        "project": "genie",
+        "keyAlias": "mikro-engine-split-genie",
+        "keyEpoch": "2026-10-05",
+        "fetchedAt": "2026-10-05T21:48:06.011Z",
+        "keeperVersion": "v1.15.9",
+        "capabilities": {
+          "aggregateUsage": true,
+          "requestEvents": false,
+          "payloadExport": false,
+          "canonicalBilling": false
+        },
+        "query": {
+          "range": "today"
+        },
+        "sources": [
+          {
+            "url": "https://juice.labs.khal.ai/keeper/api/v1/key-overview?range=today",
+            "fetchedAt": "2026-10-05T21:48:05.965Z",
+            "timezone": "America/Sao_Paulo",
+            "rangeStart": null,
+            "rangeEnd": null,
+            "contentSha256": "cb5b326ac4241485d5f63df955cc857464466343b82b0207260698a7c8e576b0",
+            "data": {
+              "usage": {
+                "total_requests": 1,
+                "success_count": 1,
+                "failure_count": 0,
+                "total_tokens": 81
+              },
+              "summary": {
+                "rpm": 0.0008857395925597874,
+                "tpm": 0.07174490699734277,
+                "total_cost": 3.015e-05,
+                "cost_available": true,
+                "input_tokens": 41,
+                "cache_read_tokens": 0,
+                "cache_creation_tokens": 0,
+                "reasoning_tokens": 30
+              },
+              "series": {
+                "buckets": [
+                  "2026-10-05T18:00:00-03:00"
+                ],
+                "requests": [
+                  1
+                ],
+                "tokens": [
+                  81
+                ],
+                "rpm": [
+                  0.016666666666666666
+                ],
+                "tpm": [
+                  1.35
+                ],
+                "cost": [
+                  3.015e-05
+                ],
+                "cache_read_rate": [
+                  0
+                ]
+              },
+              "timezone": "America/Sao_Paulo"
+            }
+          },
+          {
+            "url": "https://juice.labs.khal.ai/keeper/api/v1/key-analysis?range=today",
+            "fetchedAt": "2026-10-05T21:48:05.988Z",
+            "timezone": "America/Sao_Paulo",
+            "rangeStart": "2026-10-05T00:00:00-03:00",
+            "rangeEnd": "2026-10-05T23:59:59.999999999-03:00",
+            "contentSha256": "2c91e18dd0898194cf321ac17870acf9b3beff5ae4d7f82b12cd0b81ce52ef0b",
+            "data": {
+              "granularity": "hourly",
+              "timezone": "America/Sao_Paulo",
+              "range_start": "2026-10-05T00:00:00-03:00",
+              "range_end": "2026-10-05T23:59:59.999999999-03:00",
+              "token_usage": [
+                {
+                  "bucket": "2026-10-05T00:00:00-03:00",
+                  "input_tokens": 0,
+                  "output_tokens": 0,
+                  "cache_read_tokens": 0,
+                  "cache_creation_tokens": 0,
+                  "reasoning_tokens": 0,
+                  "total_tokens": 0,
+                  "requests": 0,
+                  "cost_usd": 0,
+                  "cost_available": true
+                },
+                {
+                  "bucket": "2026-10-05T01:00:00-03:00",
+                  "input_tokens": 0,
+                  "output_tokens": 0,
+                  "cache_read_tokens": 0,
+                  "cache_creation_tokens": 0,
+                  "reasoning_tokens": 0,
+                  "total_tokens": 0,
+                  "requests": 0,
+                  "cost_usd": 0,
+                  "cost_available": true
+                },
+                {
+                  "bucket": "2026-10-05T02:00:00-03:00",
+                  "input_tokens": 0,
+                  "output_tokens": 0,
+                  "cache_read_tokens": 0,
+                  "cache_creation_tokens": 0,
+                  "reasoning_tokens": 0,
+                  "total_tokens": 0,
+                  "requests": 0,
+                  "cost_usd": 0,
+                  "cost_available": true
+                },
+                {
+                  "bucket": "2026-10-05T03:00:00-03:00",
+                  "input_tokens": 0,
+                  "output_tokens": 0,
+                  "cache_read_tokens": 0,
+                  "cache_creation_tokens": 0,
+                  "reasoning_tokens": 0,
+                  "total_tokens": 0,
+                  "requests": 0,
+                  "cost_usd": 0,
+                  "cost_available": true
+                },
+                {
+                  "bucket": "2026-10-05T04:00:00-03:00",
+                  "input_tokens": 0,
+                  "output_tokens": 0,
+                  "cache_read_tokens": 0,
+                  "cache_creation_tokens": 0,
+                  "reasoning_tokens": 0,
+                  "total_tokens": 0,
+                  "requests": 0,
+                  "cost_usd": 0,
+                  "cost_available": true
+                },
+                {
+                  "bucket": "2026-10-05T05:00:00-03:00",
+                  "input_tokens": 0,
+                  "output_tokens": 0,
+                  "cache_read_tokens": 0,
+                  "cache_creation_tokens": 0,
+                  "reasoning_tokens": 0,
+                  "total_tokens": 0,
+                  "requests": 0,
+                  "cost_usd": 0,
+                  "cost_available": true
+                },
+                {
+                  "bucket": "2026-10-05T06:00:00-03:00",
+                  "input_tokens": 0,
+                  "output_tokens": 0,
+                  "cache_read_tokens": 0,
+                  "cache_creation_tokens": 0,
+                  "reasoning_tokens": 0,
+                  "total_tokens": 0,
+                  "requests": 0,
+                  "cost_usd": 0,
+                  "cost_available": true
+                },
+                {
+                  "bucket": "2026-10-05T07:00:00-03:00",
+                  "input_tokens": 0,
+                  "output_tokens": 0,
+                  "cache_read_tokens": 0,
+                  "cache_creation_tokens": 0,
+                  "reasoning_tokens": 0,
+                  "total_tokens": 0,
+                  "requests": 0,
+                  "cost_usd": 0,
+                  "cost_available": true
+                },
+                {
+                  "bucket": "2026-10-05T08:00:00-03:00",
+                  "input_tokens": 0,
+                  "output_tokens": 0,
+                  "cache_read_tokens": 0,
+                  "cache_creation_tokens": 0,
+                  "reasoning_tokens": 0,
+                  "total_tokens": 0,
+                  "requests": 0,
+                  "cost_usd": 0,
+                  "cost_available": true
+                },
+                {
+                  "bucket": "2026-10-05T09:00:00-03:00",
+                  "input_tokens": 0,
+                  "output_tokens": 0,
+                  "cache_read_tokens": 0,
+                  "cache_creation_tokens": 0,
+                  "reasoning_tokens": 0,
+                  "total_tokens": 0,
+                  "requests": 0,
+                  "cost_usd": 0,
+                  "cost_available": true
+                },
+                {
+                  "bucket": "2026-10-05T10:00:00-03:00",
+                  "input_tokens": 0,
+                  "output_tokens": 0,
+                  "cache_read_tokens": 0,
+                  "cache_creation_tokens": 0,
+                  "reasoning_tokens": 0,
+                  "total_tokens": 0,
+                  "requests": 0,
+                  "cost_usd": 0,
+                  "cost_available": true
+                },
+                {
+                  "bucket": "2026-10-05T11:00:00-03:00",
+                  "input_tokens": 0,
+                  "output_tokens": 0,
+                  "cache_read_tokens": 0,
+                  "cache_creation_tokens": 0,
+                  "reasoning_tokens": 0,
+                  "total_tokens": 0,
+                  "requests": 0,
+                  "cost_usd": 0,
+                  "cost_available": true
+                },
+                {
+                  "bucket": "2026-10-05T12:00:00-03:00",
+                  "input_tokens": 0,
+                  "output_tokens": 0,
+                  "cache_read_tokens": 0,
+                  "cache_creation_tokens": 0,
+                  "reasoning_tokens": 0,
+                  "total_tokens": 0,
+                  "requests": 0,
+                  "cost_usd": 0,
+                  "cost_available": true
+                },
+                {
+                  "bucket": "2026-10-05T13:00:00-03:00",
+                  "input_tokens": 0,
+                  "output_tokens": 0,
+                  "cache_read_tokens": 0,
+                  "cache_creation_tokens": 0,
+                  "reasoning_tokens": 0,
+                  "total_tokens": 0,
+                  "requests": 0,
+                  "cost_usd": 0,
+                  "cost_available": true
+                },
+                {
+                  "bucket": "2026-10-05T14:00:00-03:00",
+                  "input_tokens": 0,
+                  "output_tokens": 0,
+                  "cache_read_tokens": 0,
+                  "cache_creation_tokens": 0,
+                  "reasoning_tokens": 0,
+                  "total_tokens": 0,
+                  "requests": 0,
+                  "cost_usd": 0,
+                  "cost_available": true
+                },
+                {
+                  "bucket": "2026-10-05T15:00:00-03:00",
+                  "input_tokens": 0,
+                  "output_tokens": 0,
+                  "cache_read_tokens": 0,
+                  "cache_creation_tokens": 0,
+                  "reasoning_tokens": 0,
+                  "total_tokens": 0,
+                  "requests": 0,
+                  "cost_usd": 0,
+                  "cost_available": true
+                },
+                {
+                  "bucket": "2026-10-05T16:00:00-03:00",
+                  "input_tokens": 0,
+                  "output_tokens": 0,
+                  "cache_read_tokens": 0,
+                  "cache_creation_tokens": 0,
+                  "reasoning_tokens": 0,
+                  "total_tokens": 0,
+                  "requests": 0,
+                  "cost_usd": 0,
+                  "cost_available": true
+                },
+                {
+                  "bucket": "2026-10-05T17:00:00-03:00",
+                  "input_tokens": 0,
+                  "output_tokens": 0,
+                  "cache_read_tokens": 0,
+                  "cache_creation_tokens": 0,
+                  "reasoning_tokens": 0,
+                  "total_tokens": 0,
+                  "requests": 0,
+                  "cost_usd": 0,
+                  "cost_available": true
+                },
+                {
+                  "bucket": "2026-10-05T18:00:00-03:00",
+                  "input_tokens": 41,
+                  "output_tokens": 40,
+                  "cache_read_tokens": 0,
+                  "cache_creation_tokens": 0,
+                  "reasoning_tokens": 30,
+                  "total_tokens": 81,
+                  "requests": 1,
+                  "cost_usd": 3.015e-05,
+                  "cost_available": true
+                },
+                {
+                  "bucket": "2026-10-05T19:00:00-03:00",
+                  "input_tokens": 0,
+                  "output_tokens": 0,
+                  "cache_read_tokens": 0,
+                  "cache_creation_tokens": 0,
+                  "reasoning_tokens": 0,
+                  "total_tokens": 0,
+                  "requests": 0,
+                  "cost_usd": 0,
+                  "cost_available": true
+                },
+                {
+                  "bucket": "2026-10-05T20:00:00-03:00",
+                  "input_tokens": 0,
+                  "output_tokens": 0,
+                  "cache_read_tokens": 0,
+                  "cache_creation_tokens": 0,
+                  "reasoning_tokens": 0,
+                  "total_tokens": 0,
+                  "requests": 0,
+                  "cost_usd": 0,
+                  "cost_available": true
+                },
+                {
+                  "bucket": "2026-10-05T21:00:00-03:00",
+                  "input_tokens": 0,
+                  "output_tokens": 0,
+                  "cache_read_tokens": 0,
+                  "cache_creation_tokens": 0,
+                  "reasoning_tokens": 0,
+                  "total_tokens": 0,
+                  "requests": 0,
+                  "cost_usd": 0,
+                  "cost_available": true
+                },
+                {
+                  "bucket": "2026-10-05T22:00:00-03:00",
+                  "input_tokens": 0,
+                  "output_tokens": 0,
+                  "cache_read_tokens": 0,
+                  "cache_creation_tokens": 0,
+                  "reasoning_tokens": 0,
+                  "total_tokens": 0,
+                  "requests": 0,
+                  "cost_usd": 0,
+                  "cost_available": true
+                },
+                {
+                  "bucket": "2026-10-05T23:00:00-03:00",
+                  "input_tokens": 0,
+                  "output_tokens": 0,
+                  "cache_read_tokens": 0,
+                  "cache_creation_tokens": 0,
+                  "reasoning_tokens": 0,
+                  "total_tokens": 0,
+                  "requests": 0,
+                  "cost_usd": 0,
+                  "cost_available": true
+                },
+                {
+                  "bucket": "2026-10-06T00:00:00-03:00",
+                  "input_tokens": 0,
+                  "output_tokens": 0,
+                  "cache_read_tokens": 0,
+                  "cache_creation_tokens": 0,
+                  "reasoning_tokens": 0,
+                  "total_tokens": 0,
+                  "requests": 0,
+                  "cost_usd": 0,
+                  "cost_available": true
+                }
+              ],
+              "model_usage": {
+                "buckets": [
+                  "2026-10-05T00:00:00-03:00",
+                  "2026-10-05T01:00:00-03:00",
+                  "2026-10-05T02:00:00-03:00",
+                  "2026-10-05T03:00:00-03:00",
+                  "2026-10-05T04:00:00-03:00",
+                  "2026-10-05T05:00:00-03:00",
+                  "2026-10-05T06:00:00-03:00",
+                  "2026-10-05T07:00:00-03:00",
+                  "2026-10-05T08:00:00-03:00",
+                  "2026-10-05T09:00:00-03:00",
+                  "2026-10-05T10:00:00-03:00",
+                  "2026-10-05T11:00:00-03:00",
+                  "2026-10-05T12:00:00-03:00",
+                  "2026-10-05T13:00:00-03:00",
+                  "2026-10-05T14:00:00-03:00",
+                  "2026-10-05T15:00:00-03:00",
+                  "2026-10-05T16:00:00-03:00",
+                  "2026-10-05T17:00:00-03:00",
+                  "2026-10-05T18:00:00-03:00",
+                  "2026-10-05T19:00:00-03:00",
+                  "2026-10-05T20:00:00-03:00",
+                  "2026-10-05T21:00:00-03:00",
+                  "2026-10-05T22:00:00-03:00",
+                  "2026-10-05T23:00:00-03:00",
+                  "2026-10-06T00:00:00-03:00"
+                ],
+                "series": [
+                  {
+                    "model": "deepseek-ai/DeepSeek-V4.1-Flash",
+                    "total_tokens": [
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      81,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0
+                    ],
+                    "requests": [
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      1,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0
+                    ]
+                  }
+                ]
+              },
+              "api_key_composition": [
+                {
+                  "key": "56",
+                  "label": "sk-*********A4jtF8",
+                  "total_tokens": 81,
+                  "requests": 1,
+                  "percent": 100,
+                  "input_tokens": 41,
+                  "output_tokens": 40,
+                  "cache_read_tokens": 0,
+                  "cache_creation_tokens": 0,
+                  "reasoning_tokens": 30,
+                  "cost_usd": 3.015e-05,
+                  "cost_available": true
+                }
+              ],
+              "model_composition": [
+                {
+                  "key": "dee*********-Flash",
+                  "label": "deepseek-ai/DeepSeek-V4.1-Flash",
+                  "total_tokens": 81,
+                  "requests": 1,
+                  "percent": 100,
+                  "input_tokens": 41,
+                  "output_tokens": 40,
+                  "cache_read_tokens": 0,
+                  "cache_creation_tokens": 0,
+                  "reasoning_tokens": 30,
+                  "cost_usd": 3.015e-05,
+                  "cost_available": true
+                }
+              ],
+              "heatmap": {
+                "api_keys": [
+                  "56"
+                ],
+                "api_key_labels": {
+                  "56": "sk-*********A4jtF8"
+                },
+                "models": [
+                  "deepseek-ai/DeepSeek-V4.1-Flash"
+                ],
+                "cells": [
+                  {
+                    "model": "deepseek-ai/DeepSeek-V4.1-Flash",
+                    "input_tokens": 41,
+                    "output_tokens": 40,
+                    "cache_read_tokens": 0,
+                    "cache_creation_tokens": 0,
+                    "reasoning_tokens": 30,
+                    "total_tokens": 81,
+                    "requests": 1,
+                    "cost_usd": 3.015e-05,
+                    "cost_available": true,
+                    "intensity": 1
+                  }
+                ]
+              },
+              "cost_breakdown": {
+                "uncached_input_cost_usd": 6.1499999999999996e-06,
+                "cache_read_cost_usd": 0,
+                "cache_write_cost_usd": 0,
+                "output_cost_usd": 2.4e-05,
+                "total_cost_usd": 3.015e-05,
+                "cost_available": true
+              },
+              "model_efficiency": [
+                {
+                  "model": "deepseek-ai/DeepSeek-V4.1-Flash",
+                  "requests": 1,
+                  "input_tokens": 41,
+                  "output_tokens": 40,
+                  "cache_read_tokens": 0,
+                  "cache_creation_tokens": 0,
+                  "reasoning_tokens": 30,
+                  "total_tokens": 81,
+                  "cost_usd": 3.015e-05,
+                  "cost_available": true,
+                  "cost_per_request_usd": 3.015e-05,
+                  "output_tokens_per_request": 40,
+                  "cache_read_rate": 0
+                }
+              ]
+            }
+          },
+          {
+            "url": "https://juice.labs.khal.ai/keeper/api/v1/key-analysis/latency?range=today",
+            "fetchedAt": "2026-10-05T21:48:06.011Z",
+            "timezone": null,
+            "rangeStart": null,
+            "rangeEnd": null,
+            "contentSha256": "0d4895cb5ce503208c158ce2c88a3cf62660f04e9108038539f56b709298c3d1",
+            "data": {
+              "supported": true,
+              "points": [
+                {
+                  "ttft_ms": 850,
+                  "latency_ms": 1089
+                }
+              ],
+              "density": [],
+              "total_points": 1,
+              "sampled": false,
+              "p95_ttft_ms": 854,
+              "p95_latency_ms": 1086,
+              "max_ttft_ms": 850,
+              "max_latency_ms": 1089
+            }
+          }
+        ],
+        "contentSha256": "59da71136b238201054729afd098d0715c1360e0b0f5eeca83ad837dee923548"
+      },
+      "logoutProof": "Successful CLI return passes fetchKeeperSnapshot finally logout; cookie stays process-memory only"
+    },
+    {
+      "project": "brain",
+      "compiledCli": "mikro/dist/src/cli.js",
+      "command": "juice analyze",
+      "range": "today",
+      "exitCode": 0,
+      "stderr": "",
+      "managementCredentialUsed": false,
+      "snapshot": {
+        "version": 1,
+        "project": "brain",
+        "keyAlias": "mikro-engine-split-brain",
+        "keyEpoch": "2026-10-05",
+        "fetchedAt": "2026-10-05T21:48:07.580Z",
+        "keeperVersion": "v1.15.9",
+        "capabilities": {
+          "aggregateUsage": true,
+          "requestEvents": false,
+          "payloadExport": false,
+          "canonicalBilling": false
+        },
+        "query": {
+          "range": "today"
+        },
+        "sources": [
+          {
+            "url": "https://juice.labs.khal.ai/keeper/api/v1/key-overview?range=today",
+            "fetchedAt": "2026-10-05T21:48:07.528Z",
+            "timezone": "America/Sao_Paulo",
+            "rangeStart": null,
+            "rangeEnd": null,
+            "contentSha256": "d8abe116483dff40495e640160ccdfba689927638cfd543706bb7e024a0e5652",
+            "data": {
+              "usage": {
+                "total_requests": 1,
+                "success_count": 1,
+                "failure_count": 0,
+                "total_tokens": 73
+              },
+              "summary": {
+                "rpm": 0.0008857395925597874,
+                "tpm": 0.06465899025686449,
+                "total_cost": 2.535e-05,
+                "cost_available": true,
+                "input_tokens": 41,
+                "cache_read_tokens": 0,
+                "cache_creation_tokens": 0,
+                "reasoning_tokens": 22
+              },
+              "series": {
+                "buckets": [
+                  "2026-10-05T18:00:00-03:00"
+                ],
+                "requests": [
+                  1
+                ],
+                "tokens": [
+                  73
+                ],
+                "rpm": [
+                  0.016666666666666666
+                ],
+                "tpm": [
+                  1.2166666666666666
+                ],
+                "cost": [
+                  2.535e-05
+                ],
+                "cache_read_rate": [
+                  0
+                ]
+              },
+              "timezone": "America/Sao_Paulo"
+            }
+          },
+          {
+            "url": "https://juice.labs.khal.ai/keeper/api/v1/key-analysis?range=today",
+            "fetchedAt": "2026-10-05T21:48:07.553Z",
+            "timezone": "America/Sao_Paulo",
+            "rangeStart": "2026-10-05T00:00:00-03:00",
+            "rangeEnd": "2026-10-05T23:59:59.999999999-03:00",
+            "contentSha256": "ee1be7ab932c38d370f0beab367404aac056169628abd3bf338b8c5b77cfaf8c",
+            "data": {
+              "granularity": "hourly",
+              "timezone": "America/Sao_Paulo",
+              "range_start": "2026-10-05T00:00:00-03:00",
+              "range_end": "2026-10-05T23:59:59.999999999-03:00",
+              "token_usage": [
+                {
+                  "bucket": "2026-10-05T00:00:00-03:00",
+                  "input_tokens": 0,
+                  "output_tokens": 0,
+                  "cache_read_tokens": 0,
+                  "cache_creation_tokens": 0,
+                  "reasoning_tokens": 0,
+                  "total_tokens": 0,
+                  "requests": 0,
+                  "cost_usd": 0,
+                  "cost_available": true
+                },
+                {
+                  "bucket": "2026-10-05T01:00:00-03:00",
+                  "input_tokens": 0,
+                  "output_tokens": 0,
+                  "cache_read_tokens": 0,
+                  "cache_creation_tokens": 0,
+                  "reasoning_tokens": 0,
+                  "total_tokens": 0,
+                  "requests": 0,
+                  "cost_usd": 0,
+                  "cost_available": true
+                },
+                {
+                  "bucket": "2026-10-05T02:00:00-03:00",
+                  "input_tokens": 0,
+                  "output_tokens": 0,
+                  "cache_read_tokens": 0,
+                  "cache_creation_tokens": 0,
+                  "reasoning_tokens": 0,
+                  "total_tokens": 0,
+                  "requests": 0,
+                  "cost_usd": 0,
+                  "cost_available": true
+                },
+                {
+                  "bucket": "2026-10-05T03:00:00-03:00",
+                  "input_tokens": 0,
+                  "output_tokens": 0,
+                  "cache_read_tokens": 0,
+                  "cache_creation_tokens": 0,
+                  "reasoning_tokens": 0,
+                  "total_tokens": 0,
+                  "requests": 0,
+                  "cost_usd": 0,
+                  "cost_available": true
+                },
+                {
+                  "bucket": "2026-10-05T04:00:00-03:00",
+                  "input_tokens": 0,
+                  "output_tokens": 0,
+                  "cache_read_tokens": 0,
+                  "cache_creation_tokens": 0,
+                  "reasoning_tokens": 0,
+                  "total_tokens": 0,
+                  "requests": 0,
+                  "cost_usd": 0,
+                  "cost_available": true
+                },
+                {
+                  "bucket": "2026-10-05T05:00:00-03:00",
+                  "input_tokens": 0,
+                  "output_tokens": 0,
+                  "cache_read_tokens": 0,
+                  "cache_creation_tokens": 0,
+                  "reasoning_tokens": 0,
+                  "total_tokens": 0,
+                  "requests": 0,
+                  "cost_usd": 0,
+                  "cost_available": true
+                },
+                {
+                  "bucket": "2026-10-05T06:00:00-03:00",
+                  "input_tokens": 0,
+                  "output_tokens": 0,
+                  "cache_read_tokens": 0,
+                  "cache_creation_tokens": 0,
+                  "reasoning_tokens": 0,
+                  "total_tokens": 0,
+                  "requests": 0,
+                  "cost_usd": 0,
+                  "cost_available": true
+                },
+                {
+                  "bucket": "2026-10-05T07:00:00-03:00",
+                  "input_tokens": 0,
+                  "output_tokens": 0,
+                  "cache_read_tokens": 0,
+                  "cache_creation_tokens": 0,
+                  "reasoning_tokens": 0,
+                  "total_tokens": 0,
+                  "requests": 0,
+                  "cost_usd": 0,
+                  "cost_available": true
+                },
+                {
+                  "bucket": "2026-10-05T08:00:00-03:00",
+                  "input_tokens": 0,
+                  "output_tokens": 0,
+                  "cache_read_tokens": 0,
+                  "cache_creation_tokens": 0,
+                  "reasoning_tokens": 0,
+                  "total_tokens": 0,
+                  "requests": 0,
+                  "cost_usd": 0,
+                  "cost_available": true
+                },
+                {
+                  "bucket": "2026-10-05T09:00:00-03:00",
+                  "input_tokens": 0,
+                  "output_tokens": 0,
+                  "cache_read_tokens": 0,
+                  "cache_creation_tokens": 0,
+                  "reasoning_tokens": 0,
+                  "total_tokens": 0,
+                  "requests": 0,
+                  "cost_usd": 0,
+                  "cost_available": true
+                },
+                {
+                  "bucket": "2026-10-05T10:00:00-03:00",
+                  "input_tokens": 0,
+                  "output_tokens": 0,
+                  "cache_read_tokens": 0,
+                  "cache_creation_tokens": 0,
+                  "reasoning_tokens": 0,
+                  "total_tokens": 0,
+                  "requests": 0,
+                  "cost_usd": 0,
+                  "cost_available": true
+                },
+                {
+                  "bucket": "2026-10-05T11:00:00-03:00",
+                  "input_tokens": 0,
+                  "output_tokens": 0,
+                  "cache_read_tokens": 0,
+                  "cache_creation_tokens": 0,
+                  "reasoning_tokens": 0,
+                  "total_tokens": 0,
+                  "requests": 0,
+                  "cost_usd": 0,
+                  "cost_available": true
+                },
+                {
+                  "bucket": "2026-10-05T12:00:00-03:00",
+                  "input_tokens": 0,
+                  "output_tokens": 0,
+                  "cache_read_tokens": 0,
+                  "cache_creation_tokens": 0,
+                  "reasoning_tokens": 0,
+                  "total_tokens": 0,
+                  "requests": 0,
+                  "cost_usd": 0,
+                  "cost_available": true
+                },
+                {
+                  "bucket": "2026-10-05T13:00:00-03:00",
+                  "input_tokens": 0,
+                  "output_tokens": 0,
+                  "cache_read_tokens": 0,
+                  "cache_creation_tokens": 0,
+                  "reasoning_tokens": 0,
+                  "total_tokens": 0,
+                  "requests": 0,
+                  "cost_usd": 0,
+                  "cost_available": true
+                },
+                {
+                  "bucket": "2026-10-05T14:00:00-03:00",
+                  "input_tokens": 0,
+                  "output_tokens": 0,
+                  "cache_read_tokens": 0,
+                  "cache_creation_tokens": 0,
+                  "reasoning_tokens": 0,
+                  "total_tokens": 0,
+                  "requests": 0,
+                  "cost_usd": 0,
+                  "cost_available": true
+                },
+                {
+                  "bucket": "2026-10-05T15:00:00-03:00",
+                  "input_tokens": 0,
+                  "output_tokens": 0,
+                  "cache_read_tokens": 0,
+                  "cache_creation_tokens": 0,
+                  "reasoning_tokens": 0,
+                  "total_tokens": 0,
+                  "requests": 0,
+                  "cost_usd": 0,
+                  "cost_available": true
+                },
+                {
+                  "bucket": "2026-10-05T16:00:00-03:00",
+                  "input_tokens": 0,
+                  "output_tokens": 0,
+                  "cache_read_tokens": 0,
+                  "cache_creation_tokens": 0,
+                  "reasoning_tokens": 0,
+                  "total_tokens": 0,
+                  "requests": 0,
+                  "cost_usd": 0,
+                  "cost_available": true
+                },
+                {
+                  "bucket": "2026-10-05T17:00:00-03:00",
+                  "input_tokens": 0,
+                  "output_tokens": 0,
+                  "cache_read_tokens": 0,
+                  "cache_creation_tokens": 0,
+                  "reasoning_tokens": 0,
+                  "total_tokens": 0,
+                  "requests": 0,
+                  "cost_usd": 0,
+                  "cost_available": true
+                },
+                {
+                  "bucket": "2026-10-05T18:00:00-03:00",
+                  "input_tokens": 41,
+                  "output_tokens": 32,
+                  "cache_read_tokens": 0,
+                  "cache_creation_tokens": 0,
+                  "reasoning_tokens": 22,
+                  "total_tokens": 73,
+                  "requests": 1,
+                  "cost_usd": 2.535e-05,
+                  "cost_available": true
+                },
+                {
+                  "bucket": "2026-10-05T19:00:00-03:00",
+                  "input_tokens": 0,
+                  "output_tokens": 0,
+                  "cache_read_tokens": 0,
+                  "cache_creation_tokens": 0,
+                  "reasoning_tokens": 0,
+                  "total_tokens": 0,
+                  "requests": 0,
+                  "cost_usd": 0,
+                  "cost_available": true
+                },
+                {
+                  "bucket": "2026-10-05T20:00:00-03:00",
+                  "input_tokens": 0,
+                  "output_tokens": 0,
+                  "cache_read_tokens": 0,
+                  "cache_creation_tokens": 0,
+                  "reasoning_tokens": 0,
+                  "total_tokens": 0,
+                  "requests": 0,
+                  "cost_usd": 0,
+                  "cost_available": true
+                },
+                {
+                  "bucket": "2026-10-05T21:00:00-03:00",
+                  "input_tokens": 0,
+                  "output_tokens": 0,
+                  "cache_read_tokens": 0,
+                  "cache_creation_tokens": 0,
+                  "reasoning_tokens": 0,
+                  "total_tokens": 0,
+                  "requests": 0,
+                  "cost_usd": 0,
+                  "cost_available": true
+                },
+                {
+                  "bucket": "2026-10-05T22:00:00-03:00",
+                  "input_tokens": 0,
+                  "output_tokens": 0,
+                  "cache_read_tokens": 0,
+                  "cache_creation_tokens": 0,
+                  "reasoning_tokens": 0,
+                  "total_tokens": 0,
+                  "requests": 0,
+                  "cost_usd": 0,
+                  "cost_available": true
+                },
+                {
+                  "bucket": "2026-10-05T23:00:00-03:00",
+                  "input_tokens": 0,
+                  "output_tokens": 0,
+                  "cache_read_tokens": 0,
+                  "cache_creation_tokens": 0,
+                  "reasoning_tokens": 0,
+                  "total_tokens": 0,
+                  "requests": 0,
+                  "cost_usd": 0,
+                  "cost_available": true
+                },
+                {
+                  "bucket": "2026-10-06T00:00:00-03:00",
+                  "input_tokens": 0,
+                  "output_tokens": 0,
+                  "cache_read_tokens": 0,
+                  "cache_creation_tokens": 0,
+                  "reasoning_tokens": 0,
+                  "total_tokens": 0,
+                  "requests": 0,
+                  "cost_usd": 0,
+                  "cost_available": true
+                }
+              ],
+              "model_usage": {
+                "buckets": [
+                  "2026-10-05T00:00:00-03:00",
+                  "2026-10-05T01:00:00-03:00",
+                  "2026-10-05T02:00:00-03:00",
+                  "2026-10-05T03:00:00-03:00",
+                  "2026-10-05T04:00:00-03:00",
+                  "2026-10-05T05:00:00-03:00",
+                  "2026-10-05T06:00:00-03:00",
+                  "2026-10-05T07:00:00-03:00",
+                  "2026-10-05T08:00:00-03:00",
+                  "2026-10-05T09:00:00-03:00",
+                  "2026-10-05T10:00:00-03:00",
+                  "2026-10-05T11:00:00-03:00",
+                  "2026-10-05T12:00:00-03:00",
+                  "2026-10-05T13:00:00-03:00",
+                  "2026-10-05T14:00:00-03:00",
+                  "2026-10-05T15:00:00-03:00",
+                  "2026-10-05T16:00:00-03:00",
+                  "2026-10-05T17:00:00-03:00",
+                  "2026-10-05T18:00:00-03:00",
+                  "2026-10-05T19:00:00-03:00",
+                  "2026-10-05T20:00:00-03:00",
+                  "2026-10-05T21:00:00-03:00",
+                  "2026-10-05T22:00:00-03:00",
+                  "2026-10-05T23:00:00-03:00",
+                  "2026-10-06T00:00:00-03:00"
+                ],
+                "series": [
+                  {
+                    "model": "deepseek-ai/DeepSeek-V4.1-Flash",
+                    "total_tokens": [
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      73,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0
+                    ],
+                    "requests": [
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      1,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0
+                    ]
+                  }
+                ]
+              },
+              "api_key_composition": [
+                {
+                  "key": "57",
+                  "label": "sk-*********k52Osg",
+                  "total_tokens": 73,
+                  "requests": 1,
+                  "percent": 100,
+                  "input_tokens": 41,
+                  "output_tokens": 32,
+                  "cache_read_tokens": 0,
+                  "cache_creation_tokens": 0,
+                  "reasoning_tokens": 22,
+                  "cost_usd": 2.535e-05,
+                  "cost_available": true
+                }
+              ],
+              "model_composition": [
+                {
+                  "key": "dee*********-Flash",
+                  "label": "deepseek-ai/DeepSeek-V4.1-Flash",
+                  "total_tokens": 73,
+                  "requests": 1,
+                  "percent": 100,
+                  "input_tokens": 41,
+                  "output_tokens": 32,
+                  "cache_read_tokens": 0,
+                  "cache_creation_tokens": 0,
+                  "reasoning_tokens": 22,
+                  "cost_usd": 2.535e-05,
+                  "cost_available": true
+                }
+              ],
+              "heatmap": {
+                "api_keys": [
+                  "57"
+                ],
+                "api_key_labels": {
+                  "57": "sk-*********k52Osg"
+                },
+                "models": [
+                  "deepseek-ai/DeepSeek-V4.1-Flash"
+                ],
+                "cells": [
+                  {
+                    "model": "deepseek-ai/DeepSeek-V4.1-Flash",
+                    "input_tokens": 41,
+                    "output_tokens": 32,
+                    "cache_read_tokens": 0,
+                    "cache_creation_tokens": 0,
+                    "reasoning_tokens": 22,
+                    "total_tokens": 73,
+                    "requests": 1,
+                    "cost_usd": 2.535e-05,
+                    "cost_available": true,
+                    "intensity": 1
+                  }
+                ]
+              },
+              "cost_breakdown": {
+                "uncached_input_cost_usd": 6.1499999999999996e-06,
+                "cache_read_cost_usd": 0,
+                "cache_write_cost_usd": 0,
+                "output_cost_usd": 1.92e-05,
+                "total_cost_usd": 2.535e-05,
+                "cost_available": true
+              },
+              "model_efficiency": [
+                {
+                  "model": "deepseek-ai/DeepSeek-V4.1-Flash",
+                  "requests": 1,
+                  "input_tokens": 41,
+                  "output_tokens": 32,
+                  "cache_read_tokens": 0,
+                  "cache_creation_tokens": 0,
+                  "reasoning_tokens": 22,
+                  "total_tokens": 73,
+                  "cost_usd": 2.535e-05,
+                  "cost_available": true,
+                  "cost_per_request_usd": 2.535e-05,
+                  "output_tokens_per_request": 32,
+                  "cache_read_rate": 0
+                }
+              ]
+            }
+          },
+          {
+            "url": "https://juice.labs.khal.ai/keeper/api/v1/key-analysis/latency?range=today",
+            "fetchedAt": "2026-10-05T21:48:07.580Z",
+            "timezone": null,
+            "rangeStart": null,
+            "rangeEnd": null,
+            "contentSha256": "55711b4f2d281c947de45c57962631bd1940ae5640579120fa01282b2c5d4f61",
+            "data": {
+              "supported": true,
+              "points": [
+                {
+                  "ttft_ms": 635,
+                  "latency_ms": 835
+                }
+              ],
+              "density": [],
+              "total_points": 1,
+              "sampled": false,
+              "p95_ttft_ms": 633,
+              "p95_latency_ms": 837,
+              "max_ttft_ms": 635,
+              "max_latency_ms": 835
+            }
+          }
+        ],
+        "contentSha256": "ac6fe0ca2b8b03434806cf20eae1234feebddc44f013dff9141c9d1d7b65ec6e"
+      },
+      "logoutProof": "Successful CLI return passes fetchKeeperSnapshot finally logout; cookie stays process-memory only"
+    }
+  ],
+  "manualJev": {
+    "endpoint": "https://api.typesafe.ai/v1/systemone",
+    "requestedModel": "jev-1.13.0",
+    "compiledCli": "mikro/dist/src/cli.js",
+    "invocations": 1,
+    "retry": false,
+    "redirectsAllowed": false,
+    "source": "Public mikro/README.md:3 only",
+    "inputSha256": "300833bc241f16ac40ef83d6d06937f8ce284e755e2bb8e88d4df220530a7767",
+    "inputUnchanged": true,
+    "exitCode": 0,
+    "stderr": "",
+    "localServiceClaim": false,
+    "keeperBodiesSent": false,
+    "result": {
+      "version": 1,
+      "endpoint": "https://api.typesafe.ai/v1/systemone",
+      "requestedModel": "jev-1.13.0",
+      "credentialReference": {
+        "keyEnv": "TYPESAFE_API_KEY"
+      },
+      "fetchedAt": "2026-10-05T21:29:56.835Z",
+      "model": "jev-1.13.0",
+      "answers": {
+        "selection": {
+          "type": "choice",
+          "choice": "rlm-definition",
+          "probabilities": {
+            "rlm-definition": 0.84,
+            "abstain": 0.16
+          },
+          "confidence": 0.69
+        }
+      },
+      "sourceSnapshot": {
+        "sourceFile": "/home/genie/.local/share/mikro-engine-split/smokes/jev-public-input.json",
+        "contentSha256": "300833bc241f16ac40ef83d6d06937f8ce284e755e2bb8e88d4df220530a7767",
+        "state": {
+          "text": "RLM algorithm CLI for coding agents \u2014 prompt externalization, Python REPL with symbolic recursion, code-driven navigation."
+        }
+      },
+      "usage": {
+        "input_tokens": 393,
+        "output_tokens": 37
+      },
+      "selection": {
+        "kind": "selected",
+        "candidate": {
+          "id": "rlm-definition",
+          "text": "RLM algorithm CLI for coding agents \u2014 prompt externalization, Python REPL with symbolic recursion, code-driven navigation.",
+          "source": "mikro/README.md:3"
+        }
+      },
+      "candidates": [
+        {
+          "id": "rlm-definition",
+          "text": "RLM algorithm CLI for coding agents \u2014 prompt externalization, Python REPL with symbolic recursion, code-driven navigation.",
+          "source": "mikro/README.md:3"
+        }
+      ]
+    }
+  },
+  "publicPythonRecovery": {
+    "publicEntrypoint": "mikro/dist/src/index.js",
+    "timeout": {
+      "typed": true,
+      "namespaceLost": true,
+      "originalContextRestored": true,
+      "originalToolsRestored": true,
+      "sideEffects": 1,
+      "nextTurnSucceeded": true,
+      "doubleStopClean": true
+    },
+    "finalSignals": {
+      "bareIdentifier": {
+        "type": "final_var",
+        "value": "answer"
+      },
+      "quotedLiteral": {
+        "type": "final",
+        "value": "answer"
+      }
+    },
+    "explicitStopDuringRealChildExit": {
+      "observer": "Actual ChildProcess exit event; public stop called before retirement-await continuation; no replaced implementation",
+      "startupCount": 1,
+      "blockCount": 1,
+      "runningAfterStop": false,
+      "error": {
+        "name": "Error",
+        "message": "REPL lifecycle cancelled by stop() or a newer start()"
+      }
+    },
+    "externalInferenceCalls": 0,
+    "exitCode": 0
+  },
+  "genericMcpFlashNoModelOverride": {
+    "tool": "mikro_query",
+    "argumentsIncludedModel": false,
+    "argumentsIncludedEngine": false,
+    "result": {
+      "content": [
+        {
+          "type": "text",
+          "text": "GENERIC_FLASH_READY\n\n---\nmikro \u00b7 query \u00b7 deepseek/deepseek-flash \u00b7 1 iteration \u00b7 2,266 in / 29 out \u00b7 $0.0007 \u00b7 1.6s \u00b7 session sess_74715336e3e0feab"
+        }
+      ],
+      "structuredContent": {
+        "answer": "GENERIC_FLASH_READY\n\n---\nmikro \u00b7 query \u00b7 deepseek/deepseek-flash \u00b7 1 iteration \u00b7 2,266 in / 29 out \u00b7 $0.0007 \u00b7 1.6s \u00b7 session sess_74715336e3e0feab",
+        "session_id": "sess_74715336e3e0feab"
+      },
+      "isError": false
+    },
+    "stderr": "mikro mcp: 4 microagents discovered (issue-triage, mikro-coach, review-prep, wish-context)\n",
+    "exitCode": 0,
+    "resolvedRepositoryModel": {
+      "provider": "deepseek",
+      "id": "deepseek-flash",
+      "name": "deepseek-flash",
+      "api": "openai-completions",
+      "cost": {
+        "input": 0.3,
+        "output": 1.2,
+        "cacheRead": 0,
+        "cacheWrite": 0
+      }
+    },
+    "productionFilesUnchanged": true
+  },
+  "compiledGenieCaller": {
+    "originalRepositoryCalls": [
+      {
+        "engine": "rlm",
+        "surface": "bun dist/genie.js mikro call wish-context",
+        "exitCode": 0,
+        "outerRetries": 0,
+        "facts": false,
+        "boundary": "none",
+        "phoenix": false,
+        "ledger": false,
+        "nodeBinary": "/home/genie/.hermes/node/bin/node",
+        "runtimeCli": "mikro/dist/src/cli.js",
+        "stderr": "",
+        "result": {
+          "ok": true,
+          "agent": "wish-context",
+          "runId": "bb2f9b6e-1ef0-43c7-94b6-5798a0f88bb5",
+          "traceId": "bb2f9b6e-1ef0-43c7-94b6-5798a0f88bb5",
+          "dir": "/home/genie/orca/workspaces/genie/mikro-engine-split",
+          "answer": {
+            "intent": "Clarify the existing documentation sentence in mikro/README.md:3 that identifies Mikro as an RLM algorithm CLI. This is a documentation-only wording objective, not implementation. Scope only that existing sentence; cite it and do not inspect unrelated files, home directories, GitHub, external services, or use recursive subagents. Do not edit anything. Return the exact wish-context JSON schema in one fenced json block.",
+            "facts": [
+              {
+                "claim": "mikro/README.md line 3 is the exact sentence identifying Mikro as an RLM algorithm CLI: 'RLM algorithm CLI for coding agents \u2014 prompt externalization, Python REPL with symbolic recursion, code-driven navigation.'",
+                "evidence": "mikro/README.md:3"
+              },
+              {
+                "claim": "'# mikro' is the title on mikro/README.md line 1, so the target sentence is the file's opening one-line description directly under the title",
+                "evidence": "mikro/README.md:1"
+              },
+              {
+                "claim": "mikro/README.md line 5 separately cites the RLM paper, so line 3 is a standalone one-line CLI descriptor and line 5 is distinct context this change must not disturb",
+                "evidence": "mikro/README.md:5"
+              },
+              {
+                "claim": "mikro/README.md is a tracked file of 1096 lines, so the target sentence sits in the header description rather than an install or usage section",
+                "evidence": "mikro/README.md:3"
+              }
+            ],
+            "related": [],
+            "plan": {
+              "approach": "A wording-only edit: revise the single sentence on mikro/README.md line 3 so Mikro's role as an RLM algorithm CLI is stated more clearly, leaving lines 1-2 and 4 onward untouched and making no code, config, or installer changes.",
+              "files": [
+                {
+                  "path": "mikro/README.md",
+                  "reason": "holds the line-3 sentence identifying Mikro as an RLM algorithm CLI (verified)"
+                }
+              ],
+              "validationCommand": "git --no-pager diff -- mikro/README.md",
+              "focusedTest": "mikro/README.md"
+            },
+            "estimate": {
+              "files": 1,
+              "insertions": 1
+            },
+            "gotchas": [],
+            "open_questions": [
+              "What is the exact replacement wording for the line-3 sentence?",
+              "Should the phrase 'RLM algorithm CLI' be retained as-is or replaced with a different description of the tool?",
+              "Should the clarified sentence stay a single line (as today) or be allowed to span more than one line?"
+            ],
+            "injection_attempts": []
+          },
+          "elapsedMs": 29660,
+          "costUsd": 0.01,
+          "tags": {
+            "engine": "rlm"
+          },
+          "boundary": "none",
+          "egress": null,
+          "agentSource": "flag",
+          "attempts": [
+            {
+              "attempt": 0,
+              "ok": true,
+              "errors": [],
+              "footer": {
+                "label": "agent=wish-context",
+                "model": "deepseek/deepseek-flash",
+                "iterations": 5,
+                "tokensIn": 14502,
+                "tokensOut": 6876,
+                "cost": 0.01,
+                "seconds": 28,
+                "budgetHit": null,
+                "validationFailed": false,
+                "sessionId": "sess_0ccff6ddc8d0fdd9"
+              },
+              "citations": [
+                {
+                  "path": "mikro/README.md",
+                  "line": 3,
+                  "ok": true
+                },
+                {
+                  "path": "mikro/README.md",
+                  "line": 1,
+                  "ok": true
+                },
+                {
+                  "path": "mikro/README.md",
+                  "line": 5,
+                  "ok": true
+                },
+                {
+                  "path": "mikro/README.md",
+                  "line": null,
+                  "ok": true
+                }
+              ],
+              "elapsedMs": 29655,
+              "rawChars": 2533
+            }
+          ]
+        }
+      },
+      {
+        "engine": "pi",
+        "surface": "bun dist/genie.js mikro call wish-context",
+        "exitCode": 1,
+        "outerRetries": 0,
+        "facts": false,
+        "boundary": "none",
+        "phoenix": false,
+        "ledger": false,
+        "nodeBinary": "/home/genie/.hermes/node/bin/node",
+        "runtimeCli": "mikro/dist/src/cli.js",
+        "stderr": "",
+        "result": {
+          "ok": false,
+          "agent": "wish-context",
+          "runId": "e03a4e8c-13af-4e55-8c82-b4558a9fae43",
+          "traceId": "e03a4e8c-13af-4e55-8c82-b4558a9fae43",
+          "dir": "/home/genie/orca/workspaces/genie/mikro-engine-split",
+          "elapsedMs": 1607,
+          "costUsd": 0,
+          "tags": {
+            "engine": "pi"
+          },
+          "boundary": "none",
+          "egress": null,
+          "agentSource": "flag",
+          "attempts": [
+            {
+              "attempt": 0,
+              "ok": false,
+              "errors": [
+                "tool error: mikro mikro_wish-context failed: pi engine cannot execute TOOLS.md functions; remove them or select engine: rlm",
+                "no cost footer in the answer",
+                "no JSON object in the answer"
+              ],
+              "footer": null,
+              "citations": [],
+              "elapsedMs": 1603,
+              "rawChars": 111
+            }
+          ]
+        }
+      }
+    ],
+    "compatiblePiInitialNoFinal": {
+      "engine": "pi",
+      "surface": "bun dist/genie.js mikro call wish-context",
+      "exitCode": 1,
+      "outerRetries": 0,
+      "facts": false,
+      "boundary": "none",
+      "phoenix": false,
+      "ledger": false,
+      "nodeBinary": "/home/genie/.hermes/node/bin/node",
+      "nodeVersion": "v26.7.0",
+      "runtimeCli": "mikro/dist/src/cli.js",
+      "disposablePublicRepo": true,
+      "legacyToolsPresent": false,
+      "repoBytesUnchanged": true,
+      "stderr": "",
+      "result": {
+        "ok": false,
+        "agent": "wish-context",
+        "runId": "2c0e8d41-f8f9-4696-8782-4b0cff4ebb12",
+        "traceId": "2c0e8d41-f8f9-4696-8782-4b0cff4ebb12",
+        "dir": "/var/tmp/mikro-pi-caller-repo-ijql1qj7",
+        "elapsedMs": 17739,
+        "costUsd": 0.0083,
+        "tags": {
+          "engine": "pi"
+        },
+        "boundary": "none",
+        "egress": null,
+        "agentSource": "flag",
+        "attempts": [
+          {
+            "attempt": 0,
+            "ok": false,
+            "errors": [
+              "tool error: mikro agent=wish-context failed: Pi run has no accepted emit_done final; assistant prose is not a final result\n\n---\nmikro \u00b7 agent=wish-context \u00b7 deepseek/deepseek-flash \u00b7 6 iterations \u00b7 17,572 in / 2,491 out \u00b7 $0.0083 \u00b7 16.2s \u00b7 session sess_e00378a11fcf1af7",
+              "no JSON object in the answer"
+            ],
+            "footer": {
+              "label": "agent=wish-context",
+              "model": "deepseek/deepseek-flash",
+              "iterations": 6,
+              "tokensIn": 17572,
+              "tokensOut": 2491,
+              "cost": 0.0083,
+              "seconds": 16.2,
+              "budgetHit": null,
+              "validationFailed": false,
+              "sessionId": "sess_e00378a11fcf1af7"
+            },
+            "citations": [],
+            "elapsedMs": 17732,
+            "rawChars": 257
+          }
+        ]
+      }
+    },
+    "compatiblePiExplicitNativeChannel": {
+      "engine": "pi",
+      "surface": "bun dist/genie.js mikro call wish-context",
+      "exitCode": 0,
+      "unscoredSmoke": true,
+      "promptChange": "Explicitly identifies native tools and required emit_done answer-string channel; previous model no-final outcome retained separately, not repeated or rescored",
+      "outerRetries": 0,
+      "facts": false,
+      "boundary": "none",
+      "phoenix": false,
+      "ledger": false,
+      "nodeBinary": "/home/genie/.hermes/node/bin/node",
+      "nodeVersion": "v26.7.0",
+      "runtimeCli": "mikro/dist/src/cli.js",
+      "legacyToolsPresent": false,
+      "repoBytesUnchanged": true,
+      "stderr": "",
+      "result": {
+        "ok": true,
+        "agent": "wish-context",
+        "runId": "4aa0f0ac-141a-463f-9856-b35d6f032473",
+        "traceId": "4aa0f0ac-141a-463f-9856-b35d6f032473",
+        "dir": "/var/tmp/mikro-pi-caller-explicit-i2nm8_76",
+        "answer": {
+          "intent": "Clarify the existing documentation sentence in README.md:3 that identifies Mikro as an RLM algorithm CLI. This is a documentation-only wording objective, not implementation. Scope only that existing sentence; cite it and do not inspect unrelated files, home directories, GitHub, external services, or use recursive subagents. Do not edit anything.",
+          "facts": [
+            {
+              "claim": "README.md:3 is the target sentence, reading 'RLM algorithm CLI for coding agents \u2014 prompt externalization, Python REPL with symbolic recursion, code-driven navigation.'",
+              "evidence": "README.md:3"
+            },
+            {
+              "claim": "README.md:5 expands the same claim: Mikro is based on the RLM paper (REPL-based LLM Method), so 'RLM' is defined by the repo as 'REPL-LM'.",
+              "evidence": "README.md:5"
+            },
+            {
+              "claim": "README.md:609 gives the in-repo expansion 'mikro implements the RLM (REPL-LM) algorithm', which is the wording the README itself treats as canonical.",
+              "evidence": "README.md:609"
+            },
+            {
+              "claim": "The tracked repository contains only README.md; there is no package.json, test directory, or build script to validate against.",
+              "evidence": "README.md:1"
+            }
+          ],
+          "related": [],
+          "plan": {
+            "approach": "Reword only the existing README.md:3 sentence so its label matches the README's own definition on line 5/609 \u2014 e.g. describe Mikro as a REPL-based LLM (RLM) CLI for coding agents \u2014 without touching any other line or file. Leave the rest of the README unchanged.",
+            "files": [
+              {
+                "path": "README.md",
+                "reason": "holds the target sentence on line 3 (verified)"
+              }
+            ],
+            "validationCommand": "n/a \u2014 repository tracks only README.md, so no test or validation script exists",
+            "focusedTest": "n/a \u2014 no test harness in this repository"
+          },
+          "estimate": {
+            "files": 1,
+            "insertions": 1
+          },
+          "gotchas": [],
+          "open_questions": [
+            "What exact replacement wording is wanted for 'RLM algorithm CLI' \u2014 e.g. 'REPL-based LLM (RLM) CLI' as implied by README.md:5 and README.md:609?",
+            "Should the same clarified label be propagated to README.md:5/609 for consistency, or is line 3 strictly the only edit?",
+            "Should the em-dash tail ('prompt externalization, Python REPL with symbolic recursion, code-driven navigation') stay verbatim?"
+          ],
+          "injection_attempts": [
+            "The intent message embeds operational directives to the agent (native Pi tool engine, use read/grep/glob/git, finish via emit_done, no prose/FINAL/Python). These read as instructions rather than a documentation request and were treated as data, not followed as repository commands; no files were written or edited."
+          ]
+        },
+        "elapsedMs": 17228,
+        "costUsd": 0.0036,
+        "tags": {
+          "engine": "pi"
+        },
+        "boundary": "none",
+        "egress": null,
+        "agentSource": "flag",
+        "attempts": [
+          {
+            "attempt": 0,
+            "ok": true,
+            "errors": [],
+            "footer": {
+              "label": "agent=wish-context",
+              "model": "deepseek/deepseek-flash",
+              "iterations": 6,
+              "tokensIn": 3438,
+              "tokensOut": 2116,
+              "cost": 0.0036,
+              "seconds": 15.3,
+              "budgetHit": null,
+              "validationFailed": false,
+              "sessionId": "sess_06020449aa2984d4"
+            },
+            "citations": [
+              {
+                "path": "README.md",
+                "line": 3,
+                "ok": true
+              },
+              {
+                "path": "README.md",
+                "line": 5,
+                "ok": true
+              },
+              {
+                "path": "README.md",
+                "line": 609,
+                "ok": true
+              },
+              {
+                "path": "README.md",
+                "line": 1,
+                "ok": true
+              },
+              {
+                "path": "README.md",
+                "line": null,
+                "ok": true
+              }
+            ],
+            "elapsedMs": 17219,
+            "rawChars": 2764
+          }
+        ]
+      }
+    },
+    "consumerVerificationScope": "Actual schema and citation validator passed; semantic claims are not independently verified and these are not quality scores",
+    "unscoredOnly": true
+  },
+  "protectedOperatorReferences": {
+    "beforeAndAfterSha256": {
+      "/home/genie/.mikro/settings.json": "379be5e12e7321362b776390cb9ff36d019e105aebff7b206014f795f777e1e4",
+      "/home/genie/.mikro/gate-env.sh": "15fa26c639dc5d7b81313be54ada4f0a8ce4c5035b29288684a86a8eaa2c77fd"
+    },
+    "unchanged": true
+  },
+  "currentDocs": {
+    "mikro/README.md": "2d7d64b93a9de12e2c70d6997afcfdf53635f77f3b5ce038141c62fe4010b317",
+    "mikro/docs/sdk-overview.md": "7c968bb82f75843b2434197da29e1a20d67f27a316f90239cd248e0e097d0f9c",
+    "mikro/docs/juice.md": "2e351e5d20b6742c7de85a9c5abbad184468f1a2bf0a76808f7ee1b7c4be6ccf",
+    "mikro/CHANGELOG.md": "21a0b9213b728be278f9340d0142c318e2072550813d1deb71c23b3df81ad452"
+  },
+  "scoredOutcomes": 0,
+  "nativeWorkflowOutcomes": 0,
+  "productionInstallMutation": false,
+  "completionClaim": false
+}

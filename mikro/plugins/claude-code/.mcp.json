@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "mikro": {
+      "command": "mikro",
+      "args": ["mcp", "--dir", "${CLAUDE_PROJECT_DIR}"]
+    }
+  }
+}

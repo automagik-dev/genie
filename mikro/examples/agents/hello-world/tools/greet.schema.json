@@ -1,0 +1,12 @@
+{
+  "description": "Greet a person by name.",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "name": {
+        "type": "string",
+        "description": "Name to greet."
+      }
+    }
+  }
+}

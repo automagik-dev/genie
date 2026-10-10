@@ -1,0 +1,150 @@
+# mikro.yaml — Self-referential config for dogfooding
+# Use: mikro "How does the RLM loop work?" --context ./src/ ./python/
+
+model:
+  provider: google
+  model: gemini-3.1-flash-lite-preview
+  sub-call-model: gemini-3.1-flash-lite-preview
+
+system: |
+  You are navigating the mikro codebase — an npm CLI that implements
+  the RLM algorithm (REPL-LM). The codebase is TypeScript (src/) with
+  a Python REPL subprocess (python/).
+
+  Key architecture:
+  - src/cli.ts: CLI entry point, arg parsing
+  - src/rlm.ts: core RLM iteration loop
+  - src/repl.ts: Python subprocess manager
+  - src/llm.ts: pi/ai LLM client wrapper
+  - src/config.ts: YAML config loader
+  - src/budget.ts: cost/token/depth tracking
+  - python/repl_server.py: Python REPL server
+  - python/batteries.py: convenience functions
+
+  When asked to show file contents, return the EXACT content.
+  When asked to find references, be EXHAUSTIVE — find ALL matches.
+  Always include file paths and line numbers in answers.
+  {custom_tools_section}
+
+tools:
+  show_file: |
+    def show_file(path):
+        """Return exact contents of a file from the context."""
+        items = context if isinstance(context, list) else []
+        if isinstance(context, str):
+            return context  # single-file context, return as-is
+        if not isinstance(context, list):
+            return f"Error: context is {type(context).__name__}, expected list or str"
+        # Exact match
+        for item in items:
+            p = item.get('path', '') if isinstance(item, dict) else ''
+            if p == path or p.endswith('/' + path) or p.endswith(path):
+                return item.get('content', '')
+        # Partial match (filename only)
+        import os
+        matches = [item for item in items if isinstance(item, dict) and os.path.basename(item.get('path', '')) == os.path.basename(path)]
+        if len(matches) == 1:
+            return matches[0].get('content', '')
+        if len(matches) > 1:
+            return f"Ambiguous: {len(matches)} files match '{path}': {[m['path'] for m in matches]}"
+        available = sorted([item['path'] for item in items if isinstance(item, dict)])[:30]
+        return f"File '{path}' not found. Available ({len(items)} files): {available}"
+
+  find_definition: |
+    def find_definition(name):
+        """Find function/class/const definition across all files. Supports TS, JS, Python."""
+        import re
+        results = []
+        items = context if isinstance(context, list) else [{"path": "stdin", "content": str(context)}]
+        # Patterns for TS/JS/Python definitions
+        patterns = [
+            rf'(?:export\s+)?(?:async\s+)?function\s+{re.escape(name)}\b',
+            rf'(?:export\s+)?(?:const|let|var)\s+{re.escape(name)}\b\s*=',
+            rf'(?:export\s+)?class\s+{re.escape(name)}\b',
+            rf'(?:export\s+)?interface\s+{re.escape(name)}\b',
+            rf'(?:export\s+)?type\s+{re.escape(name)}\b\s*=',
+            rf'^def\s+{re.escape(name)}\s*\(',
+            rf'^class\s+{re.escape(name)}\s*[\(:]',
+        ]
+        combined = '|'.join(f'({p})' for p in patterns)
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            content = item.get('content', '')
+            lines = content.split('\n')
+            for i, line in enumerate(lines, 1):
+                if re.search(combined, line):
+                    results.append(f"{item['path']}:{i}: {line.strip()}")
+        return '\n'.join(results) if results else f"Definition of '{name}' not found"
+
+  find_references: |
+    def find_references(name):
+        """Find all references to a name across all files. Uses word boundary matching."""
+        import re
+        results = []
+        items = context if isinstance(context, list) else [{"path": "stdin", "content": str(context)}]
+        pattern = re.compile(rf'\b{re.escape(name)}\b')
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            content = item.get('content', '')
+            lines = content.split('\n')
+            for i, line in enumerate(lines, 1):
+                if pattern.search(line):
+                    results.append(f"{item['path']}:{i}: {line.strip()}")
+        return '\n'.join(results) if results else f"No references to '{name}' found"
+
+  list_files: |
+    def list_files(directory="", ext=""):
+        """List files in context, optionally filtered by directory and extension."""
+        items = context if isinstance(context, list) else []
+        if isinstance(context, str):
+            return "(single-file context, no file listing available)"
+        paths = [item.get('path', '') for item in items if isinstance(item, dict)]
+        if directory:
+            paths = [p for p in paths if p.startswith(directory) or ('/' + directory) in p]
+        if ext:
+            paths = [p for p in paths if p.endswith(ext)]
+        return '\n'.join(sorted(paths)) if paths else f"No files found (directory='{directory}', ext='{ext}')"
+
+  file_summary: |
+    def file_summary(path):
+        """Get a structural summary of a file: exports, functions, classes.
+        Note: llm_query() is injected into the REPL namespace by mikro core at startup.
+        It is always available alongside context, FINAL, SHOW_VARS, etc."""
+        content = show_file(path)
+        if 'not found' in content.lower() or 'error' in content.lower():
+            return content
+        summary = llm_query(f"List every export, function, class, interface, and type in this file. Format as a bullet list with line numbers.\n\n{content}")
+        return summary
+
+criteria: |
+  IMPORTANT: Always use print() to see the output of tool calls in the REPL.
+  Example: print(show_file("config.ts")) — NOT just show_file("config.ts").
+  The REPL captures stdout only, not return values.
+  When showing file contents: return EXACT text, no summarization.
+  When finding references: return ALL matches with file:line format.
+  When explaining code: cite specific file paths and line numbers.
+  Include confidence level if answer is uncertain.
+
+context:
+  extensions:
+    - .ts
+    - .py
+    - .json
+    - .md
+    - .yaml
+  exclude:
+    - node_modules
+    - dist
+    - .git
+    - __pycache__
+    - .tgz
+
+budget:
+  max-cost: 0.50
+  max-tokens: 30000
+  max-depth: 2
+  timeout: 120000
+
+tools-level: standard

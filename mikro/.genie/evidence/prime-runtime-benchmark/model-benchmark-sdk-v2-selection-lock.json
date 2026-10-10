@@ -1,0 +1,46 @@
+{
+  "version": "model-benchmark-sdk-v2-selection-lock-v1",
+  "observedAt": "2026-09-02T19:20:37.073Z",
+  "populationPerModel": 60,
+  "selectionRule": "maximize semantic passes; ties by reliability, field accuracy, latency, then cost",
+  "selectedModel": "deepseek/deepseek-v4-pro-0813",
+  "proof": "selected model has 51 semantic passes; every other arm maximum possible is below 51",
+  "arms": {
+    "z-ai/glm-5.3": {
+      "artifact": ".genie/evidence/prime-runtime-benchmark/model-benchmark-sdk-v2-full-glm-5.3.json",
+      "manifestSha256": "e93efeb31813384eef98e8346de0d43ff5e1a9d835ba9bc7285219744a9b0cca",
+      "observed": 60,
+      "semanticPasses": 23,
+      "remaining": 0,
+      "maximumPossiblePasses": 23,
+      "complete": true
+    },
+    "z-ai/glm-5.3-flash": {
+      "artifact": ".genie/evidence/prime-runtime-benchmark/model-benchmark-sdk-v2-full-glm-5.3-flash.json",
+      "manifestSha256": "e93efeb31813384eef98e8346de0d43ff5e1a9d835ba9bc7285219744a9b0cca",
+      "observed": 29,
+      "semanticPasses": 14,
+      "remaining": 31,
+      "maximumPossiblePasses": 45,
+      "complete": false
+    },
+    "deepseek/deepseek-v4-flash-0731": {
+      "artifact": ".genie/evidence/prime-runtime-benchmark/model-benchmark-sdk-v2-full-deepseek-v4-flash.json",
+      "manifestSha256": "e93efeb31813384eef98e8346de0d43ff5e1a9d835ba9bc7285219744a9b0cca",
+      "observed": 60,
+      "semanticPasses": 46,
+      "remaining": 0,
+      "maximumPossiblePasses": 46,
+      "complete": true
+    },
+    "deepseek/deepseek-v4-pro-0813": {
+      "artifact": ".genie/evidence/prime-runtime-benchmark/model-benchmark-sdk-v2-full-deepseek-v4-pro.json",
+      "manifestSha256": "e93efeb31813384eef98e8346de0d43ff5e1a9d835ba9bc7285219744a9b0cca",
+      "observed": 60,
+      "semanticPasses": 51,
+      "remaining": 0,
+      "maximumPossiblePasses": 51,
+      "complete": true
+    }
+  }
+}

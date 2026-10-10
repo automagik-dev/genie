@@ -13,5 +13,6 @@
   "ignore": [".docs-vendor/**"],
   "ignoreBinaries": ["ldd"],
   "ignoreExportsUsedInFile": true,
-  "ignoreDependencies": ["react"]
+  "ignoreDependencies": ["react"],
+  "ignoreWorkspaces": ["mikro"]
 }

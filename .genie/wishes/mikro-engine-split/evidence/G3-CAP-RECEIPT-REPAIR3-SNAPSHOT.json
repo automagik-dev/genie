@@ -1,0 +1,77 @@
+{
+  "schemaVersion": 1,
+  "group": "G3",
+  "attempts": "3/B3",
+  "quality": "1/cap1 unchanged",
+  "effortEscalations": 0,
+  "ownerDecision": "G3-CAP-RECEIPT-OWNER-DECISION.json",
+  "sourceSealedAt": "2026-10-06T19:04:00.272286Z",
+  "files": [
+    {
+      "path": "/home/genie/orca/workspaces/genie/mikro-engine-split/mikro/src/rlm.ts",
+      "repositoryRelativePath": "mikro/src/rlm.ts",
+      "sha256": "afb6afba1ffcde331e27dfa818d5f947c92ec4e2d9a8def282c0005c615235f1"
+    },
+    {
+      "path": "/home/genie/orca/workspaces/genie/mikro-engine-split/mikro/src/mcp/backends/legacy.ts",
+      "repositoryRelativePath": "mikro/src/mcp/backends/legacy.ts",
+      "sha256": "1f0836f8d9c5bcd9ff5d8da32aaab0b966cb251a0179f526c4e14b55495543d7"
+    },
+    {
+      "path": "/home/genie/orca/workspaces/genie/mikro-engine-split/mikro/src/index.ts",
+      "repositoryRelativePath": "mikro/src/index.ts",
+      "sha256": "02a94a9dae43429f0568cc8ad696fa17d9c1e10f1ba79ebc68c3ff5f64e5db32"
+    },
+    {
+      "path": "/home/genie/orca/workspaces/genie/mikro-engine-split/mikro/tests/validate-loop.test.ts",
+      "repositoryRelativePath": "mikro/tests/validate-loop.test.ts",
+      "sha256": "e83dead9be03ef8fefd417a71ffa2940ccaba93678bc9f2707c6e575a0c21185"
+    },
+    {
+      "path": "/home/genie/orca/workspaces/genie/mikro-engine-split/mikro/CHANGELOG.md",
+      "repositoryRelativePath": "mikro/CHANGELOG.md",
+      "sha256": "aedf155e13126e517045160503c9086a08c71318e12d67fdbeb236d00127d3b6"
+    },
+    {
+      "path": "/home/genie/orca/workspaces/genie/mikro-engine-split/mikro/docs/sdk-overview.md",
+      "repositoryRelativePath": "mikro/docs/sdk-overview.md",
+      "sha256": "934bb2334f079d3787456755b8ff8165ad8efa8bc67b0760a19c4f7362324e96"
+    },
+    {
+      "path": "/home/genie/orca/workspaces/genie/mikro-engine-split/CHANGELOG.md",
+      "repositoryRelativePath": "CHANGELOG.md",
+      "sha256": "65e558849e4b0e581cbdafefd3d7f575187d6c05fa09176a1a73f84f2726cf2d"
+    }
+  ],
+  "verification": {
+    "buildActualExitCode": 0,
+    "typecheckActualExitCode": 0,
+    "owningTests": {
+      "actualExitCode": 0,
+      "pass": 29,
+      "fail": 0,
+      "suites": 4,
+      "job": "bg_70",
+      "combinedSeconds": 38.13
+    },
+    "fullMikroTests": {
+      "actualExitCode": 0,
+      "pass": 1225,
+      "fail": 0,
+      "suites": 218,
+      "skip": 0,
+      "job": "bg_71",
+      "seconds": 190.97,
+      "rawOutput": "artifact://603"
+    },
+    "actualCompiledMcpSmoke": {
+      "actualExitCode": 0,
+      "seconds": 2.34,
+      "proof": "G3-CAP-RECEIPT-AFTER-PROOF.json",
+      "externalModelCalls": 0
+    }
+  },
+  "independentReReviews": "pending; not source SHIP yet",
+  "sourceScope": "Only terminal cap/no-final typed receipt, existing Legacy adapter mapping/public export, owning behavior regressions and docs. No MCP server, frozen Genie caller/metrics/report consumers or provider/cancellation edits.",
+  "newComplete108And18Data": "not dispatched; existing pre-repair cohort cancelled/preserved"
+}

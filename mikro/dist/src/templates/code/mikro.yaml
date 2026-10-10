@@ -1,0 +1,88 @@
+# mikro.yaml — Config for code analysis (code template)
+# Docs: https://github.com/automagik-dev/mikro
+#
+# Prompts live in separate .md files in this directory:
+#   SYSTEM.md   — code-analysis-tuned system prompt
+#   CRITERIA.md — code-focused output criteria
+#   TOOLS.md    — custom Python tools (copied from default template)
+
+# ─── Model ────────────────────────────────────────────────
+model:
+  provider: google
+  model: gemini-3.1-flash-lite-preview
+  sub-call-model: gemini-3.1-flash-lite-preview
+
+# ─── Context ──────────────────────────────────────────────
+# Code-relevant file extensions for directory scanning.
+context:
+  extensions:
+    - .ts
+    - .js
+    - .py
+    - .go
+    - .rs
+    - .java
+    - .tsx
+    - .jsx
+    - .md
+  exclude:
+    - node_modules
+    - .git
+    - dist
+
+# ─── Budget ───────────────────────────────────────────────
+budget:
+  max-cost: null
+  max-tokens: null
+  max-depth: null
+
+# ─── Tools Level ──────────────────────────────────────────
+# standard: core + batteries.py for code analysis convenience
+tools-level: standard
+
+# ─── Storage ─────────────────────────────────────────────
+storage:
+  enabled: auto
+  mode: persistent
+  data-dir: ~/.mikro/data
+  port: 0
+  chunk-size: null
+  chunk-utilization: 0.6
+  chars-per-token: 4
+
+# ─── Cache (CAG Mode) ───────────────────────────────────
+# cache:
+#   enabled: false
+#   retention: long
+#   ttl: 3600
+#   expire-time: ""
+#   session-prefix: ""
+
+# ─── Gemini 3 Native ────────────────────────────────────
+# gemini:
+#   thinking-level: null
+#   google-search: false
+#   url-context: false
+#   code-execution: false
+#   media-resolution:
+#     images: auto
+#     pdfs: auto
+#     video: auto
+
+# ─── Output ─────────────────────────────────────────────
+# output:
+#   schema:
+#     type: object
+#     properties:
+#       answer:
+#         type: string
+
+# Custom providers — any OpenAI/Anthropic-compatible endpoint, then use it as
+# `<id>/<model>` (here: `model: { provider: wafer, model: GLM-5.3-Flash }`).
+# providers:
+#   wafer:
+#     base-url: https://pass.wafer.ai/v1
+#     api-key-env: WAFER_API_KEY
+#     headers: { Wafer-ZDR: required }
+#     models:
+#       GLM-5.3-Flash: { context-window: 128000, max-tokens: 16000, reasoning: true }

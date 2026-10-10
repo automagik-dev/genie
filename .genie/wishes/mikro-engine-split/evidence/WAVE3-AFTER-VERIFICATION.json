@@ -1,0 +1,220 @@
+{
+  "schema": 1,
+  "recordedAt": "2026-10-05T22:24:15.107920+00:00",
+  "sourceSeal": "WAVE3-REPAIR2-REVIEW-SNAPSHOT.json",
+  "currentRootGate": {
+    "command": "env -u NO_COLOR TMPDIR=/var/tmp flock /var/tmp/genie-full-check.lock bun run check",
+    "artifact": "artifact://266",
+    "exitCode": 0,
+    "marker": "WAVE3_ROOT_GATE_EXIT=0",
+    "passed": 3203,
+    "skipped": 2,
+    "failed": 0,
+    "expectCalls": 19106,
+    "files": 155,
+    "wallSeconds": 627.26,
+    "typeChecks": "Root and both DSH plugins passed",
+    "lint": "No fixes; existing doctor cognitive-complexity26 warning retained",
+    "deadCode": "Passed with four configuration hints",
+    "skillsWishesComplexityLint": "Passed"
+  },
+  "standaloneRecursiveCancellationAfter": {
+    "scope": "Actual compiled handleLLMRequest with four real child processes and actual SDK/local HTTP fixture; not external paid inference or native workflow data",
+    "fixtureSource": "Existing owning transport fixture, executed as standalone host outside the test runner",
+    "beforeArtifact": "artifact://222",
+    "exitCode": 0,
+    "billingBasis": "Declared local fixture estimate1input/2output USD per million; no actual paid bill",
+    "observed": {
+      "settlement": "fixture generation retired",
+      "starts": [
+        "child-first-0",
+        "child-first-1",
+        "child-first-2",
+        "child-first-3"
+      ],
+      "dispatches": [
+        "child-first-0",
+        "child-first-1",
+        "child-first-2",
+        "child-first-3"
+      ],
+      "completedChildren": 4,
+      "failedChildren": 3,
+      "paidChildren": 1,
+      "paidIdentities": true,
+      "unknownKilledChildren": 3,
+      "matchedCompletions": true,
+      "remainingAbortListeners": 0,
+      "usage": {
+        "inputTokens": 11,
+        "outputTokens": 7,
+        "cacheReadTokens": 0,
+        "cacheWriteTokens": 0,
+        "totalCost": 2.4999999999999998e-05,
+        "llmCalls": 1,
+        "reasoningTokens": 2
+      },
+      "childUsage": {
+        "inputTokens": 11,
+        "outputTokens": 7,
+        "cacheReadTokens": 0,
+        "cacheWriteTokens": 0,
+        "totalCost": 2.4999999999999998e-05,
+        "llmCalls": 1,
+        "reasoningTokens": 2
+      },
+      "stats": {
+        "iterations": 0,
+        "total_tokens": 18,
+        "total_cost": 2.4999999999999998e-05,
+        "time_ms": 0,
+        "tools_level": "core",
+        "batteries_used": [],
+        "budget_hit": "max-tokens",
+        "model": "isolated/control",
+        "run_id": "",
+        "usage_split": {
+          "root": {
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "total_tokens": 0,
+            "total_cost": 0,
+            "llm_calls": 0
+          },
+          "child": {
+            "input_tokens": 11,
+            "output_tokens": 7,
+            "total_tokens": 18,
+            "total_cost": 2.4999999999999998e-05,
+            "llm_calls": 1
+          },
+          "total": {
+            "input_tokens": 11,
+            "output_tokens": 7,
+            "total_tokens": 18,
+            "total_cost": 2.4999999999999998e-05,
+            "llm_calls": 1
+          }
+        }
+      },
+      "budget": {
+        "totalCost": 2.4999999999999998e-05,
+        "totalInputTokens": 11,
+        "totalOutputTokens": 7,
+        "currentDepth": 0,
+        "budgetHit": "max-tokens"
+      }
+    },
+    "externalInferenceCalls": 0
+  },
+  "standalonePiPartialAndKeyScopeAfter": {
+    "fixtureOnly": true,
+    "externalInferenceCalls": 0,
+    "actualCompiledSdkAndBackend": true,
+    "result": [
+      {
+        "engine": "pi",
+        "failed": true,
+        "actualHostParser": null,
+        "metadata": {
+          "coverage": "partial",
+          "iterations": 2,
+          "subtotal": {
+            "inputTokens": 11,
+            "outputTokens": 7,
+            "totalCost": 0.0025000007000000003
+          },
+          "totals": null
+        },
+        "transportRequests": 2,
+        "text": "mikro standalone-pi failed: LLM stopped with reason \"error\": LLM stopped with reason \"error\": 400: fixture provider refused\n\n---\nmikro \u00b7 standalone-pi \u00b7 pi-fixture/control \u00b7 usage coverage: partial; unreported totals unknown \u00b7 0.5s \u00b7 session local-smoke-pi\nobserved_usage: {\"coverage\":\"partial\",\"iterations\":2,\"subtotal\":{\"inputTokens\":11,\"outputTokens\":7,\"totalCost\":0.0025000007000000003},\"totals\":null}"
+      },
+      {
+        "engine": "rlm",
+        "failed": true,
+        "actualHostParser": null,
+        "metadata": {
+          "coverage": "partial",
+          "iterations": 1,
+          "subtotal": {
+            "inputTokens": 11,
+            "outputTokens": 7,
+            "totalCost": 0.0025000007000000003
+          },
+          "totals": null
+        },
+        "transportRequests": 1,
+        "text": "mikro standalone-rlm failed: LLM stopped with reason \"length\": No provider diagnostic\n\n---\nmikro \u00b7 standalone-rlm \u00b7 pi-fixture/control \u00b7 usage coverage: partial; unreported totals unknown \u00b7 0.1s \u00b7 session local-smoke-rlm\nobserved_usage: {\"coverage\":\"partial\",\"iterations\":1,\"subtotal\":{\"inputTokens\":11,\"outputTokens\":7,\"totalCost\":0.0025000007000000003},\"totals\":null}"
+      },
+      {
+        "standaloneJuiceKeyScope": true,
+        "explicitContextAndSymlink": true,
+        "actualSdkToolsAttempted": [
+          "read",
+          "git",
+          "glob",
+          "grep"
+        ],
+        "providerRequests": 2,
+        "canaryInAnyProviderRequest": false,
+        "toolFeedback": "[{\"role\":\"tool\",\"content\":\"read scope denied: path is outside the allowed roots, excluded, or outside scope.reads\",\"tool_call_id\":\"tool-1-0\"},{\"role\":\"tool\",\"content\":\"read scope denied: path is outside the allowed roots, excluded, or outside scope.reads\",\"tool_call_id\":\"tool-1-1\"},{\"role\":\"tool\",\"content\":\"read scope denied: path is outside the allowed roots, excluded, or outside scope.reads\",\"tool_call_id\":\"tool-1-2\"},{\"role\":\"tool\",\"content\":\"read scope denied: path is outside the allowed roots, excluded, or outside scope.reads\",\"tool_call_id\":\"tool-1-3\"},{\"role\":\"tool\",\"content\":\"(no tool output)\",\"tool_call_id\":\"tool-1-4\"},{\"role\":\"tool\",\"content\":\"(no tool output)\",\"tool_call_id\":\"tool-1-5\"}]",
+        "final": "credential boundary checked"
+      }
+    ],
+    "exitCode": 0
+  },
+  "standaloneBoundedFinalAfter": {
+    "entry": "Actual compiled rlmLoop, actual Python and SDK/local HTTP fixture",
+    "maxIterations": 2,
+    "outputSchemaAndValidateBothApplied": true,
+    "externalInferenceCalls": 0,
+    "observations": [
+      {
+        "candidate": "GOOD",
+        "actualSdkProviderRequests": 2,
+        "iterations": 2,
+        "llmCalls": 2,
+        "answer": "{\"answer\":\"GOOD\"}",
+        "validationFailed": false,
+        "extraFinalCall": false,
+        "lastRequest": "Code executed:\n```python\nprint('first observation')\n```\n\nREPL output:\nfirst observation\n\n\nThis is the last model turn within maxIterations. Provide your complete final answer NOW from the available context and observations. Use FINAL(<answer>) or FINAL_VAR(<existing variable>). Do not start more analysis or model/tool calls.",
+        "usage": {
+          "inputTokens": 22,
+          "outputTokens": 14,
+          "cacheReadTokens": 0,
+          "cacheWriteTokens": 0,
+          "totalCost": 4.9999999999999996e-05,
+          "llmCalls": 2,
+          "reasoningTokens": 0
+        }
+      },
+      {
+        "candidate": "OTHER",
+        "actualSdkProviderRequests": 2,
+        "iterations": 2,
+        "llmCalls": 2,
+        "answer": "{\"answer\":\"OTHER\"}",
+        "validationFailed": true,
+        "extraFinalCall": false,
+        "lastRequest": "Code executed:\n```python\nprint('first observation')\n```\n\nREPL output:\nfirst observation\n\n\nThis is the last model turn within maxIterations. Provide your complete final answer NOW from the available context and observations. Use FINAL(<answer>) or FINAL_VAR(<existing variable>). Do not start more analysis or model/tool calls.",
+        "usage": {
+          "inputTokens": 22,
+          "outputTokens": 14,
+          "cacheReadTokens": 0,
+          "cacheWriteTokens": 0,
+          "totalCost": 4.9999999999999996e-05,
+          "llmCalls": 2,
+          "reasoningTokens": 0
+        }
+      }
+    ],
+    "exitCode": 0,
+    "priorHarnessCorrection": "Initial smoke supplied raw literal text instead of compact JSON required by structured-output schema; fixed input to real structured answer object, without changing product code"
+  },
+  "externalInferenceCalls": 0,
+  "nativeWorkflowCredit": false,
+  "scoredExperimentCredit": false,
+  "syntheticBillingCredit": false,
+  "frozenConsumerMutation": false,
+  "completionClaim": false
+}

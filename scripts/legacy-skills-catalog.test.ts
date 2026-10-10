@@ -1,24 +1,19 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import type { classifyLegacySkillEntry } from '../src/lib/legacy-skills.js';
 import {
   CATALOG_CHECK_GAP,
   collectCatalog,
   evaluateCatalogCheck,
-  historyRevisions,
   mergeCatalog,
   recordedCatalog,
   render,
 } from './legacy-skills-catalog.js';
 
-/**
- * These tests inject a SYNTHETIC catalog Map into `render()`. They never walk git history and never
- * shell out to biome: importing the generator used to run the whole CLI, which is why the additive
- * union — the one property that makes a regenerated catalog safe on a clone missing a ref — had no
- * test at all. `render` still reads `skills/` from disk, which is what proves the subtraction half.
- */
+/** Render tests cover the additive union; isolated CLI histories below cover ownership collection. */
 const ROOT = join(import.meta.dir, '..');
 
 /** A description genie really shipped — the 2026-07 `pm` skill's, found as residue on the dogfood host. */
@@ -160,45 +155,554 @@ describe('--check is an additive-union SUPERSET check', () => {
  * unchanged — so `--check` would pass having proven nothing at all. It refuses
  * instead, BEFORE any history walk or biome call. `--write` is untouched.
  */
-describe('--check refuses a shallow clone', () => {
+describe('catalog CLI over isolated Git histories', () => {
   const scratch: string[] = [];
   afterEach(() => {
     for (const dir of scratch.splice(0)) rmSync(dir, { recursive: true, force: true });
   });
 
   function git(cwd: string, ...args: string[]): string {
-    return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+    return execFileSync('git', args, {
+      cwd,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: {
+        ...process.env,
+        GIT_CONFIG_GLOBAL: '/dev/null',
+        GIT_CONFIG_NOSYSTEM: '1',
+        GIT_AUTHOR_DATE: '2026-01-01T00:00:00Z',
+        GIT_COMMITTER_DATE: '2026-01-01T00:00:00Z',
+      },
+    });
   }
 
-  /** A minimal repo carrying THIS generator, with two commits so `--depth 1` truncates. */
-  function seedOrigin(): string {
-    const dir = mkdtempSync(join(tmpdir(), 'legacy-catalog-origin-'));
+  function skill(repo: string, path: string, description: string): void {
+    mkdirSync(join(repo, path), { recursive: true });
+    writeFileSync(join(repo, path, 'SKILL.md'), `---\ndescription: ${JSON.stringify(description)}\n---\n`);
+  }
+
+  function commit(repo: string, message: string): string {
+    git(repo, 'add', '-A');
+    git(repo, 'commit', '-q', '-m', message);
+    return git(repo, 'rev-parse', 'HEAD').trim();
+  }
+
+  function seedRepo(prefix: string): string {
+    const dir = mkdtempSync(join(tmpdir(), prefix));
     scratch.push(dir);
     mkdirSync(join(dir, 'scripts'), { recursive: true });
-    mkdirSync(join(dir, 'skills', 'demo'), { recursive: true });
     writeFileSync(
       join(dir, 'scripts', 'legacy-skills-catalog.ts'),
       readFileSync(join(ROOT, 'scripts', 'legacy-skills-catalog.ts'), 'utf8'),
     );
-    writeFileSync(join(dir, 'skills', 'demo', 'SKILL.md'), '---\nname: demo\ndescription: "Demo."\n---\n');
+    writeFileSync(
+      join(dir, 'scripts', 'git-history-ownership.ts'),
+      readFileSync(join(ROOT, 'scripts', 'git-history-ownership.ts'), 'utf8'),
+    );
     git(dir, 'init', '-q', '-b', 'main');
     git(dir, 'config', 'user.email', 'test@example.com');
     git(dir, 'config', 'user.name', 'Test');
     git(dir, 'config', 'commit.gpgsign', 'false');
+    git(dir, 'config', 'core.hooksPath', '/dev/null');
+    return dir;
+  }
+
+  /** A minimal repo carrying both collector sources, with history a shallow clone truncates. */
+  function seedOrigin(): string {
+    const dir = seedRepo('legacy-catalog-origin-');
+    skill(dir, 'skills/demo', 'Demo.');
+    skill(dir, 'skills/genie-retired', 'Historical Genie root skill.');
+    skill(dir, 'plugins/genie/skills/genie-nested', 'Historical Genie plugin skill.');
+    mkdirSync(join(dir, 'src', 'lib'), { recursive: true });
+    writeFileSync(
+      join(dir, 'src', 'lib', 'legacy-skills-catalog.ts'),
+      'export const LEGACY_SKILL_NAMES = ["recorded-only"];\n' +
+        'export const LEGACY_SKILL_DESCRIPTIONS = ["Recorded from an unavailable Genie ref."];\n',
+    );
     git(dir, 'add', '-A');
     git(dir, 'commit', '-q', '-m', 'seed');
     writeFileSync(join(dir, 'skills', 'demo', 'SKILL.md'), '---\nname: demo\ndescription: "Demo, revised."\n---\n');
+    rmSync(join(dir, 'skills', 'genie-retired'), { recursive: true });
+    rmSync(join(dir, 'plugins'), { recursive: true });
     git(dir, 'add', '-A');
     git(dir, 'commit', '-q', '-m', 'revise');
+    // Default archive history remains eligible without an explicit proof.
+    skill(dir, 'skills/genie-branch', 'Genie skill only an archived ref delivered.');
+    git(dir, 'add', '-A');
+    const branch = git(dir, 'commit-tree', git(dir, 'write-tree').trim(), '-p', 'HEAD', '-m', 'archived Genie skill');
+    git(dir, 'update-ref', 'refs/heads/genie-archive', branch.trim());
+    git(dir, 'update-ref', 'refs/archive/genie-archive', branch.trim());
+    rmSync(join(dir, 'skills', 'genie-branch'), { recursive: true });
+    git(dir, 'add', '-A');
     return dir;
+  }
+
+  function sideRef(repo: string, base: string, ref: string, name: string): string {
+    git(repo, 'checkout', '-q', '--detach', base);
+    skill(repo, `skills/${name}`, `The ${name} skill.`);
+    const tip = commit(repo, `add ${name}`);
+    git(repo, 'update-ref', ref, tip);
+    git(repo, 'checkout', '-q', 'main');
+    return tip;
+  }
+
+  /** `old` is tag-only; `new` is unmerged; the optional shipping refs are absent. */
+  function seedShippingOrigin(): { repo: string; base: string } {
+    const repo = seedRepo('legacy-catalog-shipped-');
+    skill(repo, 'skills/kept', 'The kept skill.');
+    commit(repo, 'add kept');
+    skill(repo, 'skills/old', 'The old skill.');
+    commit(repo, 'add old');
+    git(repo, 'tag', '-a', 'v1', '-m', 'shipped release');
+    git(repo, 'reset', '-q', '--hard', 'HEAD~1');
+    writeFileSync(join(repo, 'README.md'), 'after the release\n');
+    const base = commit(repo, 'move on');
+    sideRef(repo, base, 'refs/remotes/origin/feature', 'new');
+    return { repo, base };
   }
 
   function runCheck(repo: string, ...args: string[]) {
     const result = spawnSync('bun', [join(repo, 'scripts', 'legacy-skills-catalog.ts'), ...args], {
+      cwd: repo,
       encoding: 'utf8',
     });
     return { code: result.status ?? 1, stdout: result.stdout ?? '', stderr: result.stderr ?? '' };
   }
+
+  function outputCatalog(repo: string, provenance?: string): { names: string[]; descriptions: string[] } {
+    const run = runCheck(repo, ...(provenance === undefined ? [] : ['--ref-provenance', provenance]));
+    expect(run.code).toBe(0);
+    expect(run.stderr).toBe('');
+    const names = /LEGACY_SKILL_NAMES: readonly string\[\] = (\[[^\n]*\]);/.exec(run.stdout);
+    const descriptions = /LEGACY_SKILL_DESCRIPTIONS: readonly string\[\] = (\[[\s\S]*?\n\]);/.exec(run.stdout);
+    expect(names).not.toBeNull();
+    expect(descriptions).not.toBeNull();
+    return {
+      names: JSON.parse(names?.[1] ?? ''),
+      descriptions: JSON.parse((descriptions?.[1] ?? '').replace(/,\s*\]$/, ']')),
+    };
+  }
+
+  /** Runtime-selected module: a static import would read the root catalog, not this CLI's output. */
+  async function consumerFor(
+    repo: string,
+    provenance?: string,
+  ): Promise<{
+    home: string;
+    classify: typeof classifyLegacySkillEntry;
+  }> {
+    const run = runCheck(repo, ...(provenance === undefined ? [] : ['--ref-provenance', provenance]));
+    expect(run.code).toBe(0);
+    expect(run.stderr).toBe('');
+    const dir = mkdtempSync(join(tmpdir(), 'legacy-catalog-consumer-'));
+    scratch.push(dir);
+    for (const file of ['legacy-skills.ts', 'skills-agents.ts']) {
+      cpSync(join(ROOT, 'src', 'lib', file), join(dir, file));
+    }
+    writeFileSync(join(dir, 'legacy-skills-catalog.ts'), run.stdout);
+    const { classifyLegacySkillEntry } = await import(join(dir, 'legacy-skills.ts'));
+    return { home: join(dir, 'home'), classify: classifyLegacySkillEntry };
+  }
+
+  function importMikro(
+    repo: string,
+    sharedAncestry: boolean,
+    metadata?: string,
+    alterTree = false,
+    sourceTag = false,
+  ): { provenance?: string; split: string; foreign: string; side?: string } {
+    const source = mkdtempSync(join(tmpdir(), 'legacy-catalog-source-'));
+    scratch.push(source);
+    if (sharedAncestry) {
+      // This independent archive now needs proof both for ownership and for
+      // eligibility: its only remaining ref is outside the shipped defaults.
+      git(repo, 'update-ref', '-d', 'refs/archive/genie-archive');
+      git(source, 'clone', '-q', repo, '.');
+    } else {
+      git(source, 'init', '-q', '-b', 'main');
+    }
+    git(source, 'config', 'user.email', 'test@example.com');
+    git(source, 'config', 'user.name', 'Test');
+    git(source, 'config', 'commit.gpgsign', 'false');
+    git(source, 'config', 'core.hooksPath', '/dev/null');
+    // The archive is also a source ancestor, so it needs independent role proof.
+    if (sharedAncestry) git(source, 'merge', '-q', '--no-edit', 'origin/genie-archive');
+    skill(source, 'skills/foreign-ancestor', 'Mikro skill retired before import.');
+    const foreign = commit(source, 'foreign historical skill');
+    rmSync(join(source, 'skills', 'foreign-ancestor'), { recursive: true });
+    skill(source, 'plugins/claude-code/skills/foreign-nested', 'Mikro nested skill at import.');
+    if (sourceTag) {
+      git(source, 'tag', '-a', 'archive', '-m', 'Historical source reference', foreign);
+      // Source data cannot attest its own root skill as Genie-owned.
+      writeFileSync(
+        join(source, 'ref-provenance.json'),
+        JSON.stringify({
+          version: 1,
+          refs: [{ ref: 'refs/tags/archive', commit: foreign, owner: 'genie' }],
+        }),
+      );
+    }
+    const split = commit(source, 'foreign import tip');
+    let side: string | undefined;
+    if (sourceTag) {
+      side = git(source, 'commit-tree', `${split}^{tree}`, '-p', foreign, '-m', 'unmerged source branch').trim();
+      git(source, 'update-ref', 'refs/tags/side', side);
+    }
+    git(repo, 'fetch', '-q', source, `${split}:refs/heads/mikro-source`);
+    if (sourceTag) git(repo, 'fetch', '-q', source, 'refs/tags/archive:refs/tags/archive');
+    if (sourceTag) git(repo, 'fetch', '-q', source, 'refs/tags/side:refs/tags/side');
+    mkdirSync(join(repo, 'mikro'));
+    for (const entry of readdirSync(source)) {
+      if (entry !== '.git') cpSync(join(source, entry), join(repo, 'mikro', entry), { recursive: true });
+    }
+    if (alterTree) skill(repo, 'mikro/skills/extra', 'Not the declared imported tree.');
+    git(repo, 'add', '-A');
+    const tree = git(repo, 'write-tree').trim();
+    const trailers = metadata?.replaceAll('$SOURCE', split) ?? `git-subtree-dir: mikro\n\ngit-subtree-split: ${split}`;
+    const imported = git(
+      repo,
+      'commit-tree',
+      tree,
+      '-p',
+      'HEAD',
+      '-p',
+      split,
+      '-m',
+      `Import Mikro\n\n${trailers}`,
+    ).trim();
+    git(repo, 'update-ref', 'refs/heads/main', imported);
+    let provenance: string | undefined;
+    if (sharedAncestry || sourceTag) {
+      const refs = [
+        {
+          ref: 'refs/heads/genie-archive',
+          commit: git(repo, 'rev-parse', 'refs/heads/genie-archive').trim(),
+          owner: 'genie',
+        },
+      ];
+      if (sourceTag) refs.push({ ref: 'refs/tags/archive', commit: foreign, owner: 'source' });
+      if (side !== undefined) refs.push({ ref: 'refs/tags/side', commit: side, owner: 'source' });
+      if (sourceTag && sharedAncestry) {
+        const core = git(repo, 'rev-parse', `${imported}^1^`).trim();
+        git(repo, 'update-ref', 'refs/tags/genie-core', core);
+        refs.push({ ref: 'refs/tags/genie-core', commit: core, owner: 'source' });
+      }
+      writeFileSync(join(repo, 'ref-provenance.json'), JSON.stringify({ version: 1, refs }));
+      const authority = commit(repo, 'record independent reference provenance');
+      provenance = `${authority}:ref-provenance.json`;
+    }
+    return { provenance, split, foreign, side };
+  }
+
+  function expectGenieHistory(catalog: { names: string[]; descriptions: string[] }): void {
+    expect(catalog.names).toEqual(['genie-branch', 'genie-nested', 'genie-retired', 'recorded-only']);
+    expect(catalog.descriptions).toEqual([
+      'Demo.',
+      'Genie skill only an archived ref delivered.',
+      'Historical Genie plugin skill.',
+      'Historical Genie root skill.',
+      'Recorded from an unavailable Genie ref.',
+    ]);
+  }
+
+  test('tag-only retirement reaches the consumer, while unmerged work cannot grant it without Mikro imports', async () => {
+    const { repo } = seedShippingOrigin();
+    const recorded = { names: [], descriptions: [] };
+    const merged = mergeCatalog(collectCatalog(repo), recorded, new Set(['kept']), new Set(['The kept skill.']));
+    const verdict = evaluateCatalogCheck('// committed', '// regenerated', { merged, recorded });
+    expect(verdict.stale).toBe(true);
+    expect(verdict.missingNames).toEqual(['old']);
+    expect(verdict.missingDescriptions).toEqual(['The old skill.']);
+    expect(verdict.lines.join('\n')).toContain('1 name(s) and 1 description(s)');
+    expect(verdict.lines.join('\n')).toContain('(old)');
+
+    const { home, classify } = await consumerFor(repo);
+    skill(home, 'old', 'The old skill.');
+    skill(home, 'new', 'The new skill.');
+    skill(home, 'kept', 'The kept skill.');
+    expect(classify(home, 'old', ['kept'])?.kind).toBe('proven');
+    expect(classify(home, 'new', ['kept'])).toBeNull();
+    expect(classify(home, 'kept', ['kept'])).toBeNull();
+  });
+
+  test('exact origin/main, origin/dev and refs/archive/* ship; lookalike and unmerged refs do not', async () => {
+    const { repo, base } = seedShippingOrigin();
+    sideRef(repo, base, 'refs/remotes/origin/main', 'on-main');
+    sideRef(repo, base, 'refs/remotes/origin/dev', 'on-dev');
+    sideRef(repo, base, 'refs/archive/shelved', 'archived');
+    sideRef(repo, base, 'refs/remotes/origin/dev-experiment', 'dev-lookalike');
+    sideRef(repo, base, 'refs/remotes/origin/main-experiment', 'main-lookalike');
+    sideRef(repo, base, 'refs/archives/shelved', 'archive-lookalike');
+    expect([...collectCatalog(repo).keys()].sort()).toEqual(['archived', 'kept', 'old', 'on-dev', 'on-main']);
+
+    const { home, classify } = await consumerFor(repo);
+    for (const name of ['old', 'on-main', 'on-dev', 'archived']) {
+      skill(home, name, `The ${name} skill.`);
+      expect(classify(home, name, ['kept'])?.kind).toBe('proven');
+    }
+    for (const name of ['new', 'dev-lookalike', 'main-lookalike', 'archive-lookalike']) {
+      skill(home, name, `The ${name} skill.`);
+      expect(classify(home, name, ['kept'])).toBeNull();
+    }
+  });
+
+  test('exact trusted Genie archive proof opts an unrecorded root outside shipped refs into real retirement', async () => {
+    const repo = seedOrigin();
+    git(repo, 'update-ref', '-d', 'refs/archive/genie-archive');
+    const archive = git(repo, 'rev-parse', 'refs/heads/genie-archive').trim();
+    const before = outputCatalog(repo);
+    expect(before.names).not.toContain('genie-branch');
+    expect(before.descriptions).not.toContain('Genie skill only an archived ref delivered.');
+
+    writeFileSync(
+      join(repo, 'ref-provenance.json'),
+      JSON.stringify({
+        version: 1,
+        refs: [{ ref: 'refs/heads/genie-archive', commit: archive, owner: 'genie' }],
+      }),
+    );
+    const authority = commit(repo, 'opt exact Genie archive into retirement history');
+    const provenance = `${authority}:ref-provenance.json`;
+    expect(collectCatalog(repo, provenance).get('genie-branch')).toEqual(
+      new Set(['Genie skill only an archived ref delivered.']),
+    );
+    expectGenieHistory(outputCatalog(repo, provenance));
+
+    const { home, classify } = await consumerFor(repo, provenance);
+    skill(home, 'genie-branch', 'Genie skill only an archived ref delivered.');
+    expect(classify(home, 'genie-branch', ['demo'])?.kind).toBe('proven');
+    skill(home, 'genie-branch', 'A user-owned replacement description.');
+    expect(classify(home, 'genie-branch', ['demo'])?.kind).toBe('unproven');
+    expect(classify(home, 'genie-branch', ['genie-branch'])).toBeNull();
+
+    const selfProof = runCheck(repo, '--ref-provenance', `${archive}:ref-provenance.json`);
+    expect(selfProof.code).toBe(1);
+    expect(selfProof.stdout).toBe('');
+    expect(selfProof.stderr).toContain('not independently Genie-owned');
+  });
+
+  test('standalone history retains root, nested, shipped archive and recorded proof, but not current skills', () => {
+    expectGenieHistory(outputCatalog(seedOrigin()));
+  });
+
+  test.each([false, true])(
+    'foreign ancestry and prefixed integration trees are excluded (shared Genie ancestry: %s)',
+    (shared) => {
+      const repo = seedOrigin();
+      const { provenance } = importMikro(repo, shared);
+      // A later integration revision must not leak a new prefixed identity, even
+      // when the same commit changes a Genie skill and is necessarily scanned.
+      skill(repo, 'mikro/skills/foreign-later', 'Mikro skill added after import.');
+      skill(repo, 'skills/demo', 'Demo, revised again.');
+      commit(repo, 'revise both package trees');
+      const catalog = outputCatalog(repo, provenance);
+      expect(catalog.names).toEqual(['genie-branch', 'genie-nested', 'genie-retired', 'recorded-only']);
+      expect(catalog.descriptions).toEqual([
+        'Demo, revised.',
+        'Demo.',
+        'Genie skill only an archived ref delivered.',
+        'Historical Genie plugin skill.',
+        'Historical Genie root skill.',
+        'Recorded from an unavailable Genie ref.',
+      ]);
+    },
+  );
+
+  test('trusted proof keeps shared Genie archives and core despite source roles', async () => {
+    const repo = seedOrigin();
+    const { provenance, split, foreign, side } = importMikro(repo, true, undefined, false, true);
+    if (provenance === undefined || side === undefined)
+      throw new Error('fixture requires provenance and an off-tip ref');
+    const recordedBefore = readFileSync(join(repo, 'src/lib/legacy-skills-catalog.ts'), 'utf8');
+    // Unknown roots refuse BEFORE output/write: neither silent loss of the
+    // Genie archive nor untrusted source retirement authority is acceptable.
+    const unknown = runCheck(repo);
+    expect(unknown.code).toBe(1);
+    expect(unknown.stdout).toBe('');
+    expect(unknown.stderr).toContain('ambiguous history reference');
+    const blockedWrite = runCheck(repo, '--write');
+    expect(blockedWrite.code).toBe(1);
+    expect(blockedWrite.stdout).toBe('');
+    expect(blockedWrite.stderr).toContain('ambiguous history reference');
+    expect(readFileSync(join(repo, 'src/lib/legacy-skills-catalog.ts'), 'utf8')).toBe(recordedBefore);
+
+    expectGenieHistory(outputCatalog(repo, provenance));
+    const { home, classify } = await consumerFor(repo, provenance);
+    skill(home, 'genie-branch', 'Genie skill only an archived ref delivered.');
+    skill(home, 'genie-retired', 'Historical Genie root skill.');
+    skill(home, 'foreign-ancestor', 'Mikro skill retired before import.');
+    skill(home, 'foreign-nested', 'Mikro nested skill at import.');
+    expect(classify(home, 'genie-branch', ['demo'])?.kind).toBe('proven');
+    expect(classify(home, 'genie-retired', ['demo'])?.kind).toBe('proven');
+    expect(classify(home, 'foreign-ancestor', ['demo'])).toBeNull();
+    expect(classify(home, 'foreign-nested', ['demo'])).toBeNull();
+    const once = runCheck(repo, '--ref-provenance', provenance);
+    const again = runCheck(repo, '--ref-provenance', provenance);
+    expect(again.code).toBe(0);
+    expect(again.stderr).toBe('');
+    expect(again.stdout).toBe(once.stdout);
+
+    const authority = provenance.slice(0, 40);
+    for (const [selector, error] of [
+      [`${split}:ref-provenance.json`, 'not independently Genie-owned'],
+      [`${side}:ref-provenance.json`, 'not independently Genie-owned'],
+      [`${authority}:mikro/ref-provenance.json`, 'canonical non-Mikro root blob'],
+      [`${authority}:missing-provenance.json`, 'does not exist'],
+    ] as const) {
+      const denied = runCheck(repo, '--write', '--ref-provenance', selector);
+      expect(denied.code).toBe(1);
+      expect(denied.stdout).toBe('');
+      expect(denied.stderr).toContain(error);
+      expect(readFileSync(join(repo, 'src/lib/legacy-skills-catalog.ts'), 'utf8')).toBe(recordedBefore);
+    }
+
+    // The name alone cannot preserve an old ownership assertion after its tip moves.
+    git(repo, 'update-ref', 'refs/heads/genie-archive', foreign);
+    const stale = runCheck(repo, '--write', '--ref-provenance', provenance);
+    expect(stale.code).toBe(1);
+    expect(stale.stdout).toBe('');
+    expect(stale.stderr).toContain('stale or unknown reference provenance');
+    expect(readFileSync(join(repo, 'src/lib/legacy-skills-catalog.ts'), 'utf8')).toBe(recordedBefore);
+  });
+
+  test.each(['unknown owner', 'conflicting duplicate'] as const)(
+    'refuses %s in trusted reference proof without granting partial authority',
+    (kind) => {
+      const repo = seedOrigin();
+      const { foreign } = importMikro(repo, true, undefined, false, true);
+      const entry = { ref: 'refs/tags/archive', commit: foreign, owner: 'genie' };
+      const refs =
+        kind === 'unknown owner' ? [{ ...entry, owner: 'unproven' }] : [entry, { ...entry, owner: 'source' }];
+      writeFileSync(join(repo, 'bad-provenance.json'), JSON.stringify({ version: 1, refs }));
+      const authority = commit(repo, 'record invalid provenance fixture');
+      const run = runCheck(repo, '--ref-provenance', `${authority}:bad-provenance.json`);
+      expect(run.code).toBe(1);
+      expect(run.stdout).toBe('');
+      expect(run.stderr).toContain(
+        kind === 'unknown owner' ? 'invalid reference provenance entry' : 'duplicate reference provenance entry',
+      );
+    },
+  );
+
+  test('an otherwise valid proof cannot silently omit a source-connected off-tip reference', () => {
+    const repo = seedOrigin();
+    const { foreign } = importMikro(repo, true, undefined, false, true);
+    writeFileSync(
+      join(repo, 'incomplete-provenance.json'),
+      JSON.stringify({
+        version: 1,
+        refs: [
+          {
+            ref: 'refs/heads/genie-archive',
+            commit: git(repo, 'rev-parse', 'refs/heads/genie-archive').trim(),
+            owner: 'genie',
+          },
+          { ref: 'refs/tags/archive', commit: foreign, owner: 'source' },
+        ],
+      }),
+    );
+    const authority = commit(repo, 'record incomplete provenance fixture');
+    const run = runCheck(repo, '--ref-provenance', `${authority}:incomplete-provenance.json`);
+    expect(run.code).toBe(1);
+    expect(run.stdout).toBe('');
+    expect(run.stderr).toContain('ambiguous history reference refs/tags/side');
+  });
+
+  test('ref-provenance requires a value instead of treating a missing proof as ordinary history', () => {
+    const run = runCheck(seedOrigin(), '--ref-provenance');
+    expect(run.code).toBe(1);
+    expect(run.stdout).toBe('');
+    expect(run.stderr).toContain('--ref-provenance requires one exact commit-bound');
+  });
+
+  test('nested foreign import metadata cannot erase shared Genie retirement proof', () => {
+    const repo = seedOrigin();
+    const shared = git(repo, 'rev-parse', 'HEAD^').trim();
+    // The nested import's destination is genuinely foreign. Treating every
+    // import's first parent as Genie-owned would wrongly retain this skill.
+    git(repo, 'read-tree', '--empty');
+    skill(repo, 'skills/foreign-parent', 'Mikro destination skill, never delivered by Genie.');
+    git(repo, 'add', 'skills/foreign-parent');
+    const foreignTree = git(repo, 'write-tree').trim();
+    const foreignParent = git(repo, 'commit-tree', foreignTree, '-m', 'foreign destination').trim();
+    rmSync(join(repo, 'skills', 'foreign-parent'), { recursive: true });
+    const source = git(
+      repo,
+      'commit-tree',
+      `${shared}^{tree}`,
+      '-p',
+      shared,
+      '-m',
+      'source from shared history',
+    ).trim();
+    git(repo, 'read-tree', '--prefix=mikro', `${source}^{tree}`);
+    const nestedTree = git(repo, 'write-tree').trim();
+    const nested = git(
+      repo,
+      'commit-tree',
+      nestedTree,
+      '-p',
+      foreignParent,
+      '-p',
+      source,
+      '-m',
+      `Nested import\n\ngit-subtree-dir: mikro\n\ngit-subtree-split: ${source}`,
+    ).trim();
+    git(repo, 'read-tree', 'HEAD');
+    writeFileSync(
+      join(repo, 'ref-provenance.json'),
+      JSON.stringify({
+        version: 1,
+        refs: [
+          {
+            ref: 'refs/heads/genie-archive',
+            commit: git(repo, 'rev-parse', 'refs/heads/genie-archive').trim(),
+            owner: 'genie',
+          },
+        ],
+      }),
+    );
+    const authority = commit(repo, 'record independent archived Genie reference');
+    git(repo, 'read-tree', '--prefix=mikro', nestedTree);
+    const outer = git(
+      repo,
+      'commit-tree',
+      git(repo, 'write-tree').trim(),
+      '-p',
+      'HEAD',
+      '-p',
+      nested,
+      '-m',
+      `Outer import\n\ngit-subtree-dir: mikro\n\ngit-subtree-split: ${nested}`,
+    ).trim();
+    git(repo, 'update-ref', 'refs/heads/main', outer);
+    git(repo, 'update-ref', 'refs/heads/mikro-source', nested);
+    expectGenieHistory(outputCatalog(repo, `${authority}:ref-provenance.json`));
+  });
+
+  test.each([
+    ['malformed split', 'git-subtree-dir: mikro\n\ngit-subtree-split: --all'],
+    ['duplicate split', 'git-subtree-dir: mikro\n\ngit-subtree-split: $SOURCE\n\ngit-subtree-split: $SOURCE'],
+    ['duplicate directory', 'git-subtree-dir: mikro\n\ngit-subtree-dir: mikro\n\ngit-subtree-split: $SOURCE'],
+    ['noncanonical prefix', 'git-subtree-dir: mikro/\n\ngit-subtree-split: $SOURCE'],
+    ['wrong source parent', `git-subtree-dir: mikro\n\ngit-subtree-split: ${'0'.repeat(40)}`],
+  ])('refuses %s metadata instead of granting foreign ownership', (_label, metadata) => {
+    const repo = seedOrigin();
+    importMikro(repo, false, metadata);
+    const run = runCheck(repo);
+    expect(run.code).toBe(1);
+    expect(run.stdout).toBe('');
+    expect(run.stderr).toContain('invalid Mikro subtree import metadata');
+  });
+
+  test('refuses import metadata whose prefixed tree does not match the source', () => {
+    const repo = seedOrigin();
+    importMikro(repo, false, undefined, true);
+    const run = runCheck(repo);
+    expect(run.code).toBe(1);
+    expect(run.stdout).toBe('');
+    expect(run.stderr).toContain('Mikro subtree import tree does not match its source');
+  });
 
   test('a --depth 1 clone is refused with exit 1, before any history walk', () => {
     const origin = seedOrigin();
@@ -222,132 +726,10 @@ describe('--check refuses a shallow clone', () => {
   });
 });
 
-/**
- * History is read from SHIPPED refs only. `git log --all` also walked every unmerged remote
- * branch, so a pull request that added a skill turned `--check` red on every other branch
- * (#3139's two new skills did exactly that), and a `--write` would have catalogued a skill
- * nobody ever installed as a retired one.
- */
-describe('history is read from shipped refs, never from an unmerged branch', () => {
-  const scratch: string[] = [];
-  afterEach(() => {
-    for (const dir of scratch.splice(0)) rmSync(dir, { recursive: true, force: true });
-  });
-
-  function git(cwd: string, ...args: string[]): string {
-    return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
-  }
-
-  function commitSkill(dir: string, name: string): void {
-    mkdirSync(join(dir, 'skills', name), { recursive: true });
-    writeFileSync(
-      join(dir, 'skills', name, 'SKILL.md'),
-      `---\nname: ${name}\ndescription: "The ${name} skill."\n---\n`,
-    );
-    git(dir, 'add', '-A');
-    git(dir, 'commit', '-q', '-m', `add ${name}`);
-  }
-
-  /** A commit on top of `base` that adds one skill, reachable ONLY through `ref`. */
-  function sideRef(dir: string, base: string, ref: string, skill: string): void {
-    git(dir, 'checkout', '-q', '--detach', base);
-    commitSkill(dir, skill);
-    git(dir, 'update-ref', ref, 'HEAD');
-    git(dir, 'checkout', '-q', 'main');
-  }
-
-  /**
-   * `kept` ships today; `old` shipped in the tagged release v1 and was removed afterwards;
-   * `new` lives only on the unmerged `origin/feature`. No `origin/main`, no `origin/dev` and no
-   * `refs/archive/*` exist yet, so the base fixture is also the absent-ref case.
-   */
-  function seedRepo(): { dir: string; base: string } {
-    const dir = mkdtempSync(join(tmpdir(), 'legacy-catalog-refs-'));
-    scratch.push(dir);
-    mkdirSync(join(dir, 'scripts'), { recursive: true });
-    writeFileSync(
-      join(dir, 'scripts', 'legacy-skills-catalog.ts'),
-      readFileSync(join(ROOT, 'scripts', 'legacy-skills-catalog.ts'), 'utf8'),
-    );
-    git(dir, 'init', '-q', '-b', 'main');
-    git(dir, 'config', 'user.email', 'test@example.com');
-    git(dir, 'config', 'user.name', 'Test');
-    git(dir, 'config', 'commit.gpgsign', 'false');
-    commitSkill(dir, 'kept');
-    commitSkill(dir, 'old');
-    git(dir, 'tag', 'v1');
-    // Rewrite main so `old` is reachable through the TAG alone, never through HEAD.
-    git(dir, 'reset', '-q', '--hard', 'HEAD~1');
-    writeFileSync(join(dir, 'README.md'), 'after the release\n');
-    git(dir, 'add', '-A');
-    git(dir, 'commit', '-q', '-m', 'move on');
-    const base = git(dir, 'rev-parse', 'HEAD').trim();
-    sideRef(dir, base, 'refs/remotes/origin/feature', 'new');
-    return { dir, base };
-  }
-
-  /** The `--check` verdict for a committed catalog that carries nothing. */
-  function verdictAgainstEmptyCatalog(dir: string) {
-    const merged = mergeCatalog(
-      collectCatalog(dir),
-      { names: [], descriptions: [] },
-      new Set(['kept']),
-      new Set(['The kept skill.']),
-    );
-    return evaluateCatalogCheck('// committed', '// regenerated', {
-      merged,
-      recorded: { names: [], descriptions: [] },
-    });
-  }
-
-  test('a tagged-then-removed skill is reported; a skill on an unmerged remote branch is not', () => {
-    const { dir } = seedRepo();
-
-    const verdict = verdictAgainstEmptyCatalog(dir);
-    expect(verdict.stale).toBe(true);
-    expect(verdict.missingNames).toEqual(['old']);
-    expect(verdict.missingDescriptions).toEqual(['The old skill.']);
-    expect(verdict.lines.join('\n')).toContain('1 name(s) and 1 description(s)');
-    expect(verdict.lines.join('\n')).toContain('(old)');
-  });
-
-  test('the CLI derives the same set: the generator run inside that repo names old and never new', () => {
-    const { dir } = seedRepo();
-
-    const run = spawnSync('bun', [join(dir, 'scripts', 'legacy-skills-catalog.ts')], { encoding: 'utf8' });
-    expect(run.status).toBe(0);
-    expect(run.stdout).toContain('LEGACY_SKILL_NAMES: readonly string[] = ["old"]');
-    expect(run.stdout).toContain('"The old skill."');
-    expect(run.stdout).not.toContain('The new skill.');
-  });
-
-  test('origin/main, origin/dev and refs/archive/* join the walk when present, and only those', () => {
-    const { dir, base } = seedRepo();
-    expect(historyRevisions(dir)).toEqual(['HEAD', '--tags', '--glob=refs/archive/*']);
-
-    sideRef(dir, base, 'refs/remotes/origin/main', 'on-main');
-    sideRef(dir, base, 'refs/remotes/origin/dev', 'on-dev');
-    sideRef(dir, base, 'refs/archive/shelved', 'archived');
-    // A branch whose NAME merely starts like a shipped one is still unmerged work.
-    sideRef(dir, base, 'refs/remotes/origin/dev-experiment', 'lookalike');
-
-    expect(historyRevisions(dir)).toEqual([
-      'HEAD',
-      '--tags',
-      'refs/remotes/origin/dev',
-      'refs/remotes/origin/main',
-      '--glob=refs/archive/*',
-    ]);
-    expect([...collectCatalog(dir).keys()].sort()).toEqual(['archived', 'kept', 'old', 'on-dev', 'on-main']);
-  });
-});
-
 describe('recordedCatalog', () => {
   test('reads the committed catalog back, so a regeneration can only ever add to it', async () => {
     const recorded = await recordedCatalog();
 
-    expect(recorded.names.length).toBeGreaterThan(0);
-    expect(recorded.descriptions.length).toBeGreaterThan(0);
     expect(recorded.names).toContain('pm');
     expect(recorded.descriptions).toContain(SHIPPED_PM_DESCRIPTION);
   });

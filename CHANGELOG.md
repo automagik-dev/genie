@@ -15,6 +15,61 @@ Wish: `wish/tui-native-selection`.
 
 ## Unreleased
 
+### Selectable Mikro engines and independent source package
+
+- Mikro lives in the history-preserving `mikro/` Node/npm package with its own
+  lockfile, checks and CI; it remains outside the Genie binary and release payload.
+- `genie mikro call --engine rlm|pi` selects the real backend while retaining
+  schema and citation verification. RLM remains the default; agent `engine`
+  replaces the rejected legacy `backend` field. Pi uses isolated read-only native
+  tools and `emit_done`, not ambient plugins or RLM Python tool packs.
+- RLM timeout recovery loses the old namespace without replaying side effects;
+  stop/start ownership prevents a retired child from resurrecting. Bounded final
+  extraction remains inside the iteration/budget cap and enforces both schemas.
+- Settled recursive receipts survive cancellation exactly once. Partial provider
+  usage retains an unrounded observed subtotal, never a complete numeric footer
+  or a fabricated zero bill.
+- RLM cap and terminal provider failures retain cumulative observed root/IPC
+  usage and actual turns through the existing partial-failure boundary. Caller
+  cancellation preserves the timeout answer with partial observations and unknown
+  full totals; schema-invalid finals are failed MCP responses. No extra completion.
+- Typed child-completion failures cross Node/Python as errors, never ordinary
+  model text. Failed executions cannot finalize through caught, stale or text
+  `FINAL`; repair uses only an existing later turn. Known usage is retained once,
+  and repaired failures expose a partial subtotal rather than unreported totals.
+- Three-empty-response terminal aborts retain that same incomplete child-usage
+  marker: known receipts remain a partial subtotal, not a complete caller bill.
+- Pi closes real SDK tool admission after the first accepted final, including
+  mixed final/read batches, without an extra completion or replacement answer.
+- Explicit per-project Juice key references, literal catalogs and viewer-only
+  aggregate snapshots remain separate from canonical accounting. Manual JEV
+  extraction is explicit, source-linked and absent from ordinary model runs.
+- Frozen engine experiments hash complete physical fixture structure, including
+  symlink text without following targets; executable/dependency seal rules remain
+  separate and unchanged.
+- Historical benchmark overlays accept OS aliases above the explicitly trusted
+  runtime checkout and owned temporary root. Internal configuration symlinks
+  remain refused; lexical overlay provenance and NEW-path truth remain intact.
+- Commit-message CI validates every Genie-owned range commit with the unchanged
+  rules. Only source edges of validated Mikro subtree imports are removed from
+  ownership traversal; shared ancestors and every ordinary merge parent remain
+  strict. Original Mikro commit messages and history are preserved.
+- Retirement catalog ownership and delivery eligibility are separate. Default
+  retirement roots are HEAD, tags, exact origin/main and origin/dev, and
+  `refs/archive/*`; an unmerged, unproved PR supplies no retirement authority.
+  Exact trusted Genie archive proofs may opt additional roots in through
+  `--ref-provenance SHA:root-path`, without prerecording their retired skills.
+  Validated source-edge cuts preserve shared Genie ancestry. Proof is anchored
+  in the current Genie lineage outside Mikro; absent, stale or source-owned
+  proof refuses collection. Source refs cannot attest themselves or erase
+  independent Genie history. Prefixed files stay excluded and recorded proof
+  remains additive.
+- Historical Mikro planning/runs and superseded engine-split evidence are archived
+  at immutable commit `1b58ca73a1b9e322597a41000cc4ebd897e86bdc`, rather than repeated
+  in the current source tree. Frozen consumer inputs and both original reviews
+  remain; archive indexes preserve access to failures and incomplete paid results.
+
+
 ### `genie update` repaired for hosts on 5.260831.x
 
 5.260901.1 dropped the `.agents/` and `.claude-plugin/` directories from the

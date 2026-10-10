@@ -1,0 +1,41 @@
+# Gemini Cheap Batch — maximum cost stacking: cache + batch + minimal thinking
+# Usage: mikro batch questions.txt --context ./corpus/ --cache --max-cost 2.00
+#
+# Cost stacking:
+#   Base:    $0.075/M input + $0.30/M output (flash-lite)
+#   Cache:   90% discount on cached context tokens
+#   Batch:   50% discount (when --batch-api is available)
+#   Effective: ~$0.0125/M tokens with cache + batch
+
+model:
+  provider: google
+  model: gemini-3.1-flash-lite-preview
+  sub-call-model: gemini-3.1-flash-lite-preview
+
+system: |
+  You are a bulk analysis agent optimized for cost efficiency.
+  Answer each question concisely using the provided context.
+  Do not over-elaborate — aim for the shortest accurate answer.
+  {custom_tools_section}
+
+gemini:
+  thinking-level: minimal   # Cheapest thinking tier
+  media-resolution:
+    images: low              # Minimize token usage
+
+criteria: |
+  Keep answers under 200 words.
+  Reference specific context sources.
+  Prioritize precision over verbosity.
+
+tools-level: core   # No batteries needed for simple Q&A
+
+budget:
+  max-cost: 2.00
+  max-tokens: null
+  max-depth: 1
+
+# Cache is always enabled for batch mode
+# cache:
+#   enabled: true
+#   retention: long

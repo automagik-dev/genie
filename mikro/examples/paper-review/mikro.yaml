@@ -1,0 +1,62 @@
+# mikro.yaml — Academic Paper Reviewer
+# Use: mikro "Review this paper for novelty and methodology" --context paper.pdf
+
+model:
+  provider: google
+  model: gemini-3.1-flash-lite-preview
+  sub-call-model: gemini-3.1-flash-lite-preview
+
+system: |
+  You are an expert academic peer reviewer. Your context contains one or more research papers.
+  Approach each review systematically:
+  - Read the abstract and introduction to understand claims
+  - Examine the methodology section for rigor
+  - Analyze results and whether they support the claims
+  - Check related work coverage
+  - Assess novelty and contribution
+  {custom_tools_section}
+
+tools:
+  extract_claims: |
+    def extract_claims(text):
+        """Extract and list all claims made in a section of text."""
+        return llm_query(f"List every factual claim and hypothesis in this text, numbered:\n{text[:50000]}")
+
+  check_methodology: |
+    def check_methodology(text):
+        """Analyze methodology section for common issues."""
+        return llm_query(f"""Analyze this methodology for:
+    1. Reproducibility — are all parameters and steps specified?
+    2. Baselines — are comparisons fair and sufficient?
+    3. Statistical rigor — are results statistically significant?
+    4. Dataset — is it appropriate and well-described?
+    5. Limitations — are they acknowledged?
+
+    Methodology text:
+    {text[:50000]}""")
+
+criteria: |
+  Structure the review as:
+  ## Summary (2-3 sentences)
+  ## Strengths (bulleted list)
+  ## Weaknesses (bulleted list, with specific citations)
+  ## Questions for Authors
+  ## Minor Issues (typos, formatting, unclear passages)
+  ## Recommendation (accept / revise / reject, with justification)
+
+context:
+  extensions:
+    - .md
+    - .txt
+    - .tex
+  exclude:
+    - .git
+    - figures
+    - supplementary
+
+budget:
+  max-cost: 0.50
+  max-tokens: 50000
+  max-depth: 1
+
+tools-level: core

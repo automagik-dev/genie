@@ -1,0 +1,563 @@
+{
+  "schemaVersion": 1,
+  "job": "bg_84",
+  "actualSuccessfulObserverCompletion": true,
+  "actualSeconds": 1508.67,
+  "nativeInput": {
+    "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/frozen-inputs/native-manifest-receipt3.json",
+    "kind": "file",
+    "sha256": "1ab619049f6fa609cec61d0471dceb4ca61ad6fe57e7f2d3652a632c10f114e9"
+  },
+  "receipt": {
+    "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/native-receipt3-runs/g8-native-smoke/receipt.json",
+    "kind": "file",
+    "sha256": "605b503bebc35d51cfcded1ea4f475a2c3f5163ba7d0cd5866e733095e0e0c4f"
+  },
+  "actualUuid": "c2451ec5-54bb-4fe3-b41b-a9980823ffd3",
+  "actualParentSessionId": "e119d6ac-04b3-4be8-a6ae-2e44c9bd8001",
+  "scored": false,
+  "accountingComplete": true,
+  "accountingBlockers": [],
+  "nativeChildren": 6,
+  "nativeTokens": 7659280,
+  "nativeModelTools": 144,
+  "canonicalCallerAttempts": 2,
+  "canonicalSdkCalls": 2,
+  "sdkNominalCostUsd": 0.036157248,
+  "nativeNominalCostUsd": null,
+  "gatewayInvoice": null,
+  "keeperAggregate": null,
+  "businessResult": {
+    "ok": false,
+    "state": "missed",
+    "route": "proceed",
+    "stageReached": "Repair",
+    "pr": null,
+    "checks": "pending",
+    "head": "95f8eb687f0ad552631c39f715ba929d031a90d9",
+    "repairs": 0,
+    "blockedReason": "The repair loop ended after 0 of 2 round(s) \u2014 the fixer returned nothing, or reported it could not close the problems inside the declared file set with a red gate. The branch and the commit stand; nothing was pushed, and nothing was removed."
+  },
+  "businessReview": "SHIP",
+  "businessGate": {
+    "exitCode": 1,
+    "failCount": 35,
+    "failingTests": [
+      "probe errors keep the item with a reason > outside a git repository: enumeration failure is surfaced; null root emits nothing",
+      "checkTrackedMachineState (committed machine-local .genie state) > outside git, or where the index cannot be read, it warns with the reason instead of passing",
+      "the real CLI never paints a piped stream (m15) > FORCE_COLOR still opts a piped stdout in \u2014 the sink is a policy, not a blanket strip",
+      "CLI diagnostics on a non-TTY stderr (m15) > FORCE_COLOR still opts a non-TTY in \u2014 the gate is a policy, not a blanket strip",
+      "genie init > non-git directory: refuses with exit 1 and clear stderr",
+      "shared integration policy > a git failure resolves to null specifically \u2014 never a throw, never a guess",
+      "per-repo verbs refuse the global database > a cwd whose .genie IS GENIE_HOME errors clearly and writes no per-repo schema",
+      "verifyCitations > a deleted file in review-prep is not a failed citation",
+      "facts inside the boundary > the boundary opens BEFORE the facts, and every facts command runs inside it",
+      "agent resolution and the run ledger > outside any git checkout the trusted root is the cwd and the agents are the shipped ones",
+      "agent resolution and the run ledger > the ledger stays in a repository that tracks .mikro, and lands under GENIE_HOME otherwise",
+      "agent resolution and the run ledger > a repository with no .mikro runs the shipped agent and writes nothing into the payload",
+      "no trusted ref fails CLOSED on configuration > outside any git checkout the carve-out stands: --dir = cwd is still accepted",
+      "a git that cannot answer is IN a repository, not outside one > (3) a plain directory with git present and --dir = cwd keeps the carve-out",
+      "a git that cannot answer is IN a repository, not outside one > a git whose refusal is LOCALIZED still reaches the carve-out",
+      "a git that cannot answer is IN a repository, not outside one > (4) a plain directory with no git binary either is still the carve-out",
+      "global-database separation guard > refuses a cwd whose .genie IS GENIE_HOME, and creates nothing",
+      "global-database separation guard > the refusal names the collision and how to get out of it",
+      "workspace precondition > a directory with no .genie/ is not a workspace; the directory alone makes it one",
+      "sync-marker hash-algorithm migration > a legacy marker + a pulled snapshot imports (never diverges) and rewrites the marker as the current version",
+      "sync-marker hash-algorithm migration > an unversioned marker holding CANONICAL hashes (the intermediate build) also imports",
+      "sync-marker hash-algorithm migration > a legacy marker with only local board edits exports, and the file keeps every card",
+      "sync-marker hash-algorithm migration > every baseline this build stamps carries hashVersion 2 (sync, export, import)",
+      "v6 upgrade: a pre-v6 baseline is not a divergence > a pulled teammate change imports, never diverges, and re-stamps the marker",
+      "v6 upgrade: a pre-v6 baseline is not a divergence > an untouched pre-v6 checkout reads as in-sync, not as a change on both sides",
+      "v6 upgrade: a pre-v6 baseline is not a divergence > a local edit on a pre-v6 baseline exports, and the file keeps every card",
+      "v6 upgrade: a pre-v6 baseline is not a divergence > a timeline-only difference across the upgrade still merges instead of diverging",
+      "canonical snapshot bytes > neither db rewrites the other machine`s file: sync settles as a no-op both ways",
+      "legacy-ordered snapshot bytes > a legacy-ordered file matching the board is normalized in place, and the sync says so",
+      "legacy-ordered snapshot bytes > an imported legacy-ordered snapshot is normalized in the same run",
+      "legacy-ordered snapshot bytes > after the one-off reordering, a one-task change diffs as one task",
+      "declared routing \u2014 roadmap snapshot round-trip (roadmap-sync lockstep) > an equal file/db pair refreshes an old order-sensitive marker without changing the board",
+      "declared routing \u2014 roadmap snapshot round-trip (roadmap-sync lockstep) > diverged only in the card timeline merges both sides and republishes (the conversation is global)",
+      "declared routing \u2014 roadmap snapshot round-trip (roadmap-sync lockstep) > an old order-sensitive marker with pending edits publishes them (db-only change)",
+      "declared routing \u2014 roadmap snapshot round-trip (roadmap-sync lockstep) > introducing the assignment columns does not flip an in-sync repo to diverged"
+    ],
+    "summaryLine": "Ran 3194 tests across 156 files. [534.27s]"
+  },
+  "savedResultEvidence": {
+    "ok": false,
+    "state": "missed",
+    "route": "proceed",
+    "contract": {
+      "core": "readRows returns null (not []) for any ledger candidate it did not actually read, and readOffloadRows treats a repository as measured only when at least one of its own <checkout>/.mikro/runs/*.jsonl files was actually read, so a directory-only ledger yields null while a readable empty ledger yields a measured 0.",
+      "cuttable": [
+        "an additional end-to-end CLI test under src/term-commands/metrics.test.ts (not in the declared file set)",
+        "documentation-only edits to the CLAUDE.md metrics row",
+        "extra coverage of registered-worktree ledger variants beyond the single root checkout exercised by the regression",
+        "comment, naming and style polish that does not change the read-vs-name decision"
+      ],
+      "oracle": "bun test src/lib/metrics-export.test.ts",
+      "validationCommand": "bun test src/lib/metrics-export.test.ts",
+      "validationRefused": "",
+      "checkCommand": "bun run check",
+      "checkRefused": "",
+      "installCommand": "bun install --frozen-lockfile",
+      "installRefused": "",
+      "commandSource": {
+        "check": "caller",
+        "install": "caller",
+        "validation": "caller"
+      },
+      "commandEvidence": [],
+      "files": [
+        "src/lib/metrics-offload.ts",
+        "src/lib/metrics-export.test.ts"
+      ],
+      "acceptanceCriteria": [
+        "readRows in src/lib/metrics-offload.ts returns null, not an empty row array, for every candidate whose readFileSync did not actually read it \u2014 absent (ENOENT/ENOTDIR), a directory (EISDIR), or any thrown read error. Falsified if any non-reading branch of readRows still resolves to [] / an empty rows array.",
+        "readOffloadRows in src/lib/metrics-offload.ts no longer lets a merely-named own ledger candidate establish measurement: a repository whose only <checkout>/.mikro/runs/*.jsonl entry is a directory returns null (no ledger), never a measured 0. Falsified if the measurement predicate still counts candidates by name (e.g. ownFiles.length > 0) or if such a repository reports attempts 0 / tokens 0 instead of null.",
+        "A readable empty ledger file is still a measured 0: readRows returns an empty array only for a file it actually read, so a repository with a readable empty *.jsonl ledger reports attempts 0 and tokens 0. Falsified if a readable empty ledger yields null.",
+        "The #3125 guard is preserved: a non-absent read failure (not ENOENT/ENOTDIR/EISDIR) still makes the repository unknown/null rather than a measured 0 or a partial total. Falsified if a non-absent read failure produces a measured 0 or a partial total.",
+        "src/lib/metrics-export.test.ts adds a regression that asserts a directory-only ledger yields null and a readable empty ledger yields a measured 0, and that regression fails on the pre-change readRows/readOffloadRows behavior. Falsified if no assertion covers the directory-only \u2192 null case, or if the added test would still pass under the unchanged name-only measured predicate."
+      ]
+    },
+    "estimate": {
+      "files": 2,
+      "insertions": 33,
+      "units": 1
+    },
+    "sizeVerdict": {
+      "files": 2,
+      "insertions": 33,
+      "units": 1,
+      "exceeded": [],
+      "advice": [],
+      "missing": false,
+      "band": "ideal",
+      "summary": "inside the ideal band"
+    },
+    "diff": {
+      "files": 2,
+      "insertions": 40,
+      "measured": true,
+      "band": "ideal",
+      "summary": "inside the ideal band"
+    },
+    "head": "95f8eb687f0ad552631c39f715ba929d031a90d9",
+    "branch": "wish/g8-native-smoke",
+    "worktree": "/home/genie/.local/share/mikro-engine-split/experiments-g8/native-receipt3/g8-native-smoke/.claude/worktrees/wish-g8-native-smoke",
+    "pr": null,
+    "checks": "pending",
+    "review": {
+      "verdict": "SHIP",
+      "mikro": {
+        "agent": "review-prep",
+        "ok": true,
+        "costUsd": 0.01,
+        "seconds": 47.157,
+        "usedFacts": 5,
+        "usedFiles": 2
+      },
+      "findings": [
+        {
+          "severity": "note",
+          "criterion": "readRows in src/lib/metrics-offload.ts returns null, not an empty row array, for every candidate whose readFileSync did not actually read it \u2014 absent (ENOENT/ENOTDIR), a directory (EISDIR), or any thrown read error.",
+          "claim": "Met. readRows is now typed `OffloadRow[] | null` (src/lib/metrics-offload.ts:81) and its one catch block returns null for every readFileSync throw (line 87, independent of errno); only a successful read falls through to the row loop and its `return rows` (line 109). No non-reading branch resolves to [] and readRows is module-private (only callers are lines 155 and 165), so the type change breaks no other caller.",
+          "provenance": "src/lib/metrics-offload.ts:81-88,109 (read via read tool; grep 'readRows' in src shows only this file)"
+        },
+        {
+          "severity": "note",
+          "criterion": "readOffloadRows in src/lib/metrics-offload.ts no longer lets a merely-named own ledger candidate establish measurement: a repository whose only <checkout>/.mikro/runs/*.jsonl entry is a directory returns null (no ledger), never a measured 0. Falsified if the measurement predicate still counts candidates by name (e.g. ownFiles.length > 0) or if such a repository reports attempts 0 / tokens 0 instead of null.",
+          "claim": "Met. ownFiles is only iterated (lines 154-159); ownRead flips true only after readRows returns non-null, and the terminal predicate is `return ownRead || kept.length > 0 ? kept : null;` (line 173), which never consults ownFiles.length. A runs dir whose only *.jsonl entry is a directory (readFileSync throws EISDIR -> isAbsent true -> null, unreadable untouched) leaves ownRead=false and kept=[], so readOffloadRows returns null; buildIntervals assigns that null to interval.offload (metrics-export.ts:217).",
+          "provenance": "src/lib/metrics-offload.ts:152-159,173; confirmed by read of src/lib/metrics-export.ts:182-186,214-218"
+        },
+        {
+          "severity": "note",
+          "criterion": "A readable empty ledger file is still a measured 0: readRows returns an empty array only for a file it actually read, so a repository with a readable empty *.jsonl ledger reports attempts 0 and tokens 0. Falsified if a readable empty ledger yields null.",
+          "claim": "Met. A successful readFileSync of an empty file yields rows=[] and returns it (line 109), not null; readOffloadRows then sets ownRead=true (lines 155-158) and returns kept=[] via line 173. offloadInWindow([], ...) computes attempts 0, failed 0, ambiguous 0, tokens 0, costUsd 0 \u2014 exactly the object the regression asserts.",
+          "provenance": "src/lib/metrics-offload.ts:89,109,155-158,173; src/lib/metrics-offload.ts:188-201 (offloadInWindow); src/lib/metrics-export.test.ts:482-483"
+        },
+        {
+          "severity": "note",
+          "criterion": "The #3125 guard is preserved: a non-absent read failure (not ENOENT/ENOTDIR/EISDIR) still makes the repository unknown/null rather than a measured 0 or a partial total. Falsified if a non-absent read failure produces a measured 0 or a partial total.",
+          "claim": "Met. isAbsent still covers only ENOENT/ENOTDIR/EISDIR (lines 65-69); any other failure sets seen.unreadable=true (line 86 in readRows; also line 75 in listDir and line 134 in repoCheckouts), and line 171 `if (seen.unreadable) return null;` executes before the ownRead/kept return, so the unreadable signal outranks any readable partial total. The retained parent test at metrics-export.test.ts:406-466 still pins this (EACCES cases at lines 426, 429, 439, 448, 454).",
+          "provenance": "src/lib/metrics-offload.ts:65-69,86,171; src/lib/metrics-export.test.ts:406-466"
+        },
+        {
+          "severity": "note",
+          "criterion": "src/lib/metrics-export.test.ts adds a regression that asserts a directory-only ledger yields null and a readable empty ledger yields a measured 0, and that regression fails on the pre-change readRows/readOffloadRows behavior. Falsified if no assertion covers the directory-only -> null case, or if the added test would still pass under the unchanged name-only measured predicate.",
+          "claim": "Met. The added test (metrics-export.test.ts:468-484) first creates only a directory named wish-context.jsonl under <root>/repo/.mikro/runs and asserts `expect(offload()).toBeNull()` (line 480), then writes an empty readable review-prep.jsonl and asserts toEqual({attempts:0,failed:0,ambiguous:0,tokens:0,costUsd:0}) (line 483). Under the parent revision the diff shows readRows returned [] on the EISDIR catch and the predicate was `rows.length > 0 || ownFiles.length > 0`, so the directory alone set ownFiles.length=1 and readOffloadRows returned [] -> a measured-0 offload object, making line 480's toBeNull() fail. The test thus fails on pre-change behavior; GENIE_HOME is isolated to <root>/genie (test lines 25-26) so no machine ledger can make the first assertion pass for the wrong reason.",
+          "provenance": "src/lib/metrics-export.test.ts:468-484,17-33; quoted from `git diff 95f8eb687^ 95f8eb687`: `-    return [];` and `-  return rows.length > 0 || ownFiles.length > 0 ? rows : null;`"
+        }
+      ],
+      "blocking": [],
+      "diffFiles": [
+        "src/lib/metrics-export.test.ts",
+        "src/lib/metrics-offload.ts"
+      ],
+      "denylistHits": [],
+      "outsideDeclared": [],
+      "criteriaAddedAfterReading": []
+    },
+    "gate": {
+      "hookSystem": "husky",
+      "noHookSystem": false,
+      "hookEvidence": [
+        "git ls-files -- .husky .githooks .lefthook .pre-commit-config.yaml 'lefthook.*' '.lefthook.*' '.simple-git-hooks*' printed .husky/commit-msg, .husky/post-checkout, .husky/post-merge, .husky/post-rewrite, .husky/pre-commit, .husky/pre-push \u2014 so .husky/ is tracked (husky)",
+        "git config --get core.hooksPath printed .husky/_ and exited 0",
+        "ls \"$(git rev-parse --git-path hooks)\" listed applypatch-msg, commit-msg, h, husky.sh, post-applypatch, post-checkout, post-commit, post-merge, post-rewrite, pre-applypatch, pre-auto-gc, pre-commit, pre-merge-commit, pre-push, pre-rebase, prepare-commit-msg (the resolved hooks directory is .husky/_)",
+        "liveness command printed live: /home/genie/.local/share/mikro-engine-split/experiments-g8/native-receipt3/g8-native-smoke/.claude/worktrees/wish-g8-native-smoke/.husky/_/pre-push and exited 0"
+      ],
+      "hooksLive": true,
+      "hooksReason": "Ran the liveness assertion from inside the worktree: it printed \"live: /home/genie/.local/share/mikro-engine-split/experiments-g8/native-receipt3/g8-native-smoke/.claude/worktrees/wish-g8-native-smoke/.husky/_/pre-push\" and exited 0, so hooks are live.",
+      "exitCode": 1,
+      "failCount": 35,
+      "failingTests": [
+        "probe errors keep the item with a reason > outside a git repository: enumeration failure is surfaced; null root emits nothing",
+        "checkTrackedMachineState (committed machine-local .genie state) > outside git, or where the index cannot be read, it warns with the reason instead of passing",
+        "the real CLI never paints a piped stream (m15) > FORCE_COLOR still opts a piped stdout in \u2014 the sink is a policy, not a blanket strip",
+        "CLI diagnostics on a non-TTY stderr (m15) > FORCE_COLOR still opts a non-TTY in \u2014 the gate is a policy, not a blanket strip",
+        "genie init > non-git directory: refuses with exit 1 and clear stderr",
+        "shared integration policy > a git failure resolves to null specifically \u2014 never a throw, never a guess",
+        "per-repo verbs refuse the global database > a cwd whose .genie IS GENIE_HOME errors clearly and writes no per-repo schema",
+        "verifyCitations > a deleted file in review-prep is not a failed citation",
+        "facts inside the boundary > the boundary opens BEFORE the facts, and every facts command runs inside it",
+        "agent resolution and the run ledger > outside any git checkout the trusted root is the cwd and the agents are the shipped ones",
+        "agent resolution and the run ledger > the ledger stays in a repository that tracks .mikro, and lands under GENIE_HOME otherwise",
+        "agent resolution and the run ledger > a repository with no .mikro runs the shipped agent and writes nothing into the payload",
+        "no trusted ref fails CLOSED on configuration > outside any git checkout the carve-out stands: --dir = cwd is still accepted",
+        "a git that cannot answer is IN a repository, not outside one > (3) a plain directory with git present and --dir = cwd keeps the carve-out",
+        "a git that cannot answer is IN a repository, not outside one > a git whose refusal is LOCALIZED still reaches the carve-out",
+        "a git that cannot answer is IN a repository, not outside one > (4) a plain directory with no git binary either is still the carve-out",
+        "global-database separation guard > refuses a cwd whose .genie IS GENIE_HOME, and creates nothing",
+        "global-database separation guard > the refusal names the collision and how to get out of it",
+        "workspace precondition > a directory with no .genie/ is not a workspace; the directory alone makes it one",
+        "sync-marker hash-algorithm migration > a legacy marker + a pulled snapshot imports (never diverges) and rewrites the marker as the current version",
+        "sync-marker hash-algorithm migration > an unversioned marker holding CANONICAL hashes (the intermediate build) also imports",
+        "sync-marker hash-algorithm migration > a legacy marker with only local board edits exports, and the file keeps every card",
+        "sync-marker hash-algorithm migration > every baseline this build stamps carries hashVersion 2 (sync, export, import)",
+        "v6 upgrade: a pre-v6 baseline is not a divergence > a pulled teammate change imports, never diverges, and re-stamps the marker",
+        "v6 upgrade: a pre-v6 baseline is not a divergence > an untouched pre-v6 checkout reads as in-sync, not as a change on both sides",
+        "v6 upgrade: a pre-v6 baseline is not a divergence > a local edit on a pre-v6 baseline exports, and the file keeps every card",
+        "v6 upgrade: a pre-v6 baseline is not a divergence > a timeline-only difference across the upgrade still merges instead of diverging",
+        "canonical snapshot bytes > neither db rewrites the other machine`s file: sync settles as a no-op both ways",
+        "legacy-ordered snapshot bytes > a legacy-ordered file matching the board is normalized in place, and the sync says so",
+        "legacy-ordered snapshot bytes > an imported legacy-ordered snapshot is normalized in the same run",
+        "legacy-ordered snapshot bytes > after the one-off reordering, a one-task change diffs as one task",
+        "declared routing \u2014 roadmap snapshot round-trip (roadmap-sync lockstep) > an equal file/db pair refreshes an old order-sensitive marker without changing the board",
+        "declared routing \u2014 roadmap snapshot round-trip (roadmap-sync lockstep) > diverged only in the card timeline merges both sides and republishes (the conversation is global)",
+        "declared routing \u2014 roadmap snapshot round-trip (roadmap-sync lockstep) > an old order-sensitive marker with pending edits publishes them (db-only change)",
+        "declared routing \u2014 roadmap snapshot round-trip (roadmap-sync lockstep) > introducing the assignment columns does not flip an in-sync repo to diverged"
+      ],
+      "problems": [
+        "(fail) probe errors keep the item with a reason > outside a git repository: enumeration failure is surfaced; null root emits nothing [75.55ms]",
+        "(fail) checkTrackedMachineState (committed machine-local .genie state) > outside git, or where the index cannot be read, it warns with the reason instead of passing [18.02ms]",
+        "(fail) the real CLI never paints a piped stream (m15) > FORCE_COLOR still opts a piped stdout in \u2014 the sink is a policy, not a blanket strip [469.78ms]",
+        "(fail) CLI diagnostics on a non-TTY stderr (m15) > FORCE_COLOR still opts a non-TTY in \u2014 the gate is a policy, not a blanket strip [234.26ms]",
+        "(fail) genie init > non-git directory: refuses with exit 1 and clear stderr [216.79ms]",
+        "(fail) shared integration policy > a git failure resolves to null specifically \u2014 never a throw, never a guess [6.35ms]",
+        "(fail) per-repo verbs refuse the global database > a cwd whose .genie IS GENIE_HOME errors clearly and writes no per-repo schema [306.71ms]",
+        "(fail) verifyCitations > a deleted file in review-prep is not a failed citation [30.51ms]",
+        "(fail) facts inside the boundary > the boundary opens BEFORE the facts, and every facts command runs inside it [46.48ms]",
+        "(fail) agent resolution and the run ledger > outside any git checkout the trusted root is the cwd and the agents are the shipped ones [56.03ms]",
+        "(fail) agent resolution and the run ledger > the ledger stays in a repository that tracks .mikro, and lands under GENIE_HOME otherwise [53.63ms]",
+        "(fail) agent resolution and the run ledger > a repository with no .mikro runs the shipped agent and writes nothing into the payload [5000.58ms]",
+        "^ this test timed out after 5000ms.",
+        "(fail) no trusted ref fails CLOSED on configuration > outside any git checkout the carve-out stands: --dir = cwd is still accepted [89.56ms]",
+        "(fail) a git that cannot answer is IN a repository, not outside one > (3) a plain directory with git present and --dir = cwd keeps the carve-out [169.05ms]",
+        "(fail) a git that cannot answer is IN a repository, not outside one > a git whose refusal is LOCALIZED still reaches the carve-out [118.51ms]",
+        "(fail) a git that cannot answer is IN a repository, not outside one > (4) a plain directory with no git binary either is still the carve-out [91.83ms]",
+        "(fail) global-database separation guard > refuses a cwd whose .genie IS GENIE_HOME, and creates nothing [5.91ms]",
+        "(fail) global-database separation guard > the refusal names the collision and how to get out of it [6.55ms]",
+        "(fail) workspace precondition > a directory with no .genie/ is not a workspace; the directory alone makes it one [6.13ms]",
+        "(fail) sync-marker hash-algorithm migration > a legacy marker + a pulled snapshot imports (never diverges) and rewrites the marker as the current version [117.20ms]",
+        "(fail) sync-marker hash-algorithm migration > an unversioned marker holding CANONICAL hashes (the intermediate build) also imports [109.09ms]",
+        "(fail) sync-marker hash-algorithm migration > a legacy marker with only local board edits exports, and the file keeps every card [59.85ms]",
+        "(fail) sync-marker hash-algorithm migration > every baseline this build stamps carries hashVersion 2 (sync, export, import) [62.65ms]",
+        "(fail) v6 upgrade: a pre-v6 baseline is not a divergence > a pulled teammate change imports, never diverges, and re-stamps the marker [134.52ms]",
+        "(fail) v6 upgrade: a pre-v6 baseline is not a divergence > an untouched pre-v6 checkout reads as in-sync, not as a change on both sides [64.05ms]",
+        "(fail) v6 upgrade: a pre-v6 baseline is not a divergence > a local edit on a pre-v6 baseline exports, and the file keeps every card [61.75ms]",
+        "(fail) v6 upgrade: a pre-v6 baseline is not a divergence > a timeline-only difference across the upgrade still merges instead of diverging [62.63ms]",
+        "(fail) canonical snapshot bytes > neither db rewrites the other machine`s file: sync settles as a no-op both ways [55.01ms]",
+        "(fail) legacy-ordered snapshot bytes > a legacy-ordered file matching the board is normalized in place, and the sync says so [98.32ms]",
+        "(fail) legacy-ordered snapshot bytes > an imported legacy-ordered snapshot is normalized in the same run [67.94ms]",
+        "(fail) legacy-ordered snapshot bytes > after the one-off reordering, a one-task change diffs as one task [58.83ms]",
+        "(fail) declared routing \u2014 roadmap snapshot round-trip (roadmap-sync lockstep) > an equal file/db pair refreshes an old order-sensitive marker without changing the board [71.62ms]",
+        "(fail) declared routing \u2014 roadmap snapshot round-trip (roadmap-sync lockstep) > diverged only in the card timeline merges both sides and republishes (the conversation is global) [68.56ms]",
+        "(fail) declared routing \u2014 roadmap snapshot round-trip (roadmap-sync lockstep) > an old order-sensitive marker with pending edits publishes them (db-only change) [65.82ms]",
+        "(fail) declared routing \u2014 roadmap snapshot round-trip (roadmap-sync lockstep) > introducing the assignment columns does not flip an in-sync repo to diverged [106.68ms]"
+      ],
+      "summaryLine": "Ran 3194 tests across 156 files. [534.27s]",
+      "darwinTolerated": false,
+      "baseReconfirmed": [],
+      "changedFiles": 2,
+      "insertions": 40,
+      "pass": false
+    },
+    "gateCommand": {
+      "command": "bun run check",
+      "mode": "check"
+    },
+    "repairs": 0,
+    "rounds": [
+      {
+        "round": 1,
+        "status": "unable",
+        "filesTouched": [],
+        "head": "",
+        "changeNote": "No in-scope change is possible: src/lib/metrics-offload.ts already returns null from readRows for any candidate it did not read and measures a repository only when an own .mikro/runs/*.jsonl was read (or a readable machine-ledger row exists in scope), and src/lib/metrics-export.test.ts already pins the directory-only\u2192null / readable-empty\u2192measured-0 cases; the focused oracle passes 18/18 at the base commit. All 35 still-open gate failures live in other test files and are environment-induced in this harness (TMPDIR inside the checkout makes \"outside any git repository\" fixtures resolve to one; NO_COLOR=1 is exported; git/mikro/facts fixtures fail on host probes), each reproduced failing in isolation, so no edit to the two declared files can close them.",
+        "stillOpen": [
+          {
+            "problem": "gate: (fail) probe errors keep the item with a reason > outside a git repository: enumeration failure is surfaced; null root emits nothing",
+            "why": "Owned by src/genie-commands/doctor-modes.test.ts, outside the declared set. Fails in isolation because TMPDIR is inside the checkout, so the fixture meant to be outside any git repository resolves to one (the drift scan returned 17422 entries)."
+          },
+          {
+            "problem": "gate: (fail) checkTrackedMachineState (committed machine-local .genie state) > outside git, or where the index cannot be read, it warns with the reason instead of passing",
+            "why": "Owned by a doctor test outside the declared set. Fails in isolation because the sandbox TMPDIR is inside the checkout, so the 'outside git' precondition is not met."
+          },
+          {
+            "problem": "gate: (fail) the real CLI never paints a piped stream (m15) > FORCE_COLOR still opts a piped stdout in \u2014 the sink is a policy, not a blanket strip",
+            "why": "Owned by src/lib/term-output.test.ts, outside the declared set. Fails in isolation because the harness exports NO_COLOR=1, which the spawned CLI inherits alongside the test's FORCE_COLOR."
+          },
+          {
+            "problem": "gate: (fail) CLI diagnostics on a non-TTY stderr (m15) > FORCE_COLOR still opts a non-TTY in \u2014 the gate is a policy, not a blanket strip",
+            "why": "Owned by src/lib/term-color.test.ts, outside the declared set. Fails in isolation because the harness exports NO_COLOR=1; no metrics-file edit affects color policy."
+          },
+          {
+            "problem": "gate: (fail) genie init > non-git directory: refuses with exit 1 and clear stderr",
+            "why": "Owned by an init test outside the declared set. Fails in isolation because TMPDIR is inside the checkout, so the 'non-git directory' fixture is inside a git repository."
+          },
+          {
+            "problem": "gate: (fail) shared integration policy > a git failure resolves to null specifically \u2014 never a throw, never a guess",
+            "why": "Owned by a lib test outside the declared set; the git-failure simulation is host/TMPDIR dependent and was reproduced failing in isolation."
+          },
+          {
+            "problem": "gate: (fail) per-repo verbs refuse the global database > a cwd whose .genie IS GENIE_HOME errors clearly and writes no per-repo schema",
+            "why": "Owned by a v5/global-db test outside the declared set; GENIE_HOME/cwd resolution is environment-dependent and failed in isolation."
+          },
+          {
+            "problem": "gate: (fail) verifyCitations > a deleted file in review-prep is not a failed citation",
+            "why": "Owned by scripts/mikro/call.test.ts (or a facts test), outside the declared set; the failure is host git/mikro behavior, reproduced in isolation, unrelated to the ledger-read semantics."
+          },
+          {
+            "problem": "gate: (fail) facts inside the boundary > the boundary opens BEFORE the facts, and every facts command runs inside it",
+            "why": "Owned by scripts/mikro/boundary.test.ts, outside the declared set; the sandbox cannot run the boundary probes as the test expects."
+          },
+          {
+            "problem": "gate: (fail) agent resolution and the run ledger > outside any git checkout the trusted root is the cwd and the agents are the shipped ones",
+            "why": "Owned by scripts/mikro/call.test.ts, outside the declared set; the non-git carve-out probe depends on the sandbox TMPDIR being outside the checkout, which it is not."
+          },
+          {
+            "problem": "gate: (fail) agent resolution and the run ledger > the ledger stays in a repository that tracks .mikro, and lands under GENIE_HOME otherwise",
+            "why": "Owned by scripts/mikro/call.test.ts, outside the declared set; the observed ledger path differed because the sandbox repository detection/GENIE_HOME layout differs."
+          },
+          {
+            "problem": "gate: (fail) agent resolution and the run ledger > a repository with no .mikro runs the shipped agent and writes nothing into the payload",
+            "why": "Owned by scripts/mikro/call.test.ts, outside the declared set; it timed out at 5000ms because the spawned mikro/git probe did not return in this sandbox, not because of the declared ledger semantics."
+          },
+          {
+            "problem": "gate: (fail) no trusted ref fails CLOSED on configuration > outside any git checkout the carve-out stands: --dir = cwd is still accepted",
+            "why": "Owned by scripts/mikro/call.test.ts, outside the declared set; TMPDIR inside the checkout defeats the 'outside any git checkout' precondition."
+          },
+          {
+            "problem": "gate: (fail) a git that cannot answer is IN a repository, not outside one > (3) a plain directory with git present and --dir = cwd keeps the carve-out",
+            "why": "Owned by scripts/mikro/call.test.ts, outside the declared set; environment-dependent git probe, reproduced failing in isolation."
+          },
+          {
+            "problem": "gate: (fail) a git that cannot answer is IN a repository, not outside one > a git whose refusal is LOCALIZED still reaches the carve-out",
+            "why": "Owned by scripts/mikro/call.test.ts, outside the declared set; environment-dependent git refusal simulation, reproduced failing in isolation."
+          },
+          {
+            "problem": "gate: (fail) a git that cannot answer is IN a repository, not outside one > (4) a plain directory with no git binary either is still the carve-out",
+            "why": "Owned by scripts/mikro/call.test.ts, outside the declared set; PATH/git-absence simulation is host-dependent, reproduced failing in isolation."
+          },
+          {
+            "problem": "gate: (fail) global-database separation guard > refuses a cwd whose .genie IS GENIE_HOME, and creates nothing",
+            "why": "Owned by a v5/global-db test outside the declared set; GENIE_HOME collision detection is unrelated to metrics-offload.ts and failed in isolation."
+          },
+          {
+            "problem": "gate: (fail) global-database separation guard > the refusal names the collision and how to get out of it",
+            "why": "Same as above: outside the declared set and environment-dependent; no metrics-file edit affects it."
+          },
+          {
+            "problem": "gate: (fail) workspace precondition > a directory with no .genie/ is not a workspace; the directory alone makes it one",
+            "why": "Owned by a workspace-precondition test outside the declared set; TMPDIR inside the checkout supplies a .genie above the fixture."
+          },
+          {
+            "problem": "gate: (fail) sync-marker hash-algorithm migration > a legacy marker + a pulled snapshot imports (never diverges) and rewrites the marker as the current version",
+            "why": "Owned by the v5 sync-marker test outside the declared set; the roadmap/sync fixture behavior is host git/tmpdir dependent, reproduced failing in isolation."
+          },
+          {
+            "problem": "gate: (fail) sync-marker hash-algorithm migration > an unversioned marker holding CANONICAL hashes (the intermediate build) also imports",
+            "why": "Owned by the v5 sync-marker test outside the declared set; environment-dependent fixture, reproduced failing in isolation."
+          },
+          {
+            "problem": "gate: (fail) sync-marker hash-algorithm migration > a legacy marker with only local board edits exports, and the file keeps every card",
+            "why": "Owned by the v5 sync-marker test outside the declared set; environment-dependent fixture, reproduced failing in isolation."
+          },
+          {
+            "problem": "gate: (fail) sync-marker hash-algorithm migration > every baseline this build stamps carries hashVersion 2 (sync, export, import)",
+            "why": "Owned by the v5 sync-marker test outside the declared set; environment-dependent fixture, reproduced failing in isolation."
+          },
+          {
+            "problem": "gate: (fail) v6 upgrade: a pre-v6 baseline is not a divergence > a pulled teammate change imports, never diverges, and re-stamps the marker",
+            "why": "Owned by the v6-upgrade roadmap test outside the declared set; environment-dependent git/tmpdir fixture, reproduced failing in isolation."
+          },
+          {
+            "problem": "gate: (fail) v6 upgrade: a pre-v6 baseline is not a divergence > an untouched pre-v6 checkout reads as in-sync, not as a change on both sides",
+            "why": "Owned by the v6-upgrade roadmap test outside the declared set; environment-dependent fixture, reproduced failing in isolation."
+          },
+          {
+            "problem": "gate: (fail) v6 upgrade: a pre-v6 baseline is not a divergence > a local edit on a pre-v6 baseline exports, and the file keeps every card",
+            "why": "Owned by the v6-upgrade roadmap test outside the declared set; environment-dependent fixture, reproduced failing in isolation."
+          },
+          {
+            "problem": "gate: (fail) v6 upgrade: a pre-v6 baseline is not a divergence > a timeline-only difference across the upgrade still merges instead of diverging",
+            "why": "Owned by the v6-upgrade roadmap test outside the declared set; environment-dependent fixture, reproduced failing in isolation."
+          },
+          {
+            "problem": "gate: (fail) canonical snapshot bytes > neither db rewrites the other machine`s file: sync settles as a no-op both ways",
+            "why": "Owned by a roadmap-snapshot test outside the declared set; environment-dependent git/tmpdir fixture, reproduced failing in isolation."
+          },
+          {
+            "problem": "gate: (fail) legacy-ordered snapshot bytes > a legacy-ordered file matching the board is normalized in place, and the sync says so",
+            "why": "Owned by a roadmap-snapshot test outside the declared set; environment-dependent fixture, reproduced failing in isolation."
+          },
+          {
+            "problem": "gate: (fail) legacy-ordered snapshot bytes > an imported legacy-ordered snapshot is normalized in the same run",
+            "why": "Owned by a roadmap-snapshot test outside the declared set; environment-dependent fixture, reproduced failing in isolation."
+          },
+          {
+            "problem": "gate: (fail) legacy-ordered snapshot bytes > after the one-off reordering, a one-task change diffs as one task",
+            "why": "Owned by a roadmap-snapshot test outside the declared set; environment-dependent fixture, reproduced failing in isolation."
+          },
+          {
+            "problem": "gate: (fail) declared routing \u2014 roadmap snapshot round-trip (roadmap-sync lockstep) > an equal file/db pair refreshes an old order-sensitive marker without changing the board",
+            "why": "Owned by a declared-routing/roadmap test outside the declared set; environment-dependent git/tmpdir fixture, reproduced failing in isolation."
+          },
+          {
+            "problem": "gate: (fail) declared routing \u2014 roadmap snapshot round-trip (roadmap-sync lockstep) > diverged only in the card timeline merges both sides and republishes (the conversation is global)",
+            "why": "Owned by a declared-routing/roadmap test outside the declared set; environment-dependent fixture, reproduced failing in isolation."
+          },
+          {
+            "problem": "gate: (fail) declared routing \u2014 roadmap snapshot round-trip (roadmap-sync lockstep) > an old order-sensitive marker with pending edits publishes them (db-only change)",
+            "why": "Owned by a declared-routing/roadmap test outside the declared set; environment-dependent fixture, reproduced failing in isolation."
+          },
+          {
+            "problem": "gate: (fail) declared routing \u2014 roadmap snapshot round-trip (roadmap-sync lockstep) > introducing the assignment columns does not flip an in-sync repo to diverged",
+            "why": "Owned by a declared-routing/roadmap test outside the declared set; environment-dependent fixture, reproduced failing in isolation."
+          }
+        ],
+        "gate": {
+          "hookSystem": "husky",
+          "noHookSystem": false,
+          "hookEvidence": [
+            "git ls-files -- .husky .githooks .lefthook .pre-commit-config.yaml 'lefthook.*' '.lefthook.*' '.simple-git-hooks*' printed .husky/commit-msg, .husky/post-checkout, .husky/post-merge, .husky/post-rewrite, .husky/pre-commit, .husky/pre-push \u2014 so .husky/ is tracked (husky)",
+            "git config --get core.hooksPath printed .husky/_ and exited 0",
+            "ls \"$(git rev-parse --git-path hooks)\" listed applypatch-msg, commit-msg, h, husky.sh, post-applypatch, post-checkout, post-commit, post-merge, post-rewrite, pre-applypatch, pre-auto-gc, pre-commit, pre-merge-commit, pre-push, pre-rebase, prepare-commit-msg (the resolved hooks directory is .husky/_)",
+            "liveness command printed live: /home/genie/.local/share/mikro-engine-split/experiments-g8/native-receipt3/g8-native-smoke/.claude/worktrees/wish-g8-native-smoke/.husky/_/pre-push and exited 0"
+          ],
+          "hooksLive": true,
+          "hooksReason": "Ran the liveness assertion from inside the worktree: it printed \"live: /home/genie/.local/share/mikro-engine-split/experiments-g8/native-receipt3/g8-native-smoke/.claude/worktrees/wish-g8-native-smoke/.husky/_/pre-push\" and exited 0, so hooks are live.",
+          "exitCode": 1,
+          "failCount": 35,
+          "failingTests": [
+            "probe errors keep the item with a reason > outside a git repository: enumeration failure is surfaced; null root emits nothing",
+            "checkTrackedMachineState (committed machine-local .genie state) > outside git, or where the index cannot be read, it warns with the reason instead of passing",
+            "the real CLI never paints a piped stream (m15) > FORCE_COLOR still opts a piped stdout in \u2014 the sink is a policy, not a blanket strip",
+            "CLI diagnostics on a non-TTY stderr (m15) > FORCE_COLOR still opts a non-TTY in \u2014 the gate is a policy, not a blanket strip",
+            "genie init > non-git directory: refuses with exit 1 and clear stderr",
+            "shared integration policy > a git failure resolves to null specifically \u2014 never a throw, never a guess",
+            "per-repo verbs refuse the global database > a cwd whose .genie IS GENIE_HOME errors clearly and writes no per-repo schema",
+            "verifyCitations > a deleted file in review-prep is not a failed citation",
+            "facts inside the boundary > the boundary opens BEFORE the facts, and every facts command runs inside it",
+            "agent resolution and the run ledger > outside any git checkout the trusted root is the cwd and the agents are the shipped ones",
+            "agent resolution and the run ledger > the ledger stays in a repository that tracks .mikro, and lands under GENIE_HOME otherwise",
+            "agent resolution and the run ledger > a repository with no .mikro runs the shipped agent and writes nothing into the payload",
+            "no trusted ref fails CLOSED on configuration > outside any git checkout the carve-out stands: --dir = cwd is still accepted",
+            "a git that cannot answer is IN a repository, not outside one > (3) a plain directory with git present and --dir = cwd keeps the carve-out",
+            "a git that cannot answer is IN a repository, not outside one > a git whose refusal is LOCALIZED still reaches the carve-out",
+            "a git that cannot answer is IN a repository, not outside one > (4) a plain directory with no git binary either is still the carve-out",
+            "global-database separation guard > refuses a cwd whose .genie IS GENIE_HOME, and creates nothing",
+            "global-database separation guard > the refusal names the collision and how to get out of it",
+            "workspace precondition > a directory with no .genie/ is not a workspace; the directory alone makes it one",
+            "sync-marker hash-algorithm migration > a legacy marker + a pulled snapshot imports (never diverges) and rewrites the marker as the current version",
+            "sync-marker hash-algorithm migration > an unversioned marker holding CANONICAL hashes (the intermediate build) also imports",
+            "sync-marker hash-algorithm migration > a legacy marker with only local board edits exports, and the file keeps every card",
+            "sync-marker hash-algorithm migration > every baseline this build stamps carries hashVersion 2 (sync, export, import)",
+            "v6 upgrade: a pre-v6 baseline is not a divergence > a pulled teammate change imports, never diverges, and re-stamps the marker",
+            "v6 upgrade: a pre-v6 baseline is not a divergence > an untouched pre-v6 checkout reads as in-sync, not as a change on both sides",
+            "v6 upgrade: a pre-v6 baseline is not a divergence > a local edit on a pre-v6 baseline exports, and the file keeps every card",
+            "v6 upgrade: a pre-v6 baseline is not a divergence > a timeline-only difference across the upgrade still merges instead of diverging",
+            "canonical snapshot bytes > neither db rewrites the other machine`s file: sync settles as a no-op both ways",
+            "legacy-ordered snapshot bytes > a legacy-ordered file matching the board is normalized in place, and the sync says so",
+            "legacy-ordered snapshot bytes > an imported legacy-ordered snapshot is normalized in the same run",
+            "legacy-ordered snapshot bytes > after the one-off reordering, a one-task change diffs as one task",
+            "declared routing \u2014 roadmap snapshot round-trip (roadmap-sync lockstep) > an equal file/db pair refreshes an old order-sensitive marker without changing the board",
+            "declared routing \u2014 roadmap snapshot round-trip (roadmap-sync lockstep) > diverged only in the card timeline merges both sides and republishes (the conversation is global)",
+            "declared routing \u2014 roadmap snapshot round-trip (roadmap-sync lockstep) > an old order-sensitive marker with pending edits publishes them (db-only change)",
+            "declared routing \u2014 roadmap snapshot round-trip (roadmap-sync lockstep) > introducing the assignment columns does not flip an in-sync repo to diverged"
+          ],
+          "problems": [
+            "(fail) probe errors keep the item with a reason > outside a git repository: enumeration failure is surfaced; null root emits nothing [75.55ms]",
+            "(fail) checkTrackedMachineState (committed machine-local .genie state) > outside git, or where the index cannot be read, it warns with the reason instead of passing [18.02ms]",
+            "(fail) the real CLI never paints a piped stream (m15) > FORCE_COLOR still opts a piped stdout in \u2014 the sink is a policy, not a blanket strip [469.78ms]",
+            "(fail) CLI diagnostics on a non-TTY stderr (m15) > FORCE_COLOR still opts a non-TTY in \u2014 the gate is a policy, not a blanket strip [234.26ms]",
+            "(fail) genie init > non-git directory: refuses with exit 1 and clear stderr [216.79ms]",
+            "(fail) shared integration policy > a git failure resolves to null specifically \u2014 never a throw, never a guess [6.35ms]",
+            "(fail) per-repo verbs refuse the global database > a cwd whose .genie IS GENIE_HOME errors clearly and writes no per-repo schema [306.71ms]",
+            "(fail) verifyCitations > a deleted file in review-prep is not a failed citation [30.51ms]",
+            "(fail) facts inside the boundary > the boundary opens BEFORE the facts, and every facts command runs inside it [46.48ms]",
+            "(fail) agent resolution and the run ledger > outside any git checkout the trusted root is the cwd and the agents are the shipped ones [56.03ms]",
+            "(fail) agent resolution and the run ledger > the ledger stays in a repository that tracks .mikro, and lands under GENIE_HOME otherwise [53.63ms]",
+            "(fail) agent resolution and the run ledger > a repository with no .mikro runs the shipped agent and writes nothing into the payload [5000.58ms]",
+            "^ this test timed out after 5000ms.",
+            "(fail) no trusted ref fails CLOSED on configuration > outside any git checkout the carve-out stands: --dir = cwd is still accepted [89.56ms]",
+            "(fail) a git that cannot answer is IN a repository, not outside one > (3) a plain directory with git present and --dir = cwd keeps the carve-out [169.05ms]",
+            "(fail) a git that cannot answer is IN a repository, not outside one > a git whose refusal is LOCALIZED still reaches the carve-out [118.51ms]",
+            "(fail) a git that cannot answer is IN a repository, not outside one > (4) a plain directory with no git binary either is still the carve-out [91.83ms]",
+            "(fail) global-database separation guard > refuses a cwd whose .genie IS GENIE_HOME, and creates nothing [5.91ms]",
+            "(fail) global-database separation guard > the refusal names the collision and how to get out of it [6.55ms]",
+            "(fail) workspace precondition > a directory with no .genie/ is not a workspace; the directory alone makes it one [6.13ms]",
+            "(fail) sync-marker hash-algorithm migration > a legacy marker + a pulled snapshot imports (never diverges) and rewrites the marker as the current version [117.20ms]",
+            "(fail) sync-marker hash-algorithm migration > an unversioned marker holding CANONICAL hashes (the intermediate build) also imports [109.09ms]",
+            "(fail) sync-marker hash-algorithm migration > a legacy marker with only local board edits exports, and the file keeps every card [59.85ms]",
+            "(fail) sync-marker hash-algorithm migration > every baseline this build stamps carries hashVersion 2 (sync, export, import) [62.65ms]",
+            "(fail) v6 upgrade: a pre-v6 baseline is not a divergence > a pulled teammate change imports, never diverges, and re-stamps the marker [134.52ms]",
+            "(fail) v6 upgrade: a pre-v6 baseline is not a divergence > an untouched pre-v6 checkout reads as in-sync, not as a change on both sides [64.05ms]",
+            "(fail) v6 upgrade: a pre-v6 baseline is not a divergence > a local edit on a pre-v6 baseline exports, and the file keeps every card [61.75ms]",
+            "(fail) v6 upgrade: a pre-v6 baseline is not a divergence > a timeline-only difference across the upgrade still merges instead of diverging [62.63ms]",
+            "(fail) canonical snapshot bytes > neither db rewrites the other machine`s file: sync settles as a no-op both ways [55.01ms]",
+            "(fail) legacy-ordered snapshot bytes > a legacy-ordered file matching the board is normalized in place, and the sync says so [98.32ms]",
+            "(fail) legacy-ordered snapshot bytes > an imported legacy-ordered snapshot is normalized in the same run [67.94ms]",
+            "(fail) legacy-ordered snapshot bytes > after the one-off reordering, a one-task change diffs as one task [58.83ms]",
+            "(fail) declared routing \u2014 roadmap snapshot round-trip (roadmap-sync lockstep) > an equal file/db pair refreshes an old order-sensitive marker without changing the board [71.62ms]",
+            "(fail) declared routing \u2014 roadmap snapshot round-trip (roadmap-sync lockstep) > diverged only in the card timeline merges both sides and republishes (the conversation is global) [68.56ms]",
+            "(fail) declared routing \u2014 roadmap snapshot round-trip (roadmap-sync lockstep) > an old order-sensitive marker with pending edits publishes them (db-only change) [65.82ms]",
+            "(fail) declared routing \u2014 roadmap snapshot round-trip (roadmap-sync lockstep) > introducing the assignment columns does not flip an in-sync repo to diverged [106.68ms]"
+          ],
+          "summaryLine": "Ran 3194 tests across 156 files. [534.27s]",
+          "darwinTolerated": false,
+          "baseReconfirmed": [],
+          "changedFiles": 2,
+          "insertions": 40,
+          "pass": false
+        },
+        "verdict": "SHIP"
+      }
+    ],
+    "mismatches": [],
+    "injectionAttempts": [],
+    "notConvened": [],
+    "stageReached": "Repair",
+    "blockedReason": "The repair loop ended after 0 of 2 round(s) \u2014 the fixer returned nothing, or reported it could not close the problems inside the declared file set with a red gate. The branch and the commit stand; nothing was pushed, and nothing was removed.",
+    "scoutMikro": {
+      "agent": "wish-context",
+      "ok": true,
+      "costUsd": 0.02,
+      "seconds": 69.2,
+      "usedFacts": 8,
+      "usedFiles": 2
+    },
+    "report": "# Wish delivery\n\n- Objective: Intent: only a ledger file actually read counts as a mikro ledger\n- Timestamp: 2026-10-06T00:00:00.000Z\n- State: missed (route proceed)\n- Branch: wish/g8-native-smoke\n- Worktree: /home/genie/.local/share/mikro-engine-split/experiments-g8/native-receipt3/g8-native-smoke/.claude/worktrees/wish-g8-native-smoke\n- Head: 95f8eb687f0ad552631c39f715ba929d031a90d9\n- Repairs: 0 of 2\n- Models: session=deepseek-flash gate=deepseek-flash publish=deepseek-flash\n- Stage reached: Repair\n\n## Admission\n- Route: proceed\n- Reason: The single fact that decides the route is that the defect's cause is fully localised and the remedy is already settled as a bounded two-file change with no denylist path and an estimate inside the ideal band: the scout pinpoints the name-only measured term at src/lib/metrics-offload.ts L160 (`rows.length > 0 || ownFiles.length > 0`) and readRows swallowing a failed read as `[]` at L80-87, and the plan states the exact behavioral correction (readRows returns null for a file not read; ownRead replaces ownFiles.length in the measured predicate, keeping rows.length > 0 and the seen.unreadable guard). The priorWork overlap (#3126 / commit 2d16298d0) is already merged and released, not in flight, and this pinned dev HEAD a73db92d2 is exactly its parent, so the fix is absent from the declared tree and re-applying the frozen behavior there is a settled delivery rather than an open product decision; the designIntent commits (f264a2960, f4d975938, 1e89eab69) explain the current lines and corroborate, never contradict, that plan. The scout's open unknown about a real-CLI regression test does not change this: the declared file set is exactly the scout's two files and the frozen regression is the directory-only \u2192 null / readable-empty \u2192 measured 0 pair, which the existing src/lib/metrics-export.test.ts already houses.\n- Estimate: 2 file(s), 33 insertion(s), 1 unit(s) \u2014 inside the ideal band\n- Design preflight: (no brainstorm design was named or found)\n- Offload: wish-context ok \u00b7 0.0200 \u00b7 69s \u00b7 carried 8 fact(s), 2 file(s)\n\n## Contract (frozen before any code existed)\n- Core: readRows returns null (not []) for any ledger candidate it did not actually read, and readOffloadRows treats a repository as measured only when at least one of its own <checkout>/.mikro/runs/*.jsonl files was actually read, so a directory-only ledger yields null while a readable empty ledger yields a measured 0.\n- Oracle: bun test src/lib/metrics-export.test.ts\n- Validation command: bun test src/lib/metrics-export.test.ts (set by the caller)\n- Check command: bun run check (set by the caller)\n- Install command: bun install --frozen-lockfile (set by the caller)\n\nCuttable:\n- an additional end-to-end CLI test under src/term-commands/metrics.test.ts (not in the declared file set)\n- documentation-only edits to the CLAUDE.md metrics row\n- extra coverage of registered-worktree ledger variants beyond the single root checkout exercised by the regression\n- comment, naming and style polish that does not change the read-vs-name decision\n\nDeclared file set:\n- src/lib/metrics-offload.ts\n- src/lib/metrics-export.test.ts\n\nAcceptance criteria:\n- readRows in src/lib/metrics-offload.ts returns null, not an empty row array, for every candidate whose readFileSync did not actually read it \u2014 absent (ENOENT/ENOTDIR), a directory (EISDIR), or any thrown read error. Falsified if any non-reading branch of readRows still resolves to [] / an empty rows array.\n- readOffloadRows in src/lib/metrics-offload.ts no longer lets a merely-named own ledger candidate establish measurement: a repository whose only <checkout>/.mikro/runs/*.jsonl entry is a directory returns null (no ledger), never a measured 0. Falsified if the measurement predicate still counts candidates by name (e.g. ownFiles.length > 0) or if such a repository reports attempts 0 / tokens 0 instead of null.\n- A readable empty ledger file is still a measured 0: readRows returns an empty array only for a file it actually read, so a repository with a readable empty *.jsonl ledger reports attempts 0 and tokens 0. Falsified if a readable empty ledger yields null.\n- The #3125 guard is preserved: a non-absent read failure (not ENOENT/ENOTDIR/EISDIR) still makes the repository unknown/null rather than a measured 0 or a partial total. Falsified if a non-absent read failure produces a measured 0 or a partial total.\n- src/lib/metrics-export.test.ts adds a regression that asserts a directory-only ledger yields null and a readable empty ledger yields a measured 0, and that regression fails on the pre-change readRows/readOffloadRows behavior. Falsified if no assertion covers the directory-only \u2192 null case, or if the added test would still pass under the unchanged name-only measured predicate.\n\n## Estimate beside the real diff\n- Estimated: 2 file(s), 33 insertion(s), 1 unit(s)\n- Real (measured by the gate): 2 file(s), 40 insertion(s) \u2014 inside the ideal band\n- Every changed path is inside the declared set.\n\n## Gate\n- Ran: bun run check \u2014 the repository check frozen at admission\n- Hook system: husky (git ls-files -- .husky .githooks .lefthook .pre-commit-config.yaml 'lefthook.*' '.lefthook.*' '.simple-git-hooks*' printed .husky/commit-msg, .husky/post-checkout, .husky/post-merge, .husky/post-rewrite, .husky/pre-commit, .husky/pre-push \u2014 so .husky/ is tracked (husky); git config --get core.hooksPath printed .husky/_ and exited 0; ls \"$(git rev-parse --git-path hooks)\" listed applypatch-msg, commit-msg, h, husky.sh, post-applypatch, post-checkout, post-commit, post-merge, post-rewrite, pre-applypatch, pre-auto-gc, pre-commit, pre-merge-commit, pre-push, pre-rebase, prepare-commit-msg (the resolved hooks directory is .husky/_); liveness command printed live: /home/genie/.local/share/mikro-engine-split/experiments-g8/native-receipt3/g8-native-smoke/.claude/worktrees/wish-g8-native-smoke/.husky/_/pre-push and exited 0)\n- Hooks live: yes\n- Exit code: 1\n- Summary: Ran 3194 tests across 156 files. [534.27s]\n- Verdict: red\n\nQuoted failing lines:\n- (fail) probe errors keep the item with a reason > outside a git repository: enumeration failure is surfaced; null root emits nothing [75.55ms]\n- (fail) checkTrackedMachineState (committed machine-local .genie state) > outside git, or where the index cannot be read, it warns with the reason instead of passing [18.02ms]\n- (fail) the real CLI never paints a piped stream (m15) > FORCE_COLOR still opts a piped stdout in \u2014 the sink is a policy, not a blanket strip [469.78ms]\n- (fail) CLI diagnostics on a non-TTY stderr (m15) > FORCE_COLOR still opts a non-TTY in \u2014 the gate is a policy, not a blanket strip [234.26ms]\n- (fail) genie init > non-git directory: refuses with exit 1 and clear stderr [216.79ms]\n- (fail) shared integration policy > a git failure resolves to null specifically \u2014 never a throw, never a guess [6.35ms]\n- (fail) per-repo verbs refuse the global database > a cwd whose .genie IS GENIE_HOME errors clearly and writes no per-repo schema [306.71ms]\n- (fail) verifyCitations > a deleted file in review-prep is not a failed citation [30.51ms]\n- (fail) facts inside the boundary > the boundary opens BEFORE the facts, and every facts command runs inside it [46.48ms]\n- (fail) agent resolution and the run ledger > outside any git checkout the trusted root is the cwd and the agents are the shipped ones [56.03ms]\n- (fail) agent resolution and the run ledger > the ledger stays in a repository that tracks .mikro, and lands under GENIE_HOME otherwise [53.63ms]\n- (fail) agent resolution and the run ledger > a repository with no .mikro runs the shipped agent and writes nothing into the payload [5000.58ms]\n- ^ this test timed out after 5000ms.\n- (fail) no trusted ref fails CLOSED on configuration > outside any git checkout the carve-out stands: --dir = cwd is still accepted [89.56ms]\n- (fail) a git that cannot answer is IN a repository, not outside one > (3) a plain directory with git present and --dir = cwd keeps the carve-out [169.05ms]\n- (fail) a git that cannot answer is IN a repository, not outside one > a git whose refusal is LOCALIZED still reaches the carve-out [118.51ms]\n- (fail) a git that cannot answer is IN a repository, not outside one > (4) a plain directory with no git binary either is still the carve-out [91.83ms]\n- (fail) global-database separation guard > refuses a cwd whose .genie IS GENIE_HOME, and creates nothing [5.91ms]\n- (fail) global-database separation guard > the refusal names the collision and how to get out of it [6.55ms]\n- (fail) workspace precondition > a directory with no .genie/ is not a workspace; the directory alone makes it one [6.13ms]\n- (fail) sync-marker hash-algorithm migration > a legacy marker + a pulled snapshot imports (never diverges) and rewrites the marker as the current version [117.20ms]\n- (fail) sync-marker hash-algorithm migration > an unversioned marker holding CANONICAL hashes (the intermediate build) also imports [109.09ms]\n- (fail) sync-marker hash-algorithm migration > a legacy marker with only local board edits exports, and the file keeps every card [59.85ms]\n- (fail) sync-marker hash-algorithm migration > every baseline this build stamps carries hashVersion 2 (sync, export, import) [62.65ms]\n- (fail) v6 upgrade: a pre-v6 baseline is not a divergence > a pulled teammate change imports, never diverges, and re-stamps the marker [134.52ms]\n- (fail) v6 upgrade: a pre-v6 baseline is not a divergence > an untouched pre-v6 checkout reads as in-sync, not as a change on both sides [64.05ms]\n- (fail) v6 upgrade: a pre-v6 baseline is not a divergence > a local edit on a pre-v6 baseline exports, and the file keeps every card [61.75ms]\n- (fail) v6 upgrade: a pre-v6 baseline is not a divergence > a timeline-only difference across the upgrade still merges instead of diverging [62.63ms]\n- (fail) canonical snapshot bytes > neither db rewrites the other machine`s file: sync settles as a no-op both ways [55.01ms]\n- (fail) legacy-ordered snapshot bytes > a legacy-ordered file matching the board is normalized in place, and the sync says so [98.32ms]\n- (fail) legacy-ordered snapshot bytes > an imported legacy-ordered snapshot is normalized in the same run [67.94ms]\n- (fail) legacy-ordered snapshot bytes > after the one-off reordering, a one-task change diffs as one task [58.83ms]\n- (fail) declared routing \u2014 roadmap snapshot round-trip (roadmap-sync lockstep) > an equal file/db pair refreshes an old order-sensitive marker without changing the board [71.62ms]\n- (fail) declared routing \u2014 roadmap snapshot round-trip (roadmap-sync lockstep) > diverged only in the card timeline merges both sides and republishes (the conversation is global) [68.56ms]\n- (fail) declared routing \u2014 roadmap snapshot round-trip (roadmap-sync lockstep) > an old order-sensitive marker with pending edits publishes them (db-only change) [65.82ms]\n- (fail) declared routing \u2014 roadmap snapshot round-trip (roadmap-sync lockstep) > introducing the assignment columns does not flip an in-sync repo to diverged [106.68ms]\n\n## Review\nVerdict: SHIP\n\nOffload: review-prep ok \u00b7 0.0100 \u00b7 47s \u00b7 carried 5 fact(s), 2 file(s)\n\nFindings:\n- [note] Met. readRows is now typed `OffloadRow[] | null` (src/lib/metrics-offload.ts:81) and its one catch block returns null for every readFileSync throw (line 87, independent of errno); only a successful read falls through to the row loop and its `return rows` (line 109). No non-reading branch resolves to [] and readRows is module-private (only callers are lines 155 and 165), so the type change breaks no other caller. \u2014 criterion: readRows in src/lib/metrics-offload.ts returns null, not an empty row array, for every candidate whose readFileSync did not actually read it \u2014 absent (ENOENT/ENOTDIR), a directory (EISDIR), or any thrown read error. \u2014 src/lib/metrics-offload.ts:81-88,109 (read via read tool; grep 'readRows' in src shows only this file)\n- [note] Met. ownFiles is only iterated (lines 154-159); ownRead flips true only after readRows returns non-null, and the terminal predicate is `return ownRead || kept.length > 0 ? kept : null;` (line 173), which never consults ownFiles.length. A runs dir whose only *.jsonl entry is a directory (readFileSync throws EISDIR -> isAbsent true -> null, unreadable untouched) leaves ownRead=false and kept=[], so readOffloadRows returns null; buildIntervals assigns that null to interval.offload (metrics-export.ts:217). \u2014 criterion: readOffloadRows in src/lib/metrics-offload.ts no longer lets a merely-named own ledger candidate establish measurement: a repository whose only <checkout>/.mikro/runs/*.jsonl entry is a directory returns null (no ledger), never a measured 0. Falsified if the measurement predicate still counts candidates by name (e.g. ownFiles.length > 0) or if such a repository reports attempts 0 / tokens 0 instead of null. \u2014 src/lib/metrics-offload.ts:152-159,173; confirmed by read of src/lib/metrics-export.ts:182-186,214-218\n- [note] Met. A successful readFileSync of an empty file yields rows=[] and returns it (line 109), not null; readOffloadRows then sets ownRead=true (lines 155-158) and returns kept=[] via line 173. offloadInWindow([], ...) computes attempts 0, failed 0, ambiguous 0, tokens 0, costUsd 0 \u2014 exactly the object the regression asserts. \u2014 criterion: A readable empty ledger file is still a measured 0: readRows returns an empty array only for a file it actually read, so a repository with a readable empty *.jsonl ledger reports attempts 0 and tokens 0. Falsified if a readable empty ledger yields null. \u2014 src/lib/metrics-offload.ts:89,109,155-158,173; src/lib/metrics-offload.ts:188-201 (offloadInWindow); src/lib/metrics-export.test.ts:482-483\n- [note] Met. isAbsent still covers only ENOENT/ENOTDIR/EISDIR (lines 65-69); any other failure sets seen.unreadable=true (line 86 in readRows; also line 75 in listDir and line 134 in repoCheckouts), and line 171 `if (seen.unreadable) return null;` executes before the ownRead/kept return, so the unreadable signal outranks any readable partial total. The retained parent test at metrics-export.test.ts:406-466 still pins this (EACCES cases at lines 426, 429, 439, 448, 454). \u2014 criterion: The #3125 guard is preserved: a non-absent read failure (not ENOENT/ENOTDIR/EISDIR) still makes the repository unknown/null rather than a measured 0 or a partial total. Falsified if a non-absent read failure produces a measured 0 or a partial total. \u2014 src/lib/metrics-offload.ts:65-69,86,171; src/lib/metrics-export.test.ts:406-466\n- [note] Met. The added test (metrics-export.test.ts:468-484) first creates only a directory named wish-context.jsonl under <root>/repo/.mikro/runs and asserts `expect(offload()).toBeNull()` (line 480), then writes an empty readable review-prep.jsonl and asserts toEqual({attempts:0,failed:0,ambiguous:0,tokens:0,costUsd:0}) (line 483). Under the parent revision the diff shows readRows returned [] on the EISDIR catch and the predicate was `rows.length > 0 || ownFiles.length > 0`, so the directory alone set ownFiles.length=1 and readOffloadRows returned [] -> a measured-0 offload object, making line 480's toBeNull() fail. The test thus fails on pre-change behavior; GENIE_HOME is isolated to <root>/genie (test lines 25-26) so no machine ledger can make the first assertion pass for the wrong reason. \u2014 criterion: src/lib/metrics-export.test.ts adds a regression that asserts a directory-only ledger yields null and a readable empty ledger yields a measured 0, and that regression fails on the pre-change readRows/readOffloadRows behavior. Falsified if no assertion covers the directory-only -> null case, or if the added test would still pass under the unchanged name-only measured predicate. \u2014 src/lib/metrics-export.test.ts:468-484,17-33; quoted from `git diff 95f8eb687^ 95f8eb687`: `-    return [];` and `-  return rows.length > 0 || ownFiles.length > 0 ? rows : null;`\n\nBlocking: (none given)\n\n## Repair rounds\n- Round 1: unable \u2014 No in-scope change is possible: src/lib/metrics-offload.ts already returns null from readRows for any candidate it did not read and measures a repository only when an own .mikro/runs/*.jsonl was read (or a readable machine-ledger row exists in scope), and src/lib/metrics-export.test.ts already pins the directory-only\u2192null / readable-empty\u2192measured-0 cases; the focused oracle passes 18/18 at the base commit. All 35 still-open gate failures live in other test files and are environment-induced in this harness (TMPDIR inside the checkout makes \"outside any git repository\" fixtures resolve to one; NO_COLOR=1 is exported; git/mikro/facts fixtures fail on host probes), each reproduced failing in isolation, so no edit to the two declared files can close them.\n- Files touched: (none reported)\n- Head after: (unchanged)\n- Gate: red; review: SHIP\n- Still open: gate: (fail) probe errors keep the item with a reason > outside a git repository: enumeration failure is surfaced; null root emits nothing (Owned by src/genie-commands/doctor-modes.test.ts, outside the declared set. Fails in isolation because TMPDIR is inside the checkout, so the fixture meant to be outside any git repository resolves to one (the drift scan returned 17422 entries).); gate: (fail) checkTrackedMachineState (committed machine-local .genie state) > outside git, or where the index cannot be read, it warns with the reason instead of passing (Owned by a doctor test outside the declared set. Fails in isolation because the sandbox TMPDIR is inside the checkout, so the 'outside git' precondition is not met.); gate: (fail) the real CLI never paints a piped stream (m15) > FORCE_COLOR still opts a piped stdout in \u2014 the sink is a policy, not a blanket strip (Owned by src/lib/term-output.test.ts, outside the declared set. Fails in isolation because the harness exports NO_COLOR=1, which the spawned CLI inherits alongside the test's FORCE_COLOR.); gate: (fail) CLI diagnostics on a non-TTY stderr (m15) > FORCE_COLOR still opts a non-TTY in \u2014 the gate is a policy, not a blanket strip (Owned by src/lib/term-color.test.ts, outside the declared set. Fails in isolation because the harness exports NO_COLOR=1; no metrics-file edit affects color policy.); gate: (fail) genie init > non-git directory: refuses with exit 1 and clear stderr (Owned by an init test outside the declared set. Fails in isolation because TMPDIR is inside the checkout, so the 'non-git directory' fixture is inside a git repository.); gate: (fail) shared integration policy > a git failure resolves to null specifically \u2014 never a throw, never a guess (Owned by a lib test outside the declared set; the git-failure simulation is host/TMPDIR dependent and was reproduced failing in isolation.); gate: (fail) per-repo verbs refuse the global database > a cwd whose .genie IS GENIE_HOME errors clearly and writes no per-repo schema (Owned by a v5/global-db test outside the declared set; GENIE_HOME/cwd resolution is environment-dependent and failed in isolation.); gate: (fail) verifyCitations > a deleted file in review-prep is not a failed citation (Owned by scripts/mikro/call.test.ts (or a facts test), outside the declared set; the failure is host git/mikro behavior, reproduced in isolation, unrelated to the ledger-read semantics.); gate: (fail) facts inside the boundary > the boundary opens BEFORE the facts, and every facts command runs inside it (Owned by scripts/mikro/boundary.test.ts, outside the declared set; the sandbox cannot run the boundary probes as the test expects.); gate: (fail) agent resolution and the run ledger > outside any git checkout the trusted root is the cwd and the agents are the shipped ones (Owned by scripts/mikro/call.test.ts, outside the declared set; the non-git carve-out probe depends on the sandbox TMPDIR being outside the checkout, which it is not.); gate: (fail) agent resolution and the run ledger > the ledger stays in a repository that tracks .mikro, and lands under GENIE_HOME otherwise (Owned by scripts/mikro/call.test.ts, outside the declared set; the observed ledger path differed because the sandbox repository detection/GENIE_HOME layout differs.); gate: (fail) agent resolution and the run ledger > a repository with no .mikro runs the shipped agent and writes nothing into the payload (Owned by scripts/mikro/call.test.ts, outside the declared set; it timed out at 5000ms because the spawned mikro/git probe did not return in this sandbox, not because of the declared ledger semantics.); gate: (fail) no trusted ref fails CLOSED on configuration > outside any git checkout the carve-out stands: --dir = cwd is still accepted (Owned by scripts/mikro/call.test.ts, outside the declared set; TMPDIR inside the checkout defeats the 'outside any git checkout' precondition.); gate: (fail) a git that cannot answer is IN a repository, not outside one > (3) a plain directory with git present and --dir = cwd keeps the carve-out (Owned by scripts/mikro/call.test.ts, outside the declared set; environment-dependent git probe, reproduced failing in isolation.); gate: (fail) a git that cannot answer is IN a repository, not outside one > a git whose refusal is LOCALIZED still reaches the carve-out (Owned by scripts/mikro/call.test.ts, outside the declared set; environment-dependent git refusal simulation, reproduced failing in isolation.); gate: (fail) a git that cannot answer is IN a repository, not outside one > (4) a plain directory with no git binary either is still the carve-out (Owned by scripts/mikro/call.test.ts, outside the declared set; PATH/git-absence simulation is host-dependent, reproduced failing in isolation.); gate: (fail) global-database separation guard > refuses a cwd whose .genie IS GENIE_HOME, and creates nothing (Owned by a v5/global-db test outside the declared set; GENIE_HOME collision detection is unrelated to metrics-offload.ts and failed in isolation.); gate: (fail) global-database separation guard > the refusal names the collision and how to get out of it (Same as above: outside the declared set and environment-dependent; no metrics-file edit affects it.); gate: (fail) workspace precondition > a directory with no .genie/ is not a workspace; the directory alone makes it one (Owned by a workspace-precondition test outside the declared set; TMPDIR inside the checkout supplies a .genie above the fixture.); gate: (fail) sync-marker hash-algorithm migration > a legacy marker + a pulled snapshot imports (never diverges) and rewrites the marker as the current version (Owned by the v5 sync-marker test outside the declared set; the roadmap/sync fixture behavior is host git/tmpdir dependent, reproduced failing in isolation.); gate: (fail) sync-marker hash-algorithm migration > an unversioned marker holding CANONICAL hashes (the intermediate build) also imports (Owned by the v5 sync-marker test outside the declared set; environment-dependent fixture, reproduced failing in isolation.); gate: (fail) sync-marker hash-algorithm migration > a legacy marker with only local board edits exports, and the file keeps every card (Owned by the v5 sync-marker test outside the declared set; environment-dependent fixture, reproduced failing in isolation.); gate: (fail) sync-marker hash-algorithm migration > every baseline this build stamps carries hashVersion 2 (sync, export, import) (Owned by the v5 sync-marker test outside the declared set; environment-dependent fixture, reproduced failing in isolation.); gate: (fail) v6 upgrade: a pre-v6 baseline is not a divergence > a pulled teammate change imports, never diverges, and re-stamps the marker (Owned by the v6-upgrade roadmap test outside the declared set; environment-dependent git/tmpdir fixture, reproduced failing in isolation.); gate: (fail) v6 upgrade: a pre-v6 baseline is not a divergence > an untouched pre-v6 checkout reads as in-sync, not as a change on both sides (Owned by the v6-upgrade roadmap test outside the declared set; environment-dependent fixture, reproduced failing in isolation.); gate: (fail) v6 upgrade: a pre-v6 baseline is not a divergence > a local edit on a pre-v6 baseline exports, and the file keeps every card (Owned by the v6-upgrade roadmap test outside the declared set; environment-dependent fixture, reproduced failing in isolation.); gate: (fail) v6 upgrade: a pre-v6 baseline is not a divergence > a timeline-only difference across the upgrade still merges instead of diverging (Owned by the v6-upgrade roadmap test outside the declared set; environment-dependent fixture, reproduced failing in isolation.); gate: (fail) canonical snapshot bytes > neither db rewrites the other machine`s file: sync settles as a no-op both ways (Owned by a roadmap-snapshot test outside the declared set; environment-dependent git/tmpdir fixture, reproduced failing in isolation.); gate: (fail) legacy-ordered snapshot bytes > a legacy-ordered file matching the board is normalized in place, and the sync says so (Owned by a roadmap-snapshot test outside the declared set; environment-dependent fixture, reproduced failing in isolation.); gate: (fail) legacy-ordered snapshot bytes > an imported legacy-ordered snapshot is normalized in the same run (Owned by a roadmap-snapshot test outside the declared set; environment-dependent fixture, reproduced failing in isolation.); gate: (fail) legacy-ordered snapshot bytes > after the one-off reordering, a one-task change diffs as one task (Owned by a roadmap-snapshot test outside the declared set; environment-dependent fixture, reproduced failing in isolation.); gate: (fail) declared routing \u2014 roadmap snapshot round-trip (roadmap-sync lockstep) > an equal file/db pair refreshes an old order-sensitive marker without changing the board (Owned by a declared-routing/roadmap test outside the declared set; environment-dependent git/tmpdir fixture, reproduced failing in isolation.); gate: (fail) declared routing \u2014 roadmap snapshot round-trip (roadmap-sync lockstep) > diverged only in the card timeline merges both sides and republishes (the conversation is global) (Owned by a declared-routing/roadmap test outside the declared set; environment-dependent fixture, reproduced failing in isolation.); gate: (fail) declared routing \u2014 roadmap snapshot round-trip (roadmap-sync lockstep) > an old order-sensitive marker with pending edits publishes them (db-only change) (Owned by a declared-routing/roadmap test outside the declared set; environment-dependent fixture, reproduced failing in isolation.); gate: (fail) declared routing \u2014 roadmap snapshot round-trip (roadmap-sync lockstep) > introducing the assignment columns does not flip an in-sync repo to diverged (Owned by a declared-routing/roadmap test outside the declared set; environment-dependent fixture, reproduced failing in isolation.)\n\n## Read-back\n(nothing was published, so there was nothing to read back)\n\n## Injection attempts\n- (none \u2014 nothing in the objective, the issue or the context tried to instruct an agent)\n\n## Why this stopped\nThe repair loop ended after 0 of 2 round(s) \u2014 the fixer returned nothing, or reported it could not close the problems inside the declared file set with a red gate. The branch and the commit stand; nothing was pushed, and nothing was removed.\n\nThis run merged nothing, moved no file outside the worktree it cut, removed no worktree and no branch, and posted no review comment.\n\n_Every agent responded this run._"
+  },
+  "sourceOrControlRepairAfterThisOutcome": false,
+  "limit": "Genuine route/lifecycle/accounting smoke succeeds; saved businessMISSED/Repair due red35 gate is preserved, not delivered/SHIP/PR. Same18 scored jobs still unstarted. Sandbox containedTMPDIR and NO_COLOR are frozen/unchanged; no silent outcome-driven reconfiguration or suppression."
+}

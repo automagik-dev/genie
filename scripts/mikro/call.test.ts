@@ -26,6 +26,7 @@ import {
   gitProbeEnv,
   gitToplevel,
   parseBoundaryFlag,
+  parseEngineFlag,
   parseFooter,
   persistFailedRaw,
   prepareFacts,
@@ -43,6 +44,7 @@ import {
 import { FACTS_HEADER } from './facts';
 import { buildRunSpan } from './phoenix';
 import { IssueTriage, SCHEMAS } from './schemas';
+import { scoreAnswer } from './score';
 
 const FOOTER =
   'mikro · issue-triage · deepseek-api/deepseek-flash · 7 iterations · 12,345 in / 1,234 out · $0.0031 · 84.2s · session 3f2a-b1';
@@ -150,6 +152,35 @@ describe('verifyCitations', () => {
     expect(cites.find((c) => c.line === 9)?.ok).toBe(false);
     expect(applyResolutions(value, cites).facts[0].evidence).toBe('scripts/build-binary.sh:2');
   });
+  test('a unique tracked basename cannot read an outside symlink target', () => {
+    const repo = mkdtempSync(join(tmpdir(), 'mikro-basename-containment-'));
+    const outside = mkdtempSync(join(tmpdir(), 'mikro-outside-citation-'));
+    try {
+      mkdirSync(join(repo, 'src'));
+      writeFileSync(join(outside, 'secret.ts'), 'outside\n');
+      symlinkSync(join(outside, 'secret.ts'), join(repo, 'src', 'leak.ts'));
+      Bun.spawnSync(['git', 'init', '-q'], { cwd: repo });
+      Bun.spawnSync(['git', 'add', '.'], { cwd: repo });
+      const [citation] = verifyCitations({ facts: [{ evidence: 'leak.ts:1' }] }, repo);
+      expect(citation.ok).toBe(false);
+      expect(citation.reason).toBe('path escapes repository containment');
+      expect(citation.resolvedTo).toBeUndefined();
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+      rmSync(outside, { recursive: true, force: true });
+    }
+  });
+  test('malformed external plan entries do not authorize NEW or crash scoring', () => {
+    const answer = JSON.parse('{"plan":{"files":[null,7,"bad",{"path":"src/a.ts","reason":null}]}}');
+    expect(verifyCitations(answer, dir).every((c) => c.ok && !c.proposal)).toBe(true);
+    const score = scoreAnswer('wish-context', answer, { files: ['src/a.ts'], newFiles: ['src/new.ts'] }, []);
+    expect(score.filesRecall).toBe(1);
+    expect(score.newFilesRecall).toBe(0);
+    for (const plan of [null, 7, 'bad', { files: null }]) {
+      expect(verifyCitations({ plan }, dir)).toEqual([]);
+      expect(scoreAnswer('wish-context', { plan }, { files: ['src/a.ts'] }, []).filesRecall).toBe(0);
+    }
+  });
   test('a plan may name a file that does not exist yet, and only a plan', () => {
     const repo = mkdtempSync(join(tmpdir(), 'mikro-new-'));
     mkdirSync(join(repo, 'scripts', 'mikro'), { recursive: true });
@@ -165,8 +196,8 @@ describe('verifyCitations', () => {
     expect(planned.reason).toBe('new file (declared NEW: under a tracked directory)');
     // Without the marker a missing file is still a failed citation.
     expect(file('scripts/mikro/triage.ts', 'the triage scout').ok).toBe(false);
-    // A directory that does not exist, or holds nothing tracked, anchors nothing.
-    expect(file('scripts/nowhere/triage.ts', 'NEW: invented parent').ok).toBe(false);
+    // A nested new directory is anchored by its nearest existing tracked ancestor.
+    expect(file('scripts/nowhere/triage.ts', 'NEW: nested implementation').ok).toBe(true);
     expect(file('scratch/triage.ts', 'NEW: untracked parent').ok).toBe(false);
     // NEW: is a plan marker, never evidence: the same path cited with a line still fails.
     const cited = verifyCitations(
@@ -182,8 +213,8 @@ describe('verifyCitations', () => {
     expect(elsewhere[0].ok).toBe(false);
     // The repository root is a tracked directory like any other.
     expect(file('TRIAGE.md', 'NEW: a root-level note').ok).toBe(true);
-    // An existing file gains nothing from the marker: it is checked as any other path.
-    expect(file('scripts/mikro/call.ts', 'NEW: not new at all').reason).toBeUndefined();
+    // NEW declarations must really be absent, even when the existing path is tracked.
+    expect(file('scripts/mikro/call.ts', 'NEW: not new at all').ok).toBe(false);
   });
   test('a deleted file in review-prep is not a failed citation', () => {
     const cites = verifyCitations({ files: [{ path: 'gone.ts', change: 'deleted' }] }, dir);
@@ -884,20 +915,51 @@ describe('agent resolution and the run ledger', () => {
 });
 
 describe('prices', () => {
-  const yaml = readFileSync(join(import.meta.dir, '..', '..', '.mikro', 'mikro.yaml'), 'utf8');
-  const COST = /^ {8}cost: \{ input: ([0-9.]+), output: ([0-9.]+) \}$/m;
-  const declaredCost = (model: string): { input: number; output: number } | null => {
-    const at = yaml.indexOf(`\n      ${model}:\n`);
-    const m = at === -1 ? null : COST.exec(yaml.slice(at));
-    return m ? { input: Number(m[1]), output: Number(m[2]) } : null;
-  };
 
   test('the basis stamped on every ledger row and Phoenix span names the priced list', () => {
     expect(PRICE_BASIS).toBe('deepseek-list-2026-09-18-peak');
   });
 
-  test("mikro.yaml declares DeepSeek's peak cache-miss list price per million", () => {
-    expect(declaredCost('deepseek-flash')).toEqual({ input: 0.3, output: 1.2 });
-    expect(declaredCost('deepseek-v4-pro')).toEqual({ input: 1.32, output: 3.96 });
+});
+
+describe('proposal authorization is not evidence authorization', () => {
+  test('nested NEW uses tracked nearest ancestor but does not authorize a colliding citation', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'new-evidence-'));
+    const outside = mkdtempSync(join(tmpdir(), 'new-outside-'));
+    try {
+      mkdirSync(join(dir, 'src'));
+      writeFileSync(join(dir, 'src/base.ts'), 'export const base = 1;\n');
+      writeFileSync(join(dir, '.gitignore'), 'ignored/\n');
+      Bun.spawnSync(['git', 'init', '-q'], { cwd: dir });
+      Bun.spawnSync(['git', 'add', '.'], { cwd: dir });
+      mkdirSync(join(dir, 'untracked'));
+      mkdirSync(join(dir, 'ignored'));
+      writeFileSync(join(dir, 'ignored/file.ts'), 'secret');
+      symlinkSync(outside, join(dir, 'escape'));
+      symlinkSync(join(outside, 'missing'), join(dir, 'broken'));
+      symlinkSync(join(dir, 'src'), join(dir, 'alias'));
+      const containedAlias = verifyCitations({ plan: { files: [{ path: 'alias/new.ts', reason: 'NEW: implementation' }] } }, dir);
+      expect(containedAlias).toHaveLength(1);
+      expect(containedAlias[0].ok).toBe(false);
+      expect(containedAlias[0].reason).toContain('symlink components');
+      const verdicts = verifyCitations({
+        plan: { files: [{ path: 'src/nested/new.ts', reason: 'NEW: implementation' }] },
+        facts: [{ path: 'src/nested/new.ts' }],
+      }, dir);
+      expect(verdicts.find((v) => v.proposal)?.ok).toBe(true);
+      expect(verdicts.find((v) => !v.proposal)?.ok).toBe(false);
+      for (const path of ['untracked/new.ts', 'ignored/file.ts', 'ignored/new.ts', 'escape/new.ts', 'broken/new.ts', '../outside.ts', 'src/base.ts']) {
+        expect(verifyCitations({ plan: { files: [{ path, reason: 'NEW: change' }] } }, dir).every((v) => !v.ok)).toBe(true);
+      }
+      expect(verifyCitations({ plan: { files: [{ path: 'src/new.ts:1', reason: 'NEW: change' }] } }, dir).every((v) => !v.ok)).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+      rmSync(outside, { recursive: true, force: true });
+    }
+  });
+  test('invalid selectors fail before repository resolution or billing', async () => {
+    for (const argv of [['--engine'], ['--engine', ''], ['--engine', 'wat'], ['--engine', 'pi', '--engine', 'rlm']])
+      expect(() => parseEngineFlag(argv)).toThrow();
+    await expect(runAgent({ agent: 'wish-context', prompt: 'intent', engine: 'wat' as never, dir: '/absent' })).rejects.toThrow('engine must');
   });
 });

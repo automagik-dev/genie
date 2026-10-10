@@ -1,0 +1,8 @@
+schema_version: 1
+tools_api: 1
+shape: loop
+model: station/Qwen3.6-35B-A3B-MTP-GGUF
+description: Extracts the actual failure from a long build/test/CI log and names the file and line to look at. Use instead of reading a multi-thousand-line log inline.
+system: SYSTEM.md
+budget:
+  max_iterations: 6

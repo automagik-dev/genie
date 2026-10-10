@@ -1,0 +1,25 @@
+{
+  "name": "mikro",
+  "description": "The mikro repository, published as a Claude Code plugin marketplace.",
+  "owner": {
+    "name": "Automagik",
+    "url": "https://github.com/automagik-dev/mikro"
+  },
+  "plugins": [
+    {
+      "name": "mikro",
+      "source": "./plugins/claude-code",
+      "description": "Registers the mikro MCP server against the current project, so every agent.yaml microagent in the workspace becomes a callable tool.",
+      "version": "0.1.0",
+      "license": "MIT",
+      "homepage": "https://github.com/automagik-dev/mikro/tree/main/plugins/claude-code",
+      "repository": "https://github.com/automagik-dev/mikro",
+      "keywords": [
+        "mikro",
+        "mcp",
+        "microagent",
+        "offload"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,56 @@
+# mikro.yaml — Codebase Q&A Agent
+# Use: mikro "How does authentication work?" --context ./src/
+
+model:
+  provider: google
+  model: gemini-3.1-flash-lite-preview
+  sub-call-model: gemini-3.1-flash-lite-preview
+
+system: |
+  You are a senior software engineer analyzing a codebase. Your context contains source code files.
+  When answering questions:
+  - Trace the execution flow through the code
+  - Identify key functions, classes, and their relationships
+  - Note any patterns, potential issues, or areas for improvement
+  - Reference file paths and line numbers when citing code
+  {custom_tools_section}
+
+tools:
+  trace_imports: |
+    def trace_imports(filename):
+        """Find all files that import from a given filename."""
+        pattern = filename.replace('.ts', '').replace('.js', '').replace('.py', '')
+        return grep_context(f"import.*{pattern}|from.*{pattern}|require.*{pattern}")
+
+  find_definitions: |
+    def find_definitions(name):
+        """Find function/class definitions matching a name."""
+        return grep_context(f"(def|function|class|const|export)\\s+{name}")
+
+criteria: |
+  Provide a technical answer that:
+  1. Traces the complete flow from entry point to implementation
+  2. Lists all relevant files with their roles
+  3. Highlights any edge cases, error handling, or configuration
+  4. Suggests potential improvements only if asked
+
+context:
+  extensions:
+    - .ts
+    - .js
+    - .py
+    - .json
+  exclude:
+    - node_modules
+    - .git
+    - dist
+    - __pycache__
+    - "*.test.*"
+    - "*.spec.*"
+
+budget:
+  max-cost: 2.00
+  max-tokens: 200000
+  max-depth: 3
+
+tools-level: full

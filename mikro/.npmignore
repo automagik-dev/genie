@@ -1,0 +1,10 @@
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+src/
+tsconfig.json
+.git/
+.genie/
+node_modules/
+*.ts
+!*.d.ts

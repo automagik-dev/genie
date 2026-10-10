@@ -1,0 +1,33 @@
+# Gemini Multimodal — image analysis with media resolution control
+# Usage: mikro "Analyze the architecture diagrams" --context ./docs/ --tools standard
+
+model:
+  provider: google
+  model: gemini-3.1-flash-lite-preview
+
+system: |
+  You are a multimodal analysis agent. Analyze images, PDFs, and documents
+  with attention to detail. Use the configured media resolution to balance
+  quality vs cost.
+  {custom_tools_section}
+
+gemini:
+  thinking-level: high
+  media-resolution:
+    images: high     # ~1120 tokens per image
+    pdfs: medium     # ~560 tokens per page
+    video: low       # ~70 tokens per frame
+
+criteria: |
+  Describe visual elements precisely.
+  Note any text, diagrams, or data in images.
+  Provide structured analysis with clear sections.
+
+tools-level: standard
+
+budget:
+  max-cost: 1.00
+
+context:
+  extensions: [.md, .png, .jpg, .pdf]
+  exclude: [node_modules, .git]

@@ -1,0 +1,135 @@
+{
+  "schemaVersion": 1,
+  "kind": "genuine-native-saved-wish-smoke-complete-accounting",
+  "actualExitCode": 0,
+  "actualDurationSeconds": 292.8,
+  "nativeInput": {
+    "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/frozen-inputs/native-manifest-contained-facts.json",
+    "kind": "file",
+    "sha256": "12d07cc27533b5d7831886523104814a4c240aacaa2ceb65b1d1ab2d4bef9957"
+  },
+  "canonicalReceipt": {
+    "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/native-contained-facts-runs/g8-native-smoke/receipt.json",
+    "kind": "file",
+    "sha256": "d709b4478b009a381bdc6e88a41400349758671e4028ed52a99b958a567250fb"
+  },
+  "realRunId": "6a616891-fce1-45d2-ac88-23767f3e0145",
+  "realParentSessionId": "f33499b7-da08-41df-ab8c-6a5c43414e0e",
+  "workflowOutcome": "completed",
+  "accountingComplete": true,
+  "blockers": [],
+  "scored": false,
+  "savedBusinessOutcome": {
+    "ok": false,
+    "state": "refused",
+    "route": "brainstorm",
+    "pr": null,
+    "reason": "# Wish delivery\n\n- Objective: Intent: only a ledger file actually read counts as a mikro ledger\n- Timestamp: 2026-10-06T00:00:00.000Z\n- State: refused (route brainstorm)\n- Branch: (none cut)\n- Worktree: (none created)\n- Head: (no commit)\n- Repairs: 0 of 2\n- Models: session=deepseek-flash gate=deepseek-flash publish=deepseek-flash\n\n## Admission\n- Route: brainstorm\n- Reason: The decisive fact is that the scout found the identical fix already exists as commit 2d16298d0 \u2014 the direct child of HEAD a73db92d2 \u2014 and as merged PR #3126, reachable only from release tags v6.261005.1-v6.261005.3 and absent from dev/origin/dev, so this objective is no longer a fresh bounded task but a decision about already-completed work (re-apply the existing commit versus re-implement it in the working tree); that overlap into work that already exists upstream is the brainstorm trigger, and it leaves the proceed test's \"the decision is settled\" unmet even though the local cause (readRows returning [] for a never-read candidate, and the measured gate keyed on candidate names) is fully understood and the two-file scope carries no denylist hit. The recorded designIntent (f264a2960, f4d975938, 1e89eab69) is consistent with the scout plan rather than contradicted by it \u2014 the plan changes exactly the conflated readRows return and must coexist with the not-a-ledger.jsonl assertion \u2014 so that is not the deciding fact; the duplicate-work overlap is.\n- Estimate: 2 file(s), 33 insertion(s), 2 unit(s) \u2014 inside the ideal band\n- Design preflight: (no brainstorm design was named or found)\n- Offload: wish-context ok \u00b7 0.0300 \u00b7 82s \u00b7 carried 6 fact(s), 2 file(s)\n\n## Contract (frozen before any code existed)\n- Core: In src/lib/metrics-offload.ts, a ledger candidate that was not actually read (absent, EISDIR, or any failed readFileSync) is represented as null rather than an empty row list, and a repository counts as measured only when at least one of its own .mikro/runs ledger files was actually read, so a directory named wish-context.jsonl alone yields offload null while a readable empty ledger beside it yields a measured 0.\n- Oracle: bun test src/lib/metrics-export.test.ts\n- Validation command: bun test src/lib/metrics-export.test.ts (set by the caller)\n- Check command: bun run check (set by the caller)\n- Install command: bun install --frozen-lockfile (set by the caller)\n\nCuttable:\n- The CLI-level regression in src/term-commands/metrics.test.ts\n- The CLAUDE.md offload-null sentence update\n- Any handling for a machine-only empty ledger beyond leaving it null\n\nDeclared file set:\n- src/lib/metrics-offload.ts\n- src/lib/metrics-export.test.ts\n\nAcceptance criteria:\n- src/lib/metrics-offload.ts expresses the not-read state distinctly: readRows' return type admits null (or the caller otherwise distinguishes not-read from read-empty) and a failed readFileSync for a candidate yields null, not []. Falsified if readRows still returns [] on a failed read or its type cannot express 'not read'.\n- readOffloadRows returns null when the repository's own .mikro/runs holds only unread candidates, and returns rows (with rows.length === 0 meaning a measured 0) when at least one own ledger file was actually read. Falsified if a directory-only ledger yields a non-null measured 0, or if a readable empty ledger yields null.\n- The measured-versus-unknown gate counts own candidates that were actually read, not candidate names; a not-read candidate alone never makes the repository measured. Falsified if the gate still keys on ownFiles.length > 0 (or any name-based list) rather than on files actually read.\n- src/lib/metrics-export.test.ts adds the alone-directory regression: with only a directory named wish-context.jsonl under repo/.mikro/runs/, offload() is null; with a readable empty ledger beside it, offload() is a measured 0. Falsified if either half of that assertion is absent.\n- The pre-existing assertion in src/lib/metrics-export.test.ts that a directory named not-a-ledger.jsonl still counts when a readable machine ledger contributes (attempts 3, tokens 6) is preserved. Falsified if that assertion is removed, weakened, or its expected values change.\n- The diff touches only src/lib/metrics-offload.ts and src/lib/metrics-export.test.ts. Falsified by any other path appearing in the commit.\n\n## Estimate beside the real diff\n- Estimated: 2 file(s), 33 insertion(s), 2 unit(s)\n- Real (measured by the gate): (nothing was committed)\n- Every changed path is inside the declared set.\n\n## Gate\n(the gate never ran)\n\n## Review\n(the review never ran)\n\n## Repair rounds\n(no repair round was needed)\n\n## Read-back\n(nothing was published, so there was nothing to read back)\n\n## Injection attempts\n- (none \u2014 nothing in the objective, the issue or the context tried to instruct an agent)\n\nThis run cut no worktree, wrote no file, merged nothing and posted no review comment.\n\n_Every agent responded this run._",
+    "scoutMikro": {
+      "agent": "wish-context",
+      "ok": true,
+      "costUsd": 0.03,
+      "seconds": 81.9,
+      "usedFacts": 6,
+      "usedFiles": 2
+    }
+  },
+  "smokeAdmissionMeaning": "Genuine stock saved wish ran and complete canonical native/offload lifecycle accounting reconciles; NOT a delivered task/SHIP/PR. Saved REFUSED at admission is a real retained business failure, not substituted success.",
+  "native": {
+    "totalTokens": 832345,
+    "totalToolCalls": 28,
+    "billSource": "canonical persisted own-suffix turns/tool calls; each actual session counted once, no inherited prefix or fabricated parent dispatch call",
+    "sdkNominalCostUsd": null,
+    "gatewayInvoice": null,
+    "keeperAggregate": null
+  },
+  "acceptedNativeChildren": 2,
+  "publishedNativeChildren": 2,
+  "nativeModelAttempts": 18,
+  "nativePaidRoutes": [
+    [
+      "deepseek-official",
+      "deepseek-flash"
+    ]
+  ],
+  "offload": {
+    "enabled": true,
+    "traceId": "g8-native-smoke",
+    "nominalFooter": {
+      "tokensIn": 29580,
+      "tokensOut": 14775,
+      "costUsd": 0.03,
+      "basis": "actual MCP rounded footer; not invoice; preserve per-attempt priceBasis"
+    },
+    "sdkUsage": {
+      "inputTokens": 29580,
+      "outputTokens": 14775,
+      "cacheReadTokens": null,
+      "cacheWriteTokens": null,
+      "reasoningTokens": null
+    },
+    "sdkNominalCostUsd": 0.028346592,
+    "costKind": "sdk-nominal-estimate-not-invoice",
+    "gatewayInvoice": null,
+    "keeperAggregate": null,
+    "blockers": []
+  },
+  "canonicalCallerAttempts": 1,
+  "canonicalSDKCalls": 1,
+  "exactHeaderReconciliation": [
+    {
+      "sessionId": "cb84aaa1-a84a-46e2-9e94-a0bcbe6ea0ed",
+      "header": {
+        "version": 4,
+        "id": "cb84aaa1-a84a-46e2-9e94-a0bcbe6ea0ed",
+        "createdAt": 1791302653397,
+        "cwd": "/home/genie/.local/share/mikro-engine-split/experiments-g8/native-contained-facts/g8-native-smoke",
+        "parentSession": "f33499b7-da08-41df-ab8c-6a5c43414e0e",
+        "isSeeded": false,
+        "origin": "subagent",
+        "delegationDepth": 1
+      },
+      "inheritedEventCount": 0,
+      "ownEventCount": 139,
+      "blockers": []
+    },
+    {
+      "sessionId": "f33499b7-da08-41df-ab8c-6a5c43414e0e",
+      "header": {
+        "version": 4,
+        "id": "f33499b7-da08-41df-ab8c-6a5c43414e0e",
+        "createdAt": 1791302652926,
+        "cwd": "/home/genie/.local/share/mikro-engine-split/experiments-g8/native-contained-facts/g8-native-smoke",
+        "isSeeded": false,
+        "delegationDepth": 0
+      },
+      "inheritedEventCount": 0,
+      "ownEventCount": 5,
+      "blockers": []
+    },
+    {
+      "sessionId": "f9927c51-6f5d-4e2d-a8c5-b6c2204040ec",
+      "header": {
+        "version": 4,
+        "id": "f9927c51-6f5d-4e2d-a8c5-b6c2204040ec",
+        "createdAt": 1791302829175,
+        "cwd": "/home/genie/.local/share/mikro-engine-split/experiments-g8/native-contained-facts/g8-native-smoke",
+        "parentSession": "f33499b7-da08-41df-ab8c-6a5c43414e0e",
+        "isSeeded": false,
+        "origin": "subagent",
+        "delegationDepth": 1
+      },
+      "inheritedEventCount": 0,
+      "ownEventCount": 20,
+      "blockers": []
+    }
+  ],
+  "noKeeperDoubleAddition": true,
+  "noNativeQuoteOrInvoiceFabricated": true,
+  "historicalTruthVisibilityConfound": "Complete clones intentionally retain actual complete history and tags. Scout found already-implemented descendant fix; saved wish admission genuinely refused duplicate work. Parent tracked tree/truth unchanged; do not hide history, alter objective, filter/resample refusal or report delivered task.",
+  "allPriorPaidFailuresPreserved": true,
+  "scoredNativeCellsBeforeEngineFreeze": 0,
+  "engineCellsBeforeEngineFreeze": 0,
+  "sourceBudget": "5/B5 unchanged",
+  "qualityBudget": "1/cap1 unchanged"
+}
