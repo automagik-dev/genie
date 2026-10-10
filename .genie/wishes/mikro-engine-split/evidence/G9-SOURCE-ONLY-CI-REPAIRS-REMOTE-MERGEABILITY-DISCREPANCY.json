@@ -1,0 +1,43 @@
+{
+  "sourceOnly": true,
+  "actualForgeReadback": {
+    "baseRefName": "dev",
+    "baseRefOid": "27739552066c18cde858d9bd2f8f9b1e041220c4",
+    "headRefName": "automagik-genie/mikro-engine-split",
+    "headRefOid": "553eebab32c33a667a7c96634c4b7f488a223fcc",
+    "isDraft": false,
+    "mergeStateStatus": "DIRTY",
+    "mergeable": "CONFLICTING",
+    "state": "OPEN",
+    "url": "https://github.com/automagik-dev/genie/pull/3139"
+  },
+  "actualLocalReadOnlyMergeTree": {
+    "argv": [
+      "git",
+      "merge-tree",
+      "--write-tree",
+      "27739552066c18cde858d9bd2f8f9b1e041220c4",
+      "40ddcadbe9ae5690bafae23f523179bf91a8e4eb"
+    ],
+    "cwd": "/home/genie/.local/share/mikro-engine-split/experiments-g8/final-local-smokes/history-only-reword-6qjyzwas/tree",
+    "exitCode": 0,
+    "seconds": 0.03141340101137757,
+    "stdout": "9cb510da563452f67854321cfc339a7d5089ff35\n",
+    "stderr": ""
+  },
+  "localMergeDriverConfigProbe": {
+    "argv": [
+      "git",
+      "config",
+      "--get-regexp",
+      "^merge\\."
+    ],
+    "cwd": "/home/genie/.local/share/mikro-engine-split/experiments-g8/final-local-smokes/history-only-reword-6qjyzwas/tree",
+    "exitCode": 1,
+    "seconds": 0.003198161954060197,
+    "stdout": "",
+    "stderr": ""
+  },
+  "conclusion": "Remote published-head conflict is authoritative forge status; local read-only merge-tree is clean. Cause is unknown; no local proof is passed off as remote mergeability. Recheck exact newly published source head after approved own-branch lease.",
+  "performedMerge": false
+}

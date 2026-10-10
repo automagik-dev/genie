@@ -33,12 +33,37 @@ Wish: `wish/tui-native-selection`.
   usage and actual turns through the existing partial-failure boundary. Caller
   cancellation preserves the timeout answer with partial observations and unknown
   full totals; schema-invalid finals are failed MCP responses. No extra completion.
+- Typed child-completion failures cross Node/Python as errors, never ordinary
+  model text. Failed executions cannot finalize through caught, stale or text
+  `FINAL`; repair uses only an existing later turn. Known usage is retained once,
+  and repaired failures expose a partial subtotal rather than unreported totals.
+- Three-empty-response terminal aborts retain that same incomplete child-usage
+  marker: known receipts remain a partial subtotal, not a complete caller bill.
+- Pi closes real SDK tool admission after the first accepted final, including
+  mixed final/read batches, without an extra completion or replacement answer.
 - Explicit per-project Juice key references, literal catalogs and viewer-only
   aggregate snapshots remain separate from canonical accounting. Manual JEV
   extraction is explicit, source-linked and absent from ordinary model runs.
 - Frozen engine experiments hash complete physical fixture structure, including
   symlink text without following targets; executable/dependency seal rules remain
   separate and unchanged.
+- Historical benchmark overlays accept OS aliases above the explicitly trusted
+  runtime checkout and owned temporary root. Internal configuration symlinks
+  remain refused; lexical overlay provenance and NEW-path truth remain intact.
+- Commit-message CI validates every Genie-owned range commit with the unchanged
+  rules. Only source edges of validated Mikro subtree imports are removed from
+  ownership traversal; shared ancestors and every ordinary merge parent remain
+  strict. Original Mikro commit messages and history are preserved.
+- Retirement catalog ownership and delivery eligibility are separate. Default
+  retirement roots are HEAD, tags, exact origin/main and origin/dev, and
+  `refs/archive/*`; an unmerged, unproved PR supplies no retirement authority.
+  Exact trusted Genie archive proofs may opt additional roots in through
+  `--ref-provenance SHA:root-path`, without prerecording their retired skills.
+  Validated source-edge cuts preserve shared Genie ancestry. Proof is anchored
+  in the current Genie lineage outside Mikro; absent, stale or source-owned
+  proof refuses collection. Source refs cannot attest themselves or erase
+  independent Genie history. Prefixed files stay excluded and recorded proof
+  remains additive.
 
 
 ### `genie update` repaired for hosts on 5.260831.x

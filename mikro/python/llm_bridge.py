@@ -58,7 +58,7 @@ def call_tool(name, kwargs):
 def _send_request(request_type: str, prompts: list, model=None) -> list:
     """Send an LLM request to the parent Node.js process and block for response."""
     if _ipc_out is None or _ipc_in is None:
-        return ["Error: IPC not initialized"] * len(prompts)
+        raise RuntimeError("IPC not initialized")
 
     msg = {
         "type": "llm_request",
@@ -69,21 +69,28 @@ def _send_request(request_type: str, prompts: list, model=None) -> list:
         msg["model"] = model
 
     with _ipc_lock:
-        _ipc_out.write(json.dumps(msg) + "\n")
-        _ipc_out.flush()
+        try:
+            _ipc_out.write(json.dumps(msg) + "\n")
+            _ipc_out.flush()
+            line = _ipc_in.readline()
+        except Exception as error:
+            raise RuntimeError(f"LLM IPC failed: {error}") from error
 
-        # Block until we get an llm_response
-        line = _ipc_in.readline()
         if not line:
-            return ["Error: IPC connection closed"] * len(prompts)
+            raise RuntimeError("LLM IPC connection closed")
 
         try:
             response = json.loads(line.strip())
-            if response.get("type") == "llm_response":
-                return response.get("results", [])
-            return [f"Error: unexpected response type: {response.get('type')}"] * len(prompts)
-        except json.JSONDecodeError as e:
-            return [f"Error: invalid JSON response: {e}"] * len(prompts)
+        except json.JSONDecodeError as error:
+            raise RuntimeError(f"Invalid LLM response JSON: {error}") from error
+
+        if response.get("type") != "llm_response":
+            raise RuntimeError(
+                f"Unexpected LLM response type: {response.get('type')}"
+            )
+        if not response.get("ok"):
+            raise RuntimeError(str(response.get("error", "LLM call failed")))
+        return response["results"]
 
 
 def send_request(request_type: str, prompts: list, model=None) -> list:
@@ -94,7 +101,7 @@ def send_request(request_type: str, prompts: list, model=None) -> list:
 def llm_query(prompt: str, model=None) -> str:
     """Query the LLM with a single prompt. Returns the response string."""
     results = _send_request("llm_query", [prompt], model)
-    return results[0] if results else "Error: no response"
+    return results[0]
 
 
 def llm_query_batched(prompts: list, model=None) -> list:
@@ -107,7 +114,7 @@ def llm_query_batched(prompts: list, model=None) -> list:
 def rlm_query(prompt: str, model=None) -> str:
     """Spawn a recursive RLM sub-call for deeper thinking. Returns the response string."""
     results = _send_request("rlm_query", [prompt], model)
-    return results[0] if results else "Error: no response"
+    return results[0]
 
 
 def rlm_query_batched(prompts: list, model=None) -> list:

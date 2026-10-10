@@ -1,0 +1,38 @@
+{
+  "authorization": "G2 security quality2/cap2 ->3/cap3 only transitive proxy-addr2.0.7 ->2.0.8; correctness4/B4 unchanged",
+  "advisory": "https://github.com/advisories/GHSA-jqcg-44mw-7w3h",
+  "before": {
+    "argv": [
+      "node",
+      "/home/genie/.local/share/mikro-engine-split/experiments-g8/final-local-smokes/proxy-addr-local-http-security-smoke.cjs",
+      "/home/genie/orca/workspaces/genie/mikro-engine-split/mikro/node_modules",
+      "red-before"
+    ],
+    "cwd": "/home/genie/orca/workspaces/genie/mikro-engine-split",
+    "exitCode": 1,
+    "stderr": "untrusted local client must not supply the resolved IP\n+ actual - expected\n\n+ '203.0.113.77'\n- '127.0.0.1'\n\n",
+    "stdout": "{\"stage\":\"red-before\",\"version\":\"2.0.7\",\"peer\":\"127.0.0.1\",\"resolved\":\"203.0.113.77\",\"vulnerabilityObserved\":true,\"localHttpRequests\":1,\"externalModelCalls\":0,\"jevCalls\":0}\n"
+  },
+  "after": {
+    "argv": [
+      "node",
+      "/home/genie/.local/share/mikro-engine-split/experiments-g8/final-local-smokes/proxy-addr-local-http-security-smoke.cjs",
+      "/home/genie/.local/share/mikro-engine-split/experiments-g8/final-local-smokes/history-only-reword-6qjyzwas/tree/mikro/node_modules",
+      "green-after"
+    ],
+    "cwd": "/home/genie/orca/workspaces/genie/mikro-engine-split",
+    "exitCode": 0,
+    "stderr": "",
+    "stdout": "{\"stage\":\"green-after\",\"version\":\"2.0.8\",\"peer\":\"127.0.0.1\",\"resolved\":\"127.0.0.1\",\"vulnerabilityObserved\":false,\"localHttpRequests\":1,\"externalModelCalls\":0,\"jevCalls\":0}\n"
+  },
+  "actualLocalHttpRequests": 2,
+  "externalModelCalls": 0,
+  "additionalJevCalls": 0,
+  "originalRuntimeUnmodified": true,
+  "privatePatchedRuntime": "/home/genie/.local/share/mikro-engine-split/experiments-g8/final-local-smokes/history-only-reword-6qjyzwas/tree/mikro",
+  "npmLockOnlyDelta": "only node_modules/proxy-addr version/resolved/integrity/funding record; package.json, direct MCP1.29.0 and exact Pi family1.0.2 unchanged",
+  "depsCiJob": "bg_121",
+  "depsCiRawArtifact": "artifact://973",
+  "depsCiDurationSeconds": 36.51,
+  "residualAuditWarnings": "5 vulnerabilities:3moderate/2high, no claim of all-dependency security clearance; no broad audit-fix applied"
+}

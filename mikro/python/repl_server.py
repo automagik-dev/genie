@@ -8,7 +8,8 @@ with safe builtins, and writes JSON results to stdout.
 IPC protocol:
   Node -> Python (stdin):
     {"type": "execute", "code": "..."}
-    {"type": "llm_response", "results": ["..."]}  (during execution)
+    {"type": "llm_response", "ok": true, "results": ["..."]}  (during execution)
+    {"type": "llm_response", "ok": false, "error": "..."}  (raises RuntimeError)
     {"type": "tool_response", "ok": true, "result": ...}  (during execution)
     {"type": "inject", "name": "...", "value": "...", "value_type": "str|list|dict"}
     {"type": "reset"}

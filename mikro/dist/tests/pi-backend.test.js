@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtemp, mkdir, readFile, rm, symlink, writeFile, access } from "node:fs/promises";
+import fs, { mkdtemp, mkdir, readFile, rm, symlink, writeFile, access } from "node:fs/promises";
 import { createServer } from "node:http";
+import { syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -83,13 +84,29 @@ async function fixture(turns, onRequest) {
 }
 const final = (answer) => ({ name: "emit_done", args: { answer } });
 describe("Pi SDK backend consumer behavior", () => {
-    it("reads with actual scoped tools, accepts only the first final, stops after a mixed batch, and loads no ambient instructions/extensions", async () => {
+    it("reads with actual scoped tools, accepts only the first final, denies later mixed-batch reads, and loads no ambient instructions/extensions", async (t) => {
         const local = await fixture([
             { tools: [{ name: "read", args: { path: "evidence.txt" } }, { name: "bash", args: { command: "touch shell-ran" } }, { name: "write", args: { path: "mutation.txt", content: "must not write" } }] },
-            { tools: [{ name: "read", args: { path: "evidence.txt" } }, final("accepted"), final("replacement must not win")] },
+            { tools: [final("accepted"), { name: "read", args: { path: "evidence.txt" } }, final("replacement must not win")] },
         ]);
+        let restoreOpen;
         try {
             await writeFile(join(local.root, "evidence.txt"), "source evidence\n");
+            const evidencePath = await fs.realpath(join(local.root, "evidence.txt"));
+            const realOpen = fs.open;
+            let evidenceOpens = 0;
+            // Observe real filesystem work, not SDK progress (which also announces blocked tools).
+            // Every call still uses the real filesystem; count only this fixture's unique file.
+            const observedOpen = t.mock.method(fs, "open", (...args) => {
+                if (args[0] === evidencePath)
+                    evidenceOpens += 1;
+                return realOpen(...args);
+            });
+            syncBuiltinESMExports();
+            restoreOpen = () => {
+                observedOpen.mock.restore();
+                syncBuiltinESMExports();
+            };
             await writeFile(join(local.root, "AGENTS.md"), "AMBIENT-INSTRUCTION-CANARY");
             await mkdir(join(local.root, ".pi", "extensions"), { recursive: true });
             const marker = join(local.root, "ambient-ran");
@@ -104,6 +121,7 @@ describe("Pi SDK backend consumer behavior", () => {
             assert.ok(Math.abs(result.usage.totalCost - 0.00005) < 1e-12);
             assert.ok(progress.includes("iteration 2") && progress.includes("tool read"));
             assert.match(JSON.stringify(local.bodies[1]), /source evidence/);
+            assert.equal(evidenceOpens, 1, "the initial read opens the real file, but the post-final read does no file work");
             assert.doesNotMatch(JSON.stringify(local.bodies), /AMBIENT-INSTRUCTION-CANARY/);
             await assert.rejects(access(marker), /ENOENT/);
             await assert.rejects(access(join(local.root, "shell-ran")), /ENOENT/);
@@ -113,6 +131,7 @@ describe("Pi SDK backend consumer behavior", () => {
             assert.deepEqual(tools.map((tool) => record(record(tool).function).name).sort(), ["emit_done", "git", "glob", "grep", "read"]);
         }
         finally {
+            restoreOpen?.();
             await local.close();
         }
     });

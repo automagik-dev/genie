@@ -193,11 +193,13 @@ export class PiBackend {
             }
             return decision || undefined;
         };
-        // Prevent the SDK from executing tools from truncated/provider-failed responses, or after limits fire.
+        // Deny further tool work after an accepted final, provider failure, cancellation or limits.
         const beforeToolCall = session.agent.beforeToolCall;
         session.agent.beforeToolCall = async (context, signal) => {
             if (providerFailure || budgetHit || deadline || cancelled)
                 return { block: true, reason: "Pi run terminated by provider failure, cancellation or budget" };
+            if (answer !== undefined)
+                return { block: true, reason: "Pi final already accepted; no further tools may execute" };
             if (context.toolCall.name === "emit_done") {
                 // Pi coerces a cloned argument object before this hook; validate the original model payload.
                 const raw = context.toolCall.arguments;

@@ -1,0 +1,25 @@
+{
+  "sourceCandidateManifestSha256": "7b98ccbad1fe6bc3f6f1205939865c5188231e10ab15a0403ed5d6833430302b",
+  "sourceCandidateRecords": 2454,
+  "job": "bg_131",
+  "exitCode": 0,
+  "explicitExitMarker": "SOURCE_ONLY_CATALOG_REPAIR3_WHOLE_ROOT_GATE_EXIT=0",
+  "artifact": "artifact://1111",
+  "seconds": 648.22,
+  "pass": 3227,
+  "skip": 2,
+  "fail": 0,
+  "assertions": 19240,
+  "files": 157,
+  "command": "env -i PATH=/home/genie/.local/bin:/home/genie/bin:/home/genie/.npm-global/bin:/home/genie/bin:/home/genie/.kimi-code/bin:/home/genie/.bun/bin:/home/genie/.local/bin:/home/genie/.local/bin:/home/genie/.config/orca/linux-orca-cli-shim:/home/genie/.local/bin:/home/genie/bin:/home/genie/.npm-global/bin:/home/genie/.kimi-code/bin:/home/genie/.bun/bin:/home/genie/.cargo/bin:/home/genie/.local/share/pnpm:/usr/local/bin:/usr/bin:/bin:/snap/bin:/home/genie/.volta/bin:/home/genie/.asdf/shims:/home/genie/.fnm/aliases/default/bin:/home/genie/.local/share/mise/shims:/home/genie/.yarn/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/sbin:/home/linuxbrew/.linuxbrew/bin:/nix/var/nix/profiles/default/bin:/home/genie/.nix-profile/bin:/home/genie/.opencode/bin:/home/genie/.vite-plus/bin HOME=/home/genie/.local/share/mikro-engine-split/experiments-g8/final-local-smokes/catalog-repair3-isolated-home GENIE_HOME=/home/genie/.local/share/mikro-engine-split/experiments-g8/final-local-smokes/catalog-repair3-isolated-home/.genie XDG_CONFIG_HOME=/home/genie/.local/share/mikro-engine-split/experiments-g8/final-local-smokes/catalog-repair3-isolated-home/.config TMPDIR=/home/genie/.local/share/mikro-engine-split/experiments-g8/final-local-smokes/catalog-repair3-temp-outside-home GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 bun run check && printf \"\\nSOURCE_ONLY_CATALOG_REPAIR3_WHOLE_ROOT_GATE_EXIT=0\\n\"",
+  "environment": {
+    "PATH": "/home/genie/.local/bin:/home/genie/bin:/home/genie/.npm-global/bin:/home/genie/bin:/home/genie/.kimi-code/bin:/home/genie/.bun/bin:/home/genie/.local/bin:/home/genie/.local/bin:/home/genie/.config/orca/linux-orca-cli-shim:/home/genie/.local/bin:/home/genie/bin:/home/genie/.npm-global/bin:/home/genie/.kimi-code/bin:/home/genie/.bun/bin:/home/genie/.cargo/bin:/home/genie/.local/share/pnpm:/usr/local/bin:/usr/bin:/bin:/snap/bin:/home/genie/.volta/bin:/home/genie/.asdf/shims:/home/genie/.fnm/aliases/default/bin:/home/genie/.local/share/mise/shims:/home/genie/.yarn/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/sbin:/home/linuxbrew/.linuxbrew/bin:/nix/var/nix/profiles/default/bin:/home/genie/.nix-profile/bin:/home/genie/.opencode/bin:/home/genie/.vite-plus/bin",
+    "HOME": "/home/genie/.local/share/mikro-engine-split/experiments-g8/final-local-smokes/catalog-repair3-isolated-home",
+    "GENIE_HOME": "/home/genie/.local/share/mikro-engine-split/experiments-g8/final-local-smokes/catalog-repair3-isolated-home/.genie",
+    "XDG_CONFIG_HOME": "/home/genie/.local/share/mikro-engine-split/experiments-g8/final-local-smokes/catalog-repair3-isolated-home/.config",
+    "TMPDIR": "/home/genie/.local/share/mikro-engine-split/experiments-g8/final-local-smokes/catalog-repair3-temp-outside-home",
+    "GIT_CONFIG_GLOBAL": "/dev/null",
+    "GIT_CONFIG_NOSYSTEM": "1"
+  },
+  "attribution": "Fresh complete final-source bun run check typecheck/lint/dead-code/skills/wishes/complexity/tests. Prior bg130 cancelled and not credited. Wrapper headline incorrectly says timeout; complete output and explicit chained exit0 marker demonstrate success. QA reported."
+}

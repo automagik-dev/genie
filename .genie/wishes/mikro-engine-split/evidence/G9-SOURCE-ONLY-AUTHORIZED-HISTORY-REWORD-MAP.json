@@ -1,0 +1,58 @@
+{
+  "ownerAuthorized": true,
+  "scope": "same-word import-body rewrap; four Genie first-parent descendants replayed; every tree preserved",
+  "archiveRef": "refs/mikro-engine-split-archive/published-source-553eebab",
+  "originalPublishedHead": "553eebab32c33a667a7c96634c4b7f488a223fcc",
+  "newHistoryOnlyHead": "40ddcadbe9ae5690bafae23f523179bf91a8e4eb",
+  "mapping": [
+    {
+      "old": "7846e1d7ff2f88ec58ae35ee0224ad367abc8001",
+      "new": "dd77518c978759ff4e99a163c3230709ea1e645c",
+      "tree": "9f1048fa38d0f65aeb764f8f1eaa850d54907e96",
+      "parentsUnchanged": true
+    },
+    {
+      "old": "7c0eedc01f284bdec1e647f257b83dafa84599db",
+      "new": "c844ea6fdb7bf4ffacf1b68c2eeb0b2597231cf5",
+      "tree": "cc4e2d593bc949a3f353077c185c949c67666be5",
+      "parentsMappedExactly": true
+    },
+    {
+      "old": "0fe62de3e2292fe1cc3eeb7f80068c0ee17918c7",
+      "new": "1c00fbe8c88e9e51bae7d47e7585de915bcd5cb3",
+      "tree": "6dbe337ae2c190a21fb4469b8b76b0f10da11dfb",
+      "parentsMappedExactly": true
+    },
+    {
+      "old": "8b67ca0e90d10c4c38e10e5786dd129cf216a47e",
+      "new": "81245a699b2b88536278eab336c3b12e5efe280a",
+      "tree": "122ca533747db340140ee7801a4231761a5cdeec",
+      "parentsMappedExactly": true
+    },
+    {
+      "old": "553eebab32c33a667a7c96634c4b7f488a223fcc",
+      "new": "40ddcadbe9ae5690bafae23f523179bf91a8e4eb",
+      "tree": "ff0fe28725698d007c0f42d77489642ae875f223",
+      "parentsMappedExactly": true
+    }
+  ],
+  "foreignMikroCommit": "62894e49314bad07382492ac074ea96df6776f61",
+  "foreignMikroAncestryVerified": true,
+  "oldAndNewRangeCommitCounts": 460,
+  "rangeSetDeltaExactlyOnlyFiveMappedGenieCommits": true,
+  "sameFinalTree": "ff0fe28725698d007c0f42d77489642ae875f223",
+  "normalGitHooksNotBypassed": true,
+  "integrationHeadUnchanged": true,
+  "ownBranchForcePushNotYetPerformed": true,
+  "localFullRangeCommitlintPassed": false,
+  "localFullRangeFailuresAreUnchangedForeignHistory": true,
+  "originalRemoteLog": {
+    "sha256": "68b3db4eab010bee9749ebba1f738a67cf6cc8cd774769a05e76673d508982fd",
+    "lines": 2466,
+    "visibleInputCount": 201,
+    "visibleOwnImportErrors": 1,
+    "allForeignHistoryPassEstablished": false
+  },
+  "diagnosis": "Actual local full range contains unchanged legacy foreign type-enum/body/subject errors absent from the captured remote verbose log. No foreign commit rewrite, exemption or new policy applied. Current remote result after final authorized push remains unobserved; source repairs continue independently.",
+  "initialTransportError": "Mistyped manual head SHA caused invalid revision range exit1/1.79s, no lint judgment; all following commands use actual git-derived head."
+}

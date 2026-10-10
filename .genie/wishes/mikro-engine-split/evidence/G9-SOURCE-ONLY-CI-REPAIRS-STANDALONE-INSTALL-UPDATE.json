@@ -1,0 +1,25 @@
+{
+  "sourceCandidateManifestSha256": "7b2accb60afb63f1be7870c50e16de320a3d7ea10a662d6cedc8003c7b6b32f4",
+  "job": "bg_125",
+  "reportedSuccessExitCode": 0,
+  "seconds": 83.68,
+  "command": "env -i/private HOME+GENIE_HOME+TMPDIR bash scripts/smoke-install-update.sh",
+  "cwd": "mikro",
+  "source": "Actual tar-copy of current Mikro source without Git metadata/dependencies into disposable local main fixture, not source/original branch movement or production install",
+  "initialDisposableHead": "179ad763b4d0d9385dd7598dca3b56d14c858aea",
+  "targetDisposableHead": "30f6c7e6fcc3d9e1dea65d1f327b6e5f257723e6",
+  "observed": [
+    "Actual clone/npm ci/build/install/version1.260907.1",
+    "Tracked/untracked dirty update refused",
+    "Forced update advanced only disposable checkout and removed its owned untracked fixture",
+    "Actual final executable version1.260907.1"
+  ],
+  "warnings": [
+    "Deprecated git-raw-commits/node-domexception",
+    "Five dependency install-script warnings retained"
+  ],
+  "externalModelCalls": 0,
+  "limits": [
+    "No production install, original main mutation, paid experiment, JEV, resampling, refreeze or regrading"
+  ]
+}

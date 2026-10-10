@@ -10,6 +10,8 @@ export interface RLMResult {
     answer: string;
     references: string[];
     usage: UsageStats;
+    /** False means usage is only the observed subtotal; unreported totals remain unknown. */
+    usageComplete?: boolean;
     usageBreakdown?: UsageBreakdown;
     iterations: number;
     model: string;

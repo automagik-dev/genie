@@ -42,10 +42,12 @@
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { loadConfig, type MikroConfig } from "../src/config.js";
 import { parseCustomProviders } from "../src/custom-providers.js";
@@ -975,7 +977,7 @@ interface ReceiptPacket {
 }
 
 /** Real local provider packets exercise Legacy, RLM, Python and the MCP receiver. */
-async function terminalReceiptFixture(packets: readonly (ReceiptPacket | "cancel")[]) {
+async function terminalReceiptFixture(packets: readonly (ReceiptPacket | "cancel" | "error")[]) {
   const root = await mkdtemp(join(tmpdir(), "mikro-terminal-receipt-"));
   const base = await loadConfig(root);
   const controller = new AbortController();
@@ -986,6 +988,11 @@ async function terminalReceiptFixture(packets: readonly (ReceiptPacket | "cancel
     if (packet === "cancel") {
       controller.abort(new Error("local cancellation during an unreported operation"));
       response.destroy();
+      return;
+    }
+    if (packet === "error") {
+      response.writeHead(400, { "Content-Type": "application/json" });
+      response.end(JSON.stringify({ error: { message: "local child provider failed" } }));
       return;
     }
     if (!packet) {
@@ -1068,12 +1075,13 @@ function assertPartialReceipt(
   inputTokens: number,
   outputTokens: number,
   iterations: number,
+  failed = true,
 ): void {
-  assert.equal(outcome.failed, true);
+  assert.equal(outcome.failed, failed);
   assert.match(outcome.text, /usage coverage: partial; unreported totals unknown/);
   assert.doesNotMatch(outcome.text, / · [\d,]+ in \/ [\d,]+ out · \$/);
   const line = outcome.text.split("\n").find((part) => part.startsWith("observed_usage: "));
-  assert.ok(line, "failed run must expose its actual observed subtotal");
+  assert.ok(line, "partial run must expose its actual observed subtotal");
   const parsed: unknown = JSON.parse(line.slice("observed_usage: ".length));
   const observed = receiptRecord(parsed);
   assert.deepEqual(Object.keys(observed).sort(), ["coverage", "iterations", "subtotal", "totals"]);
@@ -1087,12 +1095,182 @@ function assertPartialReceipt(
   assert.ok(typeof subtotal.totalCost === "number");
   assert.ok(Math.abs(subtotal.totalCost - (inputTokens + 2 * outputTokens) / 1_000_000) < 1e-12);
   const result = sessionResult(outcome.text, SESSION_ID, outcome.failed);
-  assert.equal(result.isError, true);
+  assert.equal(result.isError === true, failed);
   assert.deepEqual(result.structuredContent, { answer: outcome.text, session_id: SESSION_ID });
   assert.deepEqual(result.content, [{ type: "text", text: outcome.text }]);
 }
 
 describe("real Legacy terminal accounting at the MCP receiving boundary", () => {
+  for (const childError of [false, true]) {
+    it(`preserves ${childError ? "partial" : "complete"} child usage through three genuinely empty root replies`, async () => {
+      const local = await terminalReceiptFixture([
+        { text: '```repl\nchild = llm_query("local child prompt")\n```', inputTokens: 11, outputTokens: 7 },
+        childError ? "error" : { text: "known child answer", inputTokens: 11, outputTokens: 7 },
+        { text: "", inputTokens: 11, outputTokens: 0, finish: "stop" },
+        { text: "", inputTokens: 11, outputTokens: 0, finish: "stop" },
+        { text: "", inputTokens: 11, outputTokens: 0, finish: "stop" },
+      ]);
+      try {
+        const outcome = await runTurn(
+          new LegacyMikroBackend(), undefined, local.config, "receipt-fixture",
+          "Run the bounded child experiment", SESSION_ID, undefined, local.root, undefined, 5,
+        );
+        assert.equal(local.requests, 5, "one child and four root calls, no forced completion outside the cap");
+        assert.match(outcome.answer, /3 consecutive empty LLM responses/);
+        assert.equal(outcome.failed, true);
+        const result = sessionResult(outcome.text, SESSION_ID, outcome.failed);
+        assert.equal(result.isError, true);
+        assert.deepEqual(result.structuredContent, { answer: outcome.text, session_id: SESSION_ID });
+        assert.deepEqual(result.content, [{ type: "text", text: outcome.text }]);
+
+        // Execute the unchanged receiving host parser, not this harness's footer regex.
+        const parser = fileURLToPath(new URL("../../../scripts/mikro/call.ts", import.meta.url));
+        const program = `import { parseFooter } from ${JSON.stringify(parser)}; console.log(JSON.stringify(parseFooter(Bun.argv.at(-1))));`;
+        const parsed: unknown = JSON.parse(execFileSync("bun", ["--eval", program, outcome.text], {
+          encoding: "utf8", timeout: 10_000,
+        }));
+        if (childError) {
+          assertPartialReceipt(outcome, 44, 7, 4);
+          assert.equal(parsed, null, "unknown child totals must not be accepted as a complete bill");
+        } else {
+          assert.doesNotMatch(outcome.text, /usage coverage: partial|observed_usage/);
+          const footer = receiptRecord(parsed);
+          assert.equal(footer.iterations, 4);
+          assert.equal(footer.tokensIn, 55);
+          assert.equal(footer.tokensOut, 14);
+          assert.equal(footer.cost, 0.0001);
+          assert.equal(footer.budgetHit, "empty_responses");
+          assert.equal(footer.sessionId, SESSION_ID);
+        }
+      } finally {
+        await local.close();
+      }
+    });
+  }
+
+  for (const batched of [false, true]) {
+    for (const finish of ["stop", "length", "error"] as const) {
+      it(`keeps ${batched ? "batched" : "single"} child ${finish} on the real Python/RLM/MCP failure channel`, async () => {
+        const call = batched ? 'llm_query_batched(["first", "second"])' : 'llm_query("child prompt")';
+        const code = `\`\`\`repl\nimport json\nchild = ${call}\nreceipt = json.dumps({"answer": ${batched ? '" | ".join(child)' : "child"}})\n\`\`\`\nFINAL(receipt)`;
+        const childPacket: ReceiptPacket | "error" = finish === "error" ? "error" : {
+          text: "child answer", inputTokens: 11, outputTokens: 7, finish,
+        };
+        const local = await terminalReceiptFixture([
+          { text: code, inputTokens: 11, outputTokens: 7 },
+          ...(batched ? [{ text: "child answer", inputTokens: 11, outputTokens: 7 }] : []),
+          childPacket,
+        ]);
+        try {
+          const config: MikroConfig = {
+            ...local.config,
+            output: { schema: {
+              type: "object", required: ["answer"],
+              properties: { answer: { type: "string" } }, additionalProperties: false,
+            } },
+          };
+          const outcome = await runTurn(
+            new LegacyMikroBackend(), undefined, config, "receipt-fixture",
+            "Return the child answer", SESSION_ID, undefined, local.root, undefined, 1,
+          );
+          assert.equal(local.requests, batched ? 3 : 2, "no extra completion beyond the one root turn");
+          const result = sessionResult(outcome.text, SESSION_ID, outcome.failed);
+          assert.equal(outcome.failed, finish !== "stop");
+          assert.equal(result.isError === true, finish !== "stop");
+          assert.deepEqual(result.structuredContent, { answer: outcome.text, session_id: SESSION_ID });
+          if (finish === "stop") {
+            assert.deepEqual(JSON.parse(outcome.answer), {
+              answer: batched ? "child answer | child answer" : "child answer",
+            });
+            assert.match(outcome.text, batched ? / · 1 iteration · 33 in \/ 21 out · / : / · 1 iteration · 22 in \/ 14 out · /);
+          } else {
+            assert.doesNotMatch(outcome.answer, /^\s*\{"answer":/);
+            const observedCalls = 1 + Number(batched) + Number(finish !== "error");
+            assertPartialReceipt(outcome, 11 * observedCalls, 7 * observedCalls, 1);
+          }
+        } finally {
+          await local.close();
+        }
+      });
+    }
+  }
+
+  for (const position of ["before", "caught", "text", "remaining"] as const) {
+    it(`rejects a ${position} FINAL from the same execution/turn as a failed child`, async () => {
+      const final = 'FINAL(json.dumps({"answer": "not a successful child"}))';
+      const code = position === "before"
+        ? `import json\n${final}\nllm_query("child")`
+        : position === "caught"
+          ? `import json\ntry:\n    llm_query("child")\nexcept RuntimeError as error:\n    ${final}`
+          : 'llm_query("child")';
+      const laterFinal = position === "text"
+        ? '\nFINAL({"answer":"not a successful child"})'
+        : position === "remaining" ? `\n\`\`\`repl\nimport json\n${final}\n\`\`\`` : "";
+      const local = await terminalReceiptFixture([
+        { text: `\`\`\`repl\n${code}\n\`\`\`${laterFinal}`,
+          inputTokens: 11, outputTokens: 7 },
+        { text: "truncated child", inputTokens: 11, outputTokens: 7, finish: "length" },
+      ]);
+      try {
+        const outcome = await runTurn(
+          new LegacyMikroBackend(), undefined, local.config, "receipt-fixture",
+          "Return a final", SESSION_ID, undefined, local.root, undefined, 1,
+        );
+        assert.equal(local.requests, 2);
+        assert.doesNotMatch(outcome.answer, /not a successful child/);
+        assertPartialReceipt(outcome, 22, 14, 1);
+      } finally {
+        await local.close();
+      }
+    });
+  }
+
+  for (const finish of ["length", "error"] as const) {
+    it(`allows repair of child ${finish} only on the next existing root turn`, async () => {
+      const local = await terminalReceiptFixture([
+        { text: '```repl\nchild = llm_query("child")\nFINAL(child)\n```', inputTokens: 11, outputTokens: 7 },
+        finish === "error" ? "error" : { text: "truncated child", inputTokens: 11, outputTokens: 7, finish },
+        { text: 'FINAL({"answer":"repaired"})', inputTokens: 11, outputTokens: 7 },
+      ]);
+      try {
+        const config: MikroConfig = {
+          ...local.config,
+          output: { schema: {
+            type: "object", required: ["answer"],
+            properties: { answer: { type: "string" } }, additionalProperties: false,
+          } },
+        };
+        const outcome = await runTurn(
+          new LegacyMikroBackend(), undefined, config, "receipt-fixture",
+          "Repair when needed", SESSION_ID, undefined, local.root, undefined, 2,
+        );
+        assert.equal(local.requests, 3);
+        assert.equal(outcome.answer, '{"answer":"repaired"}');
+        assertPartialReceipt(outcome, finish === "length" ? 33 : 22, finish === "length" ? 21 : 14, 2, false);
+      } finally {
+        await local.close();
+      }
+    });
+  }
+
+  it("cancels a dispatched child without returning an ordinary child value or another completion", async () => {
+    const local = await terminalReceiptFixture([
+      { text: '```repl\nchild = llm_query("child")\nFINAL(child)\n```', inputTokens: 11, outputTokens: 7 },
+      "cancel",
+    ]);
+    try {
+      const outcome = await runTurn(
+        new LegacyMikroBackend(), undefined, local.config, "receipt-fixture",
+        "Cancel the child", SESSION_ID, undefined, local.root, undefined, 2, local.controller.signal,
+      );
+      assert.equal(local.requests, 2);
+      assert.equal(outcome.answer, TIMEOUT_ANSWER);
+      assertPartialReceipt(outcome, 11, 7, 1);
+    } finally {
+      await local.close();
+    }
+  });
+
   it("preserves prior and failed provider receipts cumulatively exactly once", async () => {
     const local = await terminalReceiptFixture([
       { text: "```repl\nprint('continue')\n```", inputTokens: 11, outputTokens: 7 },

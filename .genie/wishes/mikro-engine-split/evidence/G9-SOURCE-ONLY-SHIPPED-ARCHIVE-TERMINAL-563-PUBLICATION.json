@@ -1,0 +1,365 @@
+{
+  "schemaVersion": 1,
+  "sourceOnly": true,
+  "sourceCandidateSha256": "7241a0a39d2a270093e6ae0d1af905f9603b3092eff373795146f493ff8e29e9",
+  "status": "SOURCE_SHIP_EXACT_PATH_NORMAL_HOOK_CHECKPOINT_NEXT",
+  "normalHookAuthority": {
+    "command": [
+      "git",
+      "config",
+      "--get",
+      "core.hooksPath"
+    ],
+    "cwd": "/home/genie/.local/share/mikro-engine-split/experiments-g8/final-local-smokes/history-only-reword-6qjyzwas/tree",
+    "exitCode": 0,
+    "stdout": ".husky/_\n",
+    "stderr": "",
+    "seconds": 0.0035001339856535196
+  },
+  "plannedOwnedPaths": [
+    ".claude/rules/release-pipeline.md",
+    ".claude/rules/skills-installer.md",
+    ".docs-vendor",
+    ".genie/wishes/genie-bench/WISH.md",
+    ".genie/wishes/mikro-engine-split/WISH.md",
+    ".genie/wishes/mikro-engine-split/evidence/G1-CATALOG-SHARED-ANCESTRY-QUALITY-BLOCKER-CLARIFICATION.json",
+    ".genie/wishes/mikro-engine-split/evidence/G1-CATALOG-SHARED-ANCESTRY-QUALITY-BLOCKER-RED.json",
+    ".genie/wishes/mikro-engine-split/evidence/G1-CATALOG-SHARED-ANCESTRY-REPAIR3-FINAL-BOUNDARY-PROOF.json",
+    ".genie/wishes/mikro-engine-split/evidence/G1-CATALOG-SHARED-ANCESTRY-REPAIR3-RED-GREEN.json",
+    ".genie/wishes/mikro-engine-split/evidence/G1-CI-OWNERSHIP-REPAIR2-GRAPH-PROOF.json",
+    ".genie/wishes/mikro-engine-split/evidence/G2-SECURITY-REPAIR3-CURRENT-STDIO-SMOKE.json",
+    ".genie/wishes/mikro-engine-split/evidence/G2-SECURITY-REPAIR3-PROXY-ADDR-HTTP-RED-GREEN.json",
+    ".genie/wishes/mikro-engine-split/evidence/G2-SECURITY-REPAIR3-PROXY-ADDR-SMOKE-SOURCE.json",
+    ".genie/wishes/mikro-engine-split/evidence/G5-CORRECTNESS-REPAIR3-ALIAS-PROGRAM-SMOKE.json",
+    ".genie/wishes/mikro-engine-split/evidence/G9-SOURCE-ONLY-AUTHORIZED-CI-REPAIRS-CANDIDATE-MANIFEST.json",
+    ".genie/wishes/mikro-engine-split/evidence/G9-SOURCE-ONLY-AUTHORIZED-CI-REPAIRS-FINAL-CANDIDATE-MANIFEST.json",
+    ".genie/wishes/mikro-engine-split/evidence/G9-SOURCE-ONLY-AUTHORIZED-HISTORY-REWORD-MAP.json",
+    ".genie/wishes/mikro-engine-split/evidence/G9-SOURCE-ONLY-CATALOG-REPAIR3-FINAL-CANDIDATE-MANIFEST.json",
+    ".genie/wishes/mikro-engine-split/evidence/G9-SOURCE-ONLY-CATALOG-REPAIR3-FINAL-CONTINUITY.json",
+    ".genie/wishes/mikro-engine-split/evidence/G9-SOURCE-ONLY-CATALOG-REPAIR3-FINAL-CORRECTNESS.json",
+    ".genie/wishes/mikro-engine-split/evidence/G9-SOURCE-ONLY-CATALOG-REPAIR3-FINAL-QUALITY.json",
+    ".genie/wishes/mikro-engine-split/evidence/G9-SOURCE-ONLY-CATALOG-REPAIR3-WHOLE-GENIE-GATE.json",
+    ".genie/wishes/mikro-engine-split/evidence/G9-SOURCE-ONLY-CATALOG-REPAIR3-WHOLE-MIKRO-GATE.json",
+    ".genie/wishes/mikro-engine-split/evidence/G9-SOURCE-ONLY-CI-REPAIRS-CONDITIONAL-CORRECTNESS.json",
+    ".genie/wishes/mikro-engine-split/evidence/G9-SOURCE-ONLY-CI-REPAIRS-CONDITIONAL-QUALITY.json",
+    ".genie/wishes/mikro-engine-split/evidence/G9-SOURCE-ONLY-CI-REPAIRS-FINAL-CANDIDATE-CONTINUITY.json",
+    ".genie/wishes/mikro-engine-split/evidence/G9-SOURCE-ONLY-CI-REPAIRS-FINAL-CORRECTNESS-SHIP.json",
+    ".genie/wishes/mikro-engine-split/evidence/G9-SOURCE-ONLY-CI-REPAIRS-FINAL-QUALITY-FIX-FIRST.json",
+    ".genie/wishes/mikro-engine-split/evidence/G9-SOURCE-ONLY-CI-REPAIRS-FOUR-RELEASE-PAYLOADS.json",
+    ".genie/wishes/mikro-engine-split/evidence/G9-SOURCE-ONLY-CI-REPAIRS-NONACCEPTED-PHASE-A-REPLAY.json",
+    ".genie/wishes/mikro-engine-split/evidence/G9-SOURCE-ONLY-CI-REPAIRS-RECORDED-ORIGINALS-READBACK.json",
+    ".genie/wishes/mikro-engine-split/evidence/G9-SOURCE-ONLY-CI-REPAIRS-REMOTE-MERGEABILITY-DISCREPANCY.json",
+    ".genie/wishes/mikro-engine-split/evidence/G9-SOURCE-ONLY-CI-REPAIRS-ROOT-ENV-BOUNDARY-GREEN.json",
+    ".genie/wishes/mikro-engine-split/evidence/G9-SOURCE-ONLY-CI-REPAIRS-ROOT-RED-AND-ENV-DIAGNOSIS.json",
+    ".genie/wishes/mikro-engine-split/evidence/G9-SOURCE-ONLY-CI-REPAIRS-STANDALONE-INSTALL-UPDATE.json",
+    ".genie/wishes/mikro-engine-split/evidence/G9-SOURCE-ONLY-CI-REPAIRS-WHOLE-GENIE-GATE.json",
+    ".genie/wishes/mikro-engine-split/evidence/G9-SOURCE-ONLY-CI-REPAIRS-WHOLE-MIKRO-GATE.json",
+    ".genie/wishes/mikro-engine-split/evidence/G9-SOURCE-ONLY-RECEIVING-PROVENANCE-435-BOUNDARY-PROOF.json",
+    ".genie/wishes/mikro-engine-split/evidence/G9-SOURCE-ONLY-RECEIVING-PROVENANCE-435-DEPS-INSTALL-MIKRO-GATE.json",
+    ".genie/wishes/mikro-engine-split/evidence/G9-SOURCE-ONLY-RECEIVING-PROVENANCE-435-FINAL-CANDIDATE-MANIFEST.json",
+    ".genie/wishes/mikro-engine-split/evidence/G9-SOURCE-ONLY-RECEIVING-PROVENANCE-435-FINAL-CONTINUITY.json",
+    ".genie/wishes/mikro-engine-split/evidence/G9-SOURCE-ONLY-RECEIVING-PROVENANCE-435-FINAL-CORRECTNESS.json",
+    ".genie/wishes/mikro-engine-split/evidence/G9-SOURCE-ONLY-RECEIVING-PROVENANCE-435-FINAL-QUALITY.json",
+    ".genie/wishes/mikro-engine-split/evidence/G9-SOURCE-ONLY-RECEIVING-PROVENANCE-435-PRESERVATION.json",
+    ".genie/wishes/mikro-engine-split/evidence/G9-SOURCE-ONLY-RECEIVING-PROVENANCE-435-ROOT-TIMEOUT.json",
+    ".genie/wishes/mikro-engine-split/evidence/G9-SOURCE-ONLY-RECEIVING-PROVENANCE-435-WHOLE-GENIE-GATE.json",
+    ".genie/wishes/mikro-engine-split/evidence/G9-SOURCE-ONLY-RECEIVING-PROVENANCE-435-WHOLE-MIKRO-GATE.json",
+    ".genie/wishes/mikro-engine-split/evidence/G9-SOURCE-ONLY-SHIPPED-ARCHIVE-TERMINAL-563-BOUNDARY-PROOF.json",
+    ".genie/wishes/mikro-engine-split/evidence/G9-SOURCE-ONLY-SHIPPED-ARCHIVE-TERMINAL-563-DOCS-GATE.json",
+    ".genie/wishes/mikro-engine-split/evidence/G9-SOURCE-ONLY-SHIPPED-ARCHIVE-TERMINAL-563-FINAL-CANDIDATE-MANIFEST.json",
+    ".genie/wishes/mikro-engine-split/evidence/G9-SOURCE-ONLY-SHIPPED-ARCHIVE-TERMINAL-563-FINAL-CONTINUITY.json",
+    ".genie/wishes/mikro-engine-split/evidence/G9-SOURCE-ONLY-SHIPPED-ARCHIVE-TERMINAL-563-FOUR-RELEASE-PAYLOADS.json",
+    ".genie/wishes/mikro-engine-split/evidence/G9-SOURCE-ONLY-SHIPPED-ARCHIVE-TERMINAL-563-FROZEN-CONTRACT.json",
+    ".genie/wishes/mikro-engine-split/evidence/G9-SOURCE-ONLY-SHIPPED-ARCHIVE-TERMINAL-563-LIVE-BASE-INTEGRATION.json",
+    ".genie/wishes/mikro-engine-split/evidence/G9-SOURCE-ONLY-SHIPPED-ARCHIVE-TERMINAL-563-PRESERVATION.json",
+    ".genie/wishes/mikro-engine-split/evidence/G9-SOURCE-ONLY-SHIPPED-ARCHIVE-TERMINAL-563-SUPPLEMENTAL-GATE.json",
+    ".genie/wishes/mikro-engine-split/evidence/G9-SOURCE-ONLY-SHIPPED-ARCHIVE-TERMINAL-563-WHOLE-GENIE-GATE.json",
+    ".genie/wishes/mikro-engine-split/evidence/G9-SOURCE-ONLY-SHIPPED-ARCHIVE-TERMINAL-563-WHOLE-MIKRO-INSTALL-GATE.json",
+    ".github/workflows/ci.yml",
+    ".github/workflows/commitlint.yml",
+    "CHANGELOG.md",
+    "CLAUDE.md",
+    "README.md",
+    "bun.lock",
+    "mikro/CHANGELOG.md",
+    "mikro/dist/src/ipc.d.ts",
+    "mikro/dist/src/mcp/backends/legacy.js",
+    "mikro/dist/src/mcp/backends/pi.js",
+    "mikro/dist/src/output.d.ts",
+    "mikro/dist/src/repl.js",
+    "mikro/dist/src/rlm.js",
+    "mikro/dist/tests/backend-contract.test.js",
+    "mikro/dist/tests/pi-backend.test.js",
+    "mikro/dist/tests/repl-tool-bridge.test.js",
+    "mikro/package-lock.json",
+    "mikro/python/llm_bridge.py",
+    "mikro/python/repl_server.py",
+    "mikro/src/ipc.ts",
+    "mikro/src/mcp/backends/legacy.ts",
+    "mikro/src/mcp/backends/pi.ts",
+    "mikro/src/output.ts",
+    "mikro/src/repl.ts",
+    "mikro/src/rlm.ts",
+    "mikro/tests/backend-contract.test.ts",
+    "mikro/tests/pi-backend.test.ts",
+    "mikro/tests/repl-tool-bridge.test.ts",
+    "package.json",
+    "plugins/dsh-workflow-loader/package.json",
+    "scripts/commitlint.test.ts",
+    "scripts/commitlint.ts",
+    "scripts/git-history-ownership.ts",
+    "scripts/legacy-skills-catalog.test.ts",
+    "scripts/legacy-skills-catalog.ts",
+    "scripts/mikro/README.md",
+    "scripts/mikro/bench-cli.test.ts",
+    "scripts/mikro/bench.ts",
+    "scripts/release-docs.test.ts",
+    "scripts/test-preload.test.ts",
+    "scripts/test-preload.ts",
+    "skills/genie/SKILL.md",
+    "skills/work/SKILL.md",
+    "src/genie-commands/doctor.test.ts",
+    "src/genie-commands/doctor.ts",
+    "src/lib/legacy-skills-catalog.ts",
+    "src/lib/metrics-capture.test.ts",
+    "src/lib/metrics-capture.ts",
+    "src/lib/metrics-export.test.ts",
+    "src/lib/metrics-export.ts",
+    "src/lib/metrics-phoenix.ts",
+    "src/lib/metrics-prices.test.ts",
+    "src/lib/metrics-prices.ts",
+    "src/lib/metrics-usage.ts",
+    "src/term-commands/metrics.test.ts",
+    "src/term-commands/metrics.ts",
+    "tests/e2e/v5-lifecycle.sh"
+  ],
+  "generatedRuntimeNotVersioned": {
+    "path": "dist/genie.js",
+    "authority": {
+      "command": [
+        "git",
+        "check-ignore",
+        "-v",
+        "dist/genie.js"
+      ],
+      "cwd": "/home/genie/.local/share/mikro-engine-split/experiments-g8/final-local-smokes/history-only-reword-6qjyzwas/tree",
+      "exitCode": 0,
+      "stdout": ".gitignore:15:dist/\tdist/genie.js\n",
+      "stderr": "",
+      "seconds": 0.004874244099482894
+    },
+    "manifestRecord": {
+      "path": "dist/genie.js",
+      "kind": "file",
+      "mode": "0700",
+      "sha256": "a9f5e35c87d5ebfe4315e512c669eb5541073df3e4f3efc72efe8b5b75fc86fa"
+    },
+    "reason": "Actual executed generated rootbundle verification input is bytebound, remains normal ignored build output, not a new source-controlled binary. Compiled imported Mikro dist is source-controlled and staged explicitly per manifest."
+  },
+  "historicalRewordActualCorrespondence": [
+    {
+      "old": "7846e1d7ff2f88ec58ae35ee0224ad367abc8001",
+      "new": "dd77518c978759ff4e99a163c3230709ea1e645c",
+      "tree": "9f1048fa38d0f65aeb764f8f1eaa850d54907e96",
+      "oldParents": [
+        "edf9c7024b1a4417b79b6c13f5e9386c92742bf0",
+        "62894e49314bad07382492ac074ea96df6776f61"
+      ],
+      "newParents": [
+        "edf9c7024b1a4417b79b6c13f5e9386c92742bf0",
+        "62894e49314bad07382492ac074ea96df6776f61"
+      ],
+      "sameTreeAndExactlyMappedParents": true
+    },
+    {
+      "old": "7c0eedc01f284bdec1e647f257b83dafa84599db",
+      "new": "c844ea6fdb7bf4ffacf1b68c2eeb0b2597231cf5",
+      "tree": "cc4e2d593bc949a3f353077c185c949c67666be5",
+      "oldParents": [
+        "7846e1d7ff2f88ec58ae35ee0224ad367abc8001"
+      ],
+      "newParents": [
+        "dd77518c978759ff4e99a163c3230709ea1e645c"
+      ],
+      "sameTreeAndExactlyMappedParents": true
+    },
+    {
+      "old": "0fe62de3e2292fe1cc3eeb7f80068c0ee17918c7",
+      "new": "1c00fbe8c88e9e51bae7d47e7585de915bcd5cb3",
+      "tree": "6dbe337ae2c190a21fb4469b8b76b0f10da11dfb",
+      "oldParents": [
+        "7c0eedc01f284bdec1e647f257b83dafa84599db"
+      ],
+      "newParents": [
+        "c844ea6fdb7bf4ffacf1b68c2eeb0b2597231cf5"
+      ],
+      "sameTreeAndExactlyMappedParents": true
+    },
+    {
+      "old": "8b67ca0e90d10c4c38e10e5786dd129cf216a47e",
+      "new": "81245a699b2b88536278eab336c3b12e5efe280a",
+      "tree": "122ca533747db340140ee7801a4231761a5cdeec",
+      "oldParents": [
+        "0fe62de3e2292fe1cc3eeb7f80068c0ee17918c7"
+      ],
+      "newParents": [
+        "1c00fbe8c88e9e51bae7d47e7585de915bcd5cb3"
+      ],
+      "sameTreeAndExactlyMappedParents": true
+    },
+    {
+      "old": "553eebab32c33a667a7c96634c4b7f488a223fcc",
+      "new": "40ddcadbe9ae5690bafae23f523179bf91a8e4eb",
+      "tree": "ff0fe28725698d007c0f42d77489642ae875f223",
+      "oldParents": [
+        "8b67ca0e90d10c4c38e10e5786dd129cf216a47e"
+      ],
+      "newParents": [
+        "81245a699b2b88536278eab336c3b12e5efe280a"
+      ],
+      "sameTreeAndExactlyMappedParents": true
+    }
+  ],
+  "source628AncestryBeforeCommit": {
+    "command": [
+      "git",
+      "merge-base",
+      "--is-ancestor",
+      "62894e49314bad07382492ac074ea96df6776f61",
+      "HEAD"
+    ],
+    "cwd": "/home/genie/.local/share/mikro-engine-split/experiments-g8/final-local-smokes/history-only-reword-6qjyzwas/tree",
+    "exitCode": 0,
+    "stdout": "",
+    "stderr": "",
+    "seconds": 0.004581643035635352
+  },
+  "remoteBeforePublication": {
+    "command": [
+      "gh",
+      "pr",
+      "view",
+      "3139",
+      "--repo",
+      "automagik-dev/genie",
+      "--json",
+      "headRefOid,baseRefOid,headRefName,baseRefName,mergeable,mergeStateStatus,url"
+    ],
+    "cwd": "/home/genie/.local/share/mikro-engine-split/experiments-g8/final-local-smokes/history-only-reword-6qjyzwas/tree",
+    "exitCode": 0,
+    "stdout": "{\"baseRefName\":\"dev\",\"baseRefOid\":\"27739552066c18cde858d9bd2f8f9b1e041220c4\",\"headRefName\":\"automagik-genie/mikro-engine-split\",\"headRefOid\":\"553eebab32c33a667a7c96634c4b7f488a223fcc\",\"mergeStateStatus\":\"DIRTY\",\"mergeable\":\"CONFLICTING\",\"url\":\"https://github.com/automagik-dev/genie/pull/3139\"}\n",
+    "stderr": "",
+    "seconds": 0.804584460100159
+  },
+  "remoteExactRefsBeforePublication": {
+    "command": [
+      "git",
+      "ls-remote",
+      "origin",
+      "refs/heads/dev",
+      "refs/heads/automagik-genie/mikro-engine-split"
+    ],
+    "cwd": "/home/genie/.local/share/mikro-engine-split/experiments-g8/final-local-smokes/history-only-reword-6qjyzwas/tree",
+    "exitCode": 0,
+    "stdout": "553eebab32c33a667a7c96634c4b7f488a223fcc\trefs/heads/automagik-genie/mikro-engine-split\nfa8469e0e1beb953823bb2619ed0a39fe581dba7\trefs/heads/dev\n",
+    "stderr": "",
+    "seconds": 1.4012776280287653
+  },
+  "nativeRenewal": [
+    {
+      "task": "t_mv1xtis991708849",
+      "heartbeat": {
+        "command": [
+          "bun",
+          "dist/genie.js",
+          "task",
+          "heartbeat",
+          "t_mv1xtis991708849"
+        ],
+        "cwd": "/home/genie/orca/workspaces/genie/mikro-engine-split",
+        "exitCode": 0,
+        "stdout": "Heartbeat recorded for task t_mv1xtis991708849.\n",
+        "stderr": "",
+        "seconds": 0.29900332703255117
+      },
+      "status": {
+        "command": [
+          "bun",
+          "dist/genie.js",
+          "task",
+          "status",
+          "t_mv1xtis991708849"
+        ],
+        "cwd": "/home/genie/orca/workspaces/genie/mikro-engine-split",
+        "exitCode": 0,
+        "stdout": "\nTask t_mv1xtis991708849: G1 repair5: shipped refs plus proven archives and live-dev integration\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n  Status:     in_progress\n  Wish:       mikro-engine-split#G1\n  Assigned to: codex \u2014 Owner selected Shipped + proven archives; oldall-refdefault\u2192shippedHEAD/tags/originmain/dev/refsarchive+exacttrustedGeniearchiveoptin, preservecommitboundsourceownership. G1C5/B5Q6/cap6budgetSourceinstructioneffort0; currentdevfa846integration/currentgates/releaseproof/original40/22. No paid/JEV/resample/refreeze/regrade/main/merge/prodinstall.\n  Claimed by: mikro-catalog5 (since Oct 10, 05:12) \u25b6\n  Created:    Oct 10, 05:12\n  Updated:    Oct 10, 06:15\n\n  Timeline:\n    Oct 10, 05:12  claim by cli (pi) \u2014 claimed by mikro-catalog5\n    Oct 10, 05:12  comment by orchestrator (pi) \u2014 dispatch: Main/engineer \u2014 Owner selected Shipped + proven archives; oldall-refdefault\u2192shippedHEAD/tags/originmain/dev/refsarchive+exacttrustedGeniearchiveoptin, preservecommitboundsourceownership. G1C5/B5Q6/cap6budgetSourceinstructioneffort0; currentdevfa846integration/currentgates/releaseproof/original40/22. No paid/JEV/resample/refreeze/regrade/main/merge/prodinstall. Sharedprivateworktree, disjointwriters; no build/lint/test/formatter or gitstate midflight; parent integratesremainingupstreamfiles and runscompletegatesafteredits. OneclaimantPARTIALreportonly; coordinatorfinalreviewpointercomment, no selfSHIP. Original93eec214FIX-FIRST/fullreviews+actualG2REDsources FINAL-CONTINUITY retained.\n    Oct 10, 05:23  report by mikro-catalog5 (pi) \u2014 PARTIAL \u2014 G1 source edits complete in exactly scripts/git-history-ownership.ts, scripts/legacy-skills-catalog.ts, scripts/legacy-skills-catalog.test.ts. Approved caps: C5/B5, Q6/cap6; budgetSource=instruction; effort escalations=0; all other caps, original40/22, signed design and paid108+18 unchanged. Interfaces: historyRevisions(root), collectCatalog(root=ROOT, provenance?), catalogGenieCommits(git, history, retirementHistory, provenance?); old importedMikroCommits removed, strict-tip foreignOnlyMikroCommits unchanged. One all-ref ownership graph now validates canonical imports/current-HEAD proof authority before a separate shipped/exact-trusted-archive eligibility walk reuses the visited set. Shipped defaults are HEAD/tags/exact origin/main/dev/refs/archive; unmerged/lookalike work does not confer retirement authority, including without Mikro imports. Real Git and emitted-catalog retirement-consumer regressions cover tagged-only delivery, absent optional refs, exact shipping refs, trusted unrecorded archives outside defaults including shared source ancestry, retained Genre core under source roles, proof errors/no-write and idempotence. LSP unavailable: targeted exported-reference grep used. Checks NOT RUN: tests/build/lint/format/smoke, per shared-workspace freeze; all coordinator full gates, real probes/releases and fresh independent original40/22 reviews pending. No self-SHIP, publication, paid/JEV/rerun/refreeze/regrade, production install or HEAD/index/ref mutation. Risk: graph/proof/consumer integration remains unverified until parent gates; no observed validation result claimed.\n    Oct 10, 05:48  comment by mikro-catalog5 (pi) \u2014 Coordinator current3owningG1failuresretained; necessary stackcopy preservesexactarchiveproofroots, now36pass0fail200assertions. ActualGit/catalog/classifier confirms shippedHEAD/tags/exactoriginmain-dev/refsarchive+trustedunrecordedoutsidearchive, unmergedGenrePR/lookalikeunproven, source/stale/self/prefix/missingrefusals. ExactoldG2RED/control reusedcurrentcompiledPython/RLM/MCP+unchangedGenieparser nowpartial44/7cost0.000058totalsnull, control55/14complete; SDKowning80/80includingPi no-post-finalread. Freshrootfrozen/npmCIinstalls observed; warningsretained. Newfourreleases/fullroot/SDK/install/applicabledocs/supplemental gatejobs142\u2013146 underwayonehostlock; no sourceSHIP. Original40/22/signedf473+stamped4e8 and628/index9WIP/settingsexact,553originalHEADunchanged, broaderbeforemissingstillBLOCKED. Sourceevidence563, C5/B5Q6/cap6 G1/C6/B6Q5/cap5G2, effort0; no extra claimantreports or paid/model/JEV/reportappend/publication.\n\n",
+        "stderr": "",
+        "seconds": 0.2116192220710218
+      }
+    },
+    {
+      "task": "t_mv1xtjgz6f6297df",
+      "heartbeat": {
+        "command": [
+          "bun",
+          "dist/genie.js",
+          "task",
+          "heartbeat",
+          "t_mv1xtjgz6f6297df"
+        ],
+        "cwd": "/home/genie/orca/workspaces/genie/mikro-engine-split",
+        "exitCode": 0,
+        "stdout": "Heartbeat recorded for task t_mv1xtjgz6f6297df.\n",
+        "stderr": "",
+        "seconds": 0.2278256278950721
+      },
+      "status": {
+        "command": [
+          "bun",
+          "dist/genie.js",
+          "task",
+          "status",
+          "t_mv1xtjgz6f6297df"
+        ],
+        "cwd": "/home/genie/orca/workspaces/genie/mikro-engine-split",
+        "exitCode": 0,
+        "stdout": "\nTask t_mv1xtjgz6f6297df: G2 repair6: preserve partial receipts on empty terminal abort\n\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n  Status:     in_progress\n  Wish:       mikro-engine-split#G2\n  Assigned to: codex \u2014 Owner Authorize focused repair; G2C5/B5\u21926/B6Q4/cap4\u21925/cap5budgetSourceinstructioneffort0; actual childHTTP400missingusage\u21923emptyroot terminal dropsflag\u2192MCP/Geniecompletebill. Carryexistingincompleteflag only, realPython/RLM/MCPregression; noG3budget/cancellation/retrychanges, renewfullgates/original40/22.\n  Claimed by: mikro-child-ipc6 (since Oct 10, 05:12) \u25b6\n  Created:    Oct 10, 05:12\n  Updated:    Oct 10, 06:15\n\n  Timeline:\n    Oct 10, 05:12  claim by cli (pi) \u2014 claimed by mikro-child-ipc6\n    Oct 10, 05:12  comment by orchestrator (pi) \u2014 dispatch: Main/engineer \u2014 Owner Authorize focused repair; G2C5/B5\u21926/B6Q4/cap4\u21925/cap5budgetSourceinstructioneffort0; actual childHTTP400missingusage\u21923emptyroot terminal dropsflag\u2192MCP/Geniecompletebill. Carryexistingincompleteflag only, realPython/RLM/MCPregression; noG3budget/cancellation/retrychanges, renewfullgates/original40/22. Sharedprivateworktree, disjointwriters; no build/lint/test/formatter or gitstate midflight; parent integratesremainingupstreamfiles and runscompletegatesafteredits. OneclaimantPARTIALreportonly; coordinatorfinalreviewpointercomment, no selfSHIP. Original93eec214FIX-FIRST/fullreviews+actualG2REDsources FINAL-CONTINUITY retained.\n    Oct 10, 05:16  report by mikro-child-ipc6 (pi) \u2014 PARTIAL \u2014 G2 C6/B6, Q5/cap5, budgetSource=instruction, effort_escalations=0; other caps/original40/22/signed design/paid108+18 unchanged. Edited ONLY mikro/src/rlm.ts and mikro/tests/backend-contract.test.ts in the authorized private shared checkout. Empty-response abort now builds the existing result locally, preserves run-local usageComplete:false only when already incomplete, and returns it; complete control shape remains unchanged. Added real local HTTP provider\u2192Python child\u2192Node RLM\u2192Legacy\u2192MCP receiving regression/control: one child plus four root requests, maxIterations5, three genuinely empty stop replies reporting output0; unknown HTTP400 child retains partial44in7out known subtotal0.000058 once with totals:null, while successful child retains numeric55in14out complete failure receipt. Both assert isError:true and execute actual unchanged scripts/mikro/call.ts parseFooter (partial=null, complete numeric). Existing cancellation and permitted repair cases unchanged. Audited other terminal routes: finalize already forwards false; thrown RLMRunError and Legacy cancellation already produce partial receipts; no timeout/budget/restart/cancellation policy change. Checks NOT RUN: compile/build/tests/lint/formatter/smokes/exact saved RED driver/full gates; all verification and independent original40/22 review pending coordinator after both writers finish. No self-SHIP/publication/paid/JEV/rerun/refreeze/regrade or repo Git-state changes. Receiving trace: failed Node handler sets run-local incomplete marker and typed IPC failure; Python raises RuntimeError; Node-owned llmError prevents same-execution FINAL; empty abort now retains false through Legacy forwarding and MCP partial shape so unchanged host parser cannot accept observed subtotal as complete bill.\n    Oct 10, 05:48  comment by mikro-child-ipc6 (pi) \u2014 Coordinator current3owningG1failuresretained; necessary stackcopy preservesexactarchiveproofroots, now36pass0fail200assertions. ActualGit/catalog/classifier confirms shippedHEAD/tags/exactoriginmain-dev/refsarchive+trustedunrecordedoutsidearchive, unmergedGenrePR/lookalikeunproven, source/stale/self/prefix/missingrefusals. ExactoldG2RED/control reusedcurrentcompiledPython/RLM/MCP+unchangedGenieparser nowpartial44/7cost0.000058totalsnull, control55/14complete; SDKowning80/80includingPi no-post-finalread. Freshrootfrozen/npmCIinstalls observed; warningsretained. Newfourreleases/fullroot/SDK/install/applicabledocs/supplemental gatejobs142\u2013146 underwayonehostlock; no sourceSHIP. Original40/22/signedf473+stamped4e8 and628/index9WIP/settingsexact,553originalHEADunchanged, broaderbeforemissingstillBLOCKED. Sourceevidence563, C5/B5Q6/cap6 G1/C6/B6Q5/cap5G2, effort0; no extra claimantreports or paid/model/JEV/reportappend/publication.\n\n",
+        "stderr": "",
+        "seconds": 0.21804341999813914
+      }
+    }
+  ],
+  "currentDevMergePlan": "AfterSOURCE SHIP normalhooks exactpathsourcecheckpoint then normal fa846 ancestry merge; conflict mayonlyresolve toalreadyreviewedcomposedcode, no source drift. Wholegatealready ran oncomposedtree; requiredpostgraphcheck/compiledsourceidentityfollows. NoHEAD/indexoriginalmoves, no skipenv/hookoverride, noforeignrewrite/mainmerge.",
+  "remoteBaseDiscrepancy": {
+    "forgePrBaseRefOid": "27739552066c18cde858d9bd2f8f9b1e041220c4",
+    "actualRemoteDevRef": "fa8469e0e1beb953823bb2619ed0a39fe581dba7",
+    "authority": "Actual git ls-remote output retained; no claim forgecurrentbase metadata accurate or currentmergeabilitygreen. Repeatreadback afterapprovedpush."
+  },
+  "actualReviewThreadsBeforePublication": {
+    "command": [
+      "gh",
+      "api",
+      "graphql",
+      "-f",
+      "query=query { repository(owner:\"automagik-dev\", name:\"genie\") { pullRequest(number:3139) { headRefOid reviewThreads(first:100) { nodes { id isResolved isOutdated path line comments(first:10) { nodes { author { login } body url } } } pageInfo { hasNextPage endCursor } } } } }"
+    ],
+    "cwd": "/home/genie/.local/share/mikro-engine-split/experiments-g8/final-local-smokes/history-only-reword-6qjyzwas/tree",
+    "exitCode": 0,
+    "stdout": "{\"data\":{\"repository\":{\"pullRequest\":{\"headRefOid\":\"553eebab32c33a667a7c96634c4b7f488a223fcc\",\"reviewThreads\":{\"nodes\":[{\"id\":\"PRRT_kwDOPWUnhs6qLz2C\",\"isResolved\":false,\"isOutdated\":false,\"path\":\"mikro/src/custom-providers.ts\",\"line\":353,\"comments\":{\"nodes\":[{\"author\":{\"login\":\"chatgpt-codex-connector\"},\"body\":\"**<sub><sub>![P1 Badge](https://img.shields.io/badge/P1-orange?style=flat)</sub></sub>  Reject unknown custom-provider prices on RLM**\\n\\nWhen the default `rlm` engine uses a custom provider whose model omits either input or output pricing, this conversion replaces the missing rates with zero. Only `PiBackend` checks the original declaration before inference, so RLM runs still emit a complete `$0` footer and never consume a configured `max-cost` budget even though this change defines absent rates as unknown rather than free. Reject incomplete pricing on every engine before inference, or propagate an incomplete-usage result instead of coercing it to zero.\\n\\nUseful? React with \ud83d\udc4d\u00a0/ \ud83d\udc4e.\",\"url\":\"https://github.com/automagik-dev/genie/pull/3139#discussion_r4214366601\"}]}}],\"pageInfo\":{\"hasNextPage\":false,\"endCursor\":\"Y3Vyc29yOnYyOpK0MjAyNi0xMC0wOFQwMzo0Njo1MVrOqi89gg==\"}}}}}}",
+    "stderr": "",
+    "seconds": 0.8442543749697506
+  },
+  "historicalThreadResolutionNotInferredFromRest": true,
+  "currentGateCoordinatorComment": "Coordinator: currentcompletecandidate7241a0a39d2a270093e6ae0d1af905f9603b3092eff373795146f493ff8e29e9/2480records source/runtime/config/lock/deletion/symlink/gitlink+ignoredexecutedrootbundle bound, postvalidation0drift. Freshroot3294pass2skip0fail,SDK1244pass0fail+actualinstalledupdate,owningG1 36/36/200assertions +SDK80/80,G2exactoldRED\u2192partial44/7unknownbill/control55/14,4freshreleases6.261009.1 currentglibc/muslexecuted/ARMnotrun. Loader50/50; hostV5PIDfailureunknown retained, unchangedfullhermeticV5PASS; docsmarkdown0actualfiles limit explicit. Original40/22 Receiving563Correctness/Quality independentwholematrix reviews underway, noSOURCE SHIP/commit/pushyet. G1C5/B5Q6cap6,G2C6/B6Q5cap5,G4C3/B3Q3cap3,effort0. Original108+18 incomplete; no paid/JEV/refreeze/regrade/mainmerge/prodinstall. OneexistingclaimantPARTIALreport retained; thisiscoordinatorcommentnotselfreview.",
+  "qualitySourceVerdict": "SHIP",
+  "qualityReview": ".genie/wishes/mikro-engine-split/evidence/G9-SOURCE-ONLY-SHIPPED-ARCHIVE-TERMINAL-563-FINAL-QUALITY.json",
+  "correctnessSourceVerdict": "SHIP",
+  "correctnessReview": ".genie/wishes/mikro-engine-split/evidence/G9-SOURCE-ONLY-SHIPPED-ARCHIVE-TERMINAL-563-FINAL-CORRECTNESS.json",
+  "publicationOnlyWishAppend": {
+    "reviewedPrefixBytes": 120540,
+    "reviewedPrefixSha256": "c2edd478baf6a70524aa47b1f955a72001c67402a65f362de8c49f2191b9eadb",
+    "prefixPreserved": true,
+    "currentSha256": "872e7caa3540edb20b8d730bad61100d5b2ad494b701ed26949627d99b7f65ac",
+    "addendumScope": "Independent source reviews/currentgates/publicationpendingmetadata only, no approved source/design rewrite."
+  }
+}

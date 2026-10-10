@@ -1265,6 +1265,304 @@ Evidence:
 [preserved conditional quality](evidence/G9-SOURCE-ONLY-CONFIG-CONDITIONAL-QUALITY.json),
 [actual dev checks, not source-head checks](evidence/G9-SOURCE-ONLY-DEV-BASE-CI.json).
 
+### Published-source CI failures: separately authorized bounded repairs
+
+Primary PR [#3139](https://github.com/automagik-dev/genie/pull/3139), original
+published head `553eebab32c33a667a7c96634c4b7f488a223fcc`, is source/evidence
+only. Its Commit Messages, Darwin unit, aggregate quality and Socket checks
+failed. Earlier source-only SHIP evidence is historical, not current-head CI
+clearance; affected source reviews require renewal after these repairs.
+
+The owner separately authorized:
+
+- Rewrap only the Genie import commit body and replay its four Genie descendants
+  with each exact source tree and both original import parents retained.
+  Original Mikro history is not rewritten. Publication may force-with-lease
+  only the existing own PR branch, against the exact old published head.
+- G5 correctness **2/B2 → 3/B3**: canonicalize the explicitly trusted runtime
+  root and bench-owned temporary root for OS aliases. Configuration symlink
+  rejection, NEW controls and lexical overlay provenance stay intact.
+  G5 quality remains **2/cap2**.
+- G2 security quality **2/cap2 → 3/cap3**: transitive npm lock patch
+  `proxy-addr` **2.0.7 → 2.0.8** only; direct MCP **1.29.0** and exact Pi
+  **1.0.2** identities remain unchanged. G2 correctness remains **4/B4**.
+- Additional G1 CI ownership repair, correctness **1/B2 → 2/B2**, quality
+  **2/cap2 → 3/cap3**: unchanged strict rules for every Genie-owned range
+  commit; exclude only foreign-only Mikro ancestry proved by validated subtree
+  imports. No message-prefix waiver, foreign rewrite or shared-ancestry skip.
+
+The full original remote log ends inside a foreign commit body. Its 201
+visible input markers are not its graph count or proof absent foreign commits
+passed. GitHub's immutable graph and local complete range contain 460 commits.
+The locked collector has no count cap; its CLI has an output-flush hazard,
+but attribution of this specific cutoff to that hazard remains **[INFERENCE]**.
+The local history-only replay preserves all five trees and replaces exactly
+five Genie OIDs; its old complete strict range still rejects foreign messages.
+
+The repaired internal CI entry shares the existing import trailer/parent/tree
+validation with the retirement catalog without changing the catalog's all-ref
+authority. Its ownership walk cuts only validated import source edges and
+traverses every parent of ordinary Genie merges. Real Git-graph controls cover
+identical bad messages on the Genie side, shared and nested-import ancestry,
+ordinary merge parents, strict import body/subject rules, invalid ownership
+metadata, unrelated archived refs, shallow history and unavailable refs.
+The nested foreign import regression actually failed on the initial union-only
+classifier (expected refusal, observed success); graph-cut repair passes.
+
+Current owning suites: **72 pass / 0 fail**, 313 assertions, six files.
+Model-free actual historical benchmark smoke reaches the real execution
+boundary with both runtime-root and TMPDIR aliases, observes historical/NEW
+truth and cleanup, and refuses all four configuration-symlink cases.
+It intentionally stops before inference; no model output or ledger overlay
+serialization is claimed. Actual local HTTP CVE red/green shows 2.0.7 accepting
+a spoofed address and 2.0.8 retaining the real peer. Current built Node stdio
+MCP and unchanged Genie caller/parser preserve schema errors and partial known
+subtotals with unknown full totals over ten local HTTP requests, zero external
+calls. Residual npm warnings remain **3 moderate / 2 high**; no audit all-clear.
+
+Current full gates, renewed original forty/twenty-two-criterion independent
+source reviews, final exact commit publication and current-head remote checks
+remain necessary publication evidence. G3 **4/B4**, G8 **5/B5**, quality
+limits and effort **0** remain unchanged. Historical **108+18** failures,
+confounding and unknown accounting are not repaired or regraded by source
+changes. The wish and G8 remain IN_PROGRESS; original full G9 stays READY,
+unclaimed. No paid rerun, JEV, resampling, refreeze, merge, production install,
+promotion, recommendation or adoption claim.
+
+### Separately authorized G1 catalog shared-ancestry repair
+
+The subsequent original-criteria review returned correctness source **SHIP**
+but quality **FIX-FIRST / P2 / Q03**: the catalog's per-import foreign union
+allowed nested foreign metadata to erase globally proven Genie ancestry.
+The actual catalog CLI returned success while omitting an unrecorded legitimate
+retirement description. Existing recorded entries survived their additive union.
+Both verdicts and the actual red proof remain durable; no waiver resolves them.
+
+The owner separately selected **Authorize one catalog repair**: G1 correctness
+**2/B2 → 3/B3**, quality **3/cap3 → 4/cap4**, budget source **instruction**,
+effort **0**, native clearing `t_mv16rt6t2cca7cf2` / `mikro-catalog3`.
+Only this narrow catalog repair and its regression, current full gates and
+renewed original forty/twenty-two-criterion independent reviews are authorized.
+Other groups, signed design, scoring and paid cohorts remain unchanged.
+
+The all-ref collector now starts the validated source-edge walk from every
+Genie ref, excluding only exact declared import source tips as independent
+ref authority. Shared ancestry remains owned if any Genie path reaches it.
+Nested foreign destination parents, foreign-only source history and `mikro/`
+paths remain excluded. Archived Genie refs retain authority even when an
+imported source also descends from them. Current-skill exclusion and additive
+recorded authority remain intact.
+
+The permanent actual-CLI nested/shared regression failed before the repair:
+**0 pass / 1 fail**, missing `genie-nested` and `genie-retired`. After repair,
+catalog and strict-CI suites pass **28 / 0**, 104 assertions. The separate real
+catalog smoke now retains the shared Genie retirement description and excludes
+the foreign-only description, **zero external model or JEV calls**. Proof:
+[initial red/green](evidence/G1-CATALOG-SHARED-ANCESTRY-REPAIR3-RED-GREEN.json).
+Within this same authorized pass, extending the existing shared case proved
+the intermediate classifier still lost `genie-branch` when an archived Genie
+ref also occurred in source ancestry (**1 pass / 1 fail**). Final graph roots
+restore that independent proof without admitting the declared source ref.
+Both owning suites and the real full-clone catalog/complete strict-CI range
+are green in [final boundary proof](evidence/G1-CATALOG-SHARED-ANCESTRY-REPAIR3-FINAL-BOUNDARY-PROOF.json).
+The earlier in-flight root gate was cancelled before refinement and is not
+accepted as validation; a fresh final-source root gate replaces it.
+The previous candidate and quality verdict are superseded for source readiness;
+fresh full gates, exact candidate and independent SHIP remain required before
+the previously authorized leased publication. Whole-wish blockers remain.
+
+### Catalog repair 3 final assessment: source FIX-FIRST, publication blocked
+
+The exact rejected source snapshot is
+**7b98ccbad1fe6bc3f6f1205939865c5188231e10ab15a0403ed5d6833430302b**,
+**2454** canonical records, on private history-only head `40ddcadb`.
+Both original matrices retain their exact forty/twenty-two criteria and hashes.
+Current full Genie gate: **3227 pass / 2 skip / 0 fail**, 19240 assertions,
+157 files, explicit chained exit **0**. Fresh Mikro check/build/test:
+**1228 pass / 0 fail**, 218 suites. All source/config/lock/generated records
+matched this snapshot after both gates and diagnostics. The misleading root
+wrapper timeout headline was reported; the complete success footer is retained.
+
+Final independent original-criteria source verdicts are **FIX-FIRST / FIX-FIRST**:
+[correctness](evidence/G9-SOURCE-ONLY-CATALOG-REPAIR3-FINAL-CORRECTNESS.json)
+and [quality](evidence/G9-SOURCE-ONLY-CATALOG-REPAIR3-FINAL-QUALITY.json).
+Comparison completeness is **BLOCKED** in both. Whole-wish correctness remains
+**FIX-FIRST**, quality **BLOCKED**; neither is source or delivery clearance.
+
+Three blocking source boundaries are now reproduced without external inference:
+
+- **G1 / original 6, Q03:** a genuinely foreign retired ancestor with an
+  imported-source historical tag becomes a Genie root because the filter only
+  excludes exact split tips. The actual catalog generates the foreign name and
+  description, which the unchanged retirement consumer treats as ownership.
+  Nested/shared and archived Genie omission cases are repaired, but granting
+  every other ref authority is unsound. Blanket ancestry exclusion would
+  regress the legitimate archived/shared proofs; reference provenance cannot
+  be guessed or waived.
+- **G4 / original Q14:** a real compiled SDK batch accepts `emit_done`, then
+  reads an allowed ordinary file before end-of-turn. Independent final-only
+  control leaves the file untouched; the post-final read updates its access
+  time. Two loopback requests, no extra completion. The initial hidden-basename
+  diagnostic was independently scope-denied and is explicitly not credited.
+- **G2 / original 3, 8, Q06/Q10:** child `length` and HTTP-error completions pass
+  through the existing Node/Python ordinary-result error-string channel and
+  become schema-valid `FINAL` objects with MCP `isError:false`. Successful child
+  control remains valid. Six loopback requests; reported length usage remains
+  **22 input / 14 output once**, not an alleged lost-usage defect.
+
+Complete diagnostic sources, outputs, negative controls and byte-continuity
+proof are [durable](evidence/G9-SOURCE-ONLY-CATALOG-REPAIR3-FINAL-CONTINUITY.json).
+Throwaway scripts/fixtures are removed. All three diagnostics made **zero
+external model and zero JEV calls**. Original Mikro HEAD/index, all nine
+recorded unrelated WIP hashes and operator-settings hash still match before.
+The broader original Genie inventory remains unavailable; no full-preservation
+claim substitutes the recorded subset.
+
+Current caps are exhausted: **G1 correctness 3/B3, quality 4/cap4**;
+**G2 correctness 4/B4, quality 3/cap3**; **G4 correctness 2/B2, quality 2/cap2**,
+effort **0**. No additional repair, waiver or scope reduction is inferred.
+This is a Review Results status annotation after the rejected snapshot, not a
+new source candidate or SHIP. No new commit, force push, foreign rewrite,
+merge or production installation occurred. Published PR #3139 remains the
+previous `553eebab` artifact, last observed red and forge-CONFLICTING.
+Original 108+18 histories and incomplete G8/full-G9 remain unchanged.
+
+### Owner-authorized source receiving/provenance repairs 4/5/3
+
+The owner selected **Authorize all three repairs** separately from the
+exhausted-cap assessment above. Only these limits increase:
+
+| Group | Correctness old → new | Quality old → new | Authorized receiving boundary |
+| --- | --- | --- | --- |
+| G1 | 3/B3 → **4/B4** | 4/cap4 → **5/cap5** | Genuine source-only reference exclusion without losing all-ref shared/archive Genie retirement authority |
+| G2 | 4/B4 → **5/B5** | 3/cap3 → **4/cap4** | Typed child-completion failure through Node/Python and RLM/MCP; once-only observed usage and unknown totals stay honest |
+| G4 | 2/B2 → **3/B3** | 2/cap2 → **3/cap3** | Real SDK tool admission after accepted final; first answer, schemas, usage and no extra completion preserved |
+
+Native claims were acquired and dispatch comments read back before mutation:
+`t_mv19bsvp93ad64cf` / `mikro-catalog4`,
+`t_mv19bto5ece79029` / `mikro-child-ipc5`, and
+`t_mv19buez299f5db1` / `mikro-pi-final3`. The coordinator owns catalog/shared
+documents and integration; runtime writers own disjoint G2 and G4 files and
+defer every build, test and formatter to post-integration validation.
+
+All other caps and effort **0** remain unchanged. No unrelated G3
+timeout/finalization repair, paid inference, JEV, rerun, resampling, refreeze,
+regrade, foreign rewrite, merge or production installation is authorized.
+The original **40 correctness / 22 quality** criteria and signed design stay
+frozen. Fresh actual-boundary proofs, full gates and independent original-
+criteria reviews are required; historical passing gates do not cover these
+new source edits. The rejected `7b98ccba` manifest remains historical.
+No source SHIP, new commit or leased publication is claimed by this approval.
+
+The owner separately selected **Require commit-bound provenance** for G1's
+ambiguous source-reachable refs. Old: every non-split ref implicitly granted
+Genie authority. New: ambiguous refs need exact ref/commit ownership proof;
+absent or stale proof refuses collection rather than silently dropping Genie
+history or admitting source-only history. Caps and original criteria do not
+change. The implementation adds scrutiny: proof must come from a non-Mikro
+root-path blob in independently proven Genie-owned history; source commits and
+prefixed source blobs cannot attest their own authority. This is an explicit
+collector input, not a machine config migration or automatic reference-name
+policy.
+
+### Owner-authorized terminal receipt repair 6 and live-base catalog integration 5
+
+Both independent original-matrix reviewers assessed complete source snapshot
+`93eec2144bb70115d4c287d616772cd9c712746af2da90c4133c26d65dd016cd`
+and returned **source FIX-FIRST**. G1 provenance and G4 post-final admission
+have no remaining confirmed blocker in those assessments. The G2 incomplete-
+usage marker was lost on the existing three-empty-response terminal return:
+real compiled Node/Python/RLM/MCP plus the unchanged Genie billing parser
+accepted the known **44 input / 7 output** subtotal as a complete bill despite
+unreported child totals. The failure remained `isError:true`; neither a lost
+known packet nor a successful failed turn is alleged. Full reviews, original
+actual RED/control sources and consumer outputs remain in the `435` final
+correctness, quality and continuity receipts; the temporary driver was removed.
+
+The owner separately selected **Authorize focused repair**:
+**G2 correctness 5/B5 → 6/B6, quality 4/cap4 → 5/cap5**. Carry the existing
+partial-usage state through the terminal result, add the real receiving
+regression and renew full gates plus the original 40/22 reviews. Existing
+budgets, cancellation, once-only observed usage and unknown totals stay intact;
+no unrelated G3 timeout/finalization/retry policy is authorized.
+
+Live Genie `dev` advanced 20 commits from `27739552` to
+`fa8469e0e1beb953823bb2619ed0a39fe581dba7`. Its shipped-reference retirement
+policy conflicts with the previously approved all-ref default. The owner
+explicitly reopened that decision and selected **Shipped + proven archives**:
+**G1 correctness 4/B4 → 5/B5, quality 5/cap5 → 6/cap6**. Old: every owned
+Genie ref implicitly supplies retirement history. New: default retirement
+roots are HEAD, tags, exact origin main/dev and `refs/archive/*`; exact trusted
+Genie archive proofs can opt in legitimate archives outside that set.
+Commit-bound source/Genie ownership remains separate from delivery eligibility:
+unmerged, unproved PR skills gain no retirement authority, and independently
+owned shared/archived Genie proof remains valid. Integrate the current base
+without discarding either catalog intent or imported source ancestry, and renew
+affected gates, release evidence and original independent reviews.
+
+New native claims were acquired and read back before implementation:
+`t_mv1xtjgz6f6297df` / `mikro-child-ipc6` and
+`t_mv1xtis991708849` / `mikro-catalog5`. Runtime and catalog writers own
+disjoint files; the coordinator owns remaining upstream integration,
+shared documents, generated outputs and repository git state. All builds,
+tests, lint and formatters wait until edits finish.
+
+Other caps, effort **0**, the signed design, original criteria and paid 108+18
+cohorts remain unchanged. No paid inference, JEV, rerun, resampling, refreeze,
+regrade, main promotion, PR merge, production installation or foreign-history
+rewrite is authorized. No source SHIP or publication is claimed by these
+approvals; current full gates and both independent source verdicts remain
+required before the approved own-branch leased publication.
+
+### Current 5/6 implementation boundary proof, before renewed full gates
+
+The new writers each filed one claimant **PARTIAL** report with checks not run.
+Post-handoff validation retained all failures instead of discarding them:
+the first G1 owning run was **33 pass / 3 fail** because its destructive
+ownership-worklist walk consumed the exact archive roots before eligibility.
+The coordinator preserves those roots for the second walk; the same owning
+catalog/strict-range suite is now **36 pass / 0 fail, 200 assertions**.
+An initial standalone negative oracle used a non-Genie name which the consumer
+correctly ignored; it is recorded as a diagnostic setup error, not a product
+failure. The corrected real Git/collector/generated-catalog/classifier smoke
+proves both explicit unrecorded archive preservation and default shipping
+eligibility, with unmerged Genre PR and dev-lookalike skills unproven. Existing
+source/self-attesting/prefixed/stale/missing proof boundaries still refuse.
+
+The exact saved terminal RED/control driver now passes on freshly compiled
+Node/Python/RLM/MCP: the failed child case keeps partial **44 input / 7 output**
+with unrounded known subtotal **0.000058 USD**, full totals **null**; the complete
+control keeps **55 input / 14 output**. The actual unchanged Genie footer parser
+rejects the partial case as a complete bill and accepts the control. Both
+remain terminal failures; each uses one child and four root requests inside
+the existing cap. Current SDK owning regressions are **80 pass / 0 fail**,
+including the new receiving control and existing post-final SDK admission.
+These ad-hoc checks made **10 local provider requests**, no external model or
+JEV call; original paid cohorts and reports remain untouched.
+
+The full-clone catalog's first check rejected stale generated formatting/header
+only. Regenerating with its real producer then passes: **40 names / 95
+descriptions**. This is an additive **SUPERSET** check, not an exclusion oracle;
+the separate actual consumer fixtures prove exclusion. Fresh root Bun frozen
+install and independent SDK npm authority/CI install pass; existing npm reports
+**3 moderate / 2 high** vulnerabilities and five allow-scripts warnings, with
+no unapproved audit fix or dependency-policy change.
+
+Current-base source files are composed from the read-only three-way result
+against `fa8469e0`. Pending direct commitlint dependencies are retained. Its
+exact documentation gitlink is available in an initially empty owned private
+clone and bound in the private index; no original checkout HEAD/index or user
+external checkout moved. Inherited optional metrics pricing, canonical-ledger
+filtering and evidence attribution can change newly derived exports; no
+universal byte-identical-export claim is made, and no paid historical report
+is rewritten or rerun. Newly adopted runtime, skills and version invalidate
+the old four-target release reuse; fresh builds and applicable gates are
+required. Complete boundary and integration records use the `563` prefix.
+
+This is source implementation evidence, **not SHIP**. New complete manifests,
+whole gates, applicable docs/release/installed surfaces and both independent
+original 40/22 assessments remain required before own-branch publication.
+
 ## Files to Create/Modify
 
 ```
@@ -1272,6 +1570,11 @@ Evidence:
 .genie/wishes/mikro-engine-split/*
 .genie/INDEX.md
 .github/workflows/mikro-ci.yml
+.github/workflows/commitlint.yml authorized strict Genie-owned range gate
+scripts/commitlint.ts and scripts/commitlint.test.ts actual Git-graph CI boundary
+scripts/git-history-ownership.ts shared validated import authority
+scripts/release-docs.test.ts removal of obsolete command/implementation assertions
+package.json and bun.lock direct declarations of already-locked commitlint APIs
 root package discovery configuration where subtree isolation is required
 mikro/ (history-preserving initial committed import)
 mikro/package.json
@@ -1309,3 +1612,16 @@ scripts/wish-workflow-behavior.test.ts
 README.md
 UPGRADING.md
 ```
+
+## Review Results — current source-only publication addendum
+
+Publication-only append; every byte of the reviewed 120540-byte WISH prefix remains unchanged. Wish and G8 stay IN_PROGRESS; this is not whole G1–G9 feature acceptance or completion.
+
+- Complete current source/runtime/config/lock/deletion/symlink/gitlink inventory: `7241a0a39d2a270093e6ae0d1af905f9603b3092eff373795146f493ff8e29e9`, 2480 records, including generated Mikro distribution and the actual ignored executed root CLI bundle. Current dev composition is `fa8469e0e1beb953823bb2619ed0a39fe581dba7`; exact committed graph/publication correspondence follows separately.
+- Independent whole G1–G9 original40 correctness and original22 quality reviews both return **SOURCE SHIP** at that same identity, with no confirmed source blocking findings. Full original matrices and distinct BLOCKED feature/comparison/whole-wish/delivery verdicts are retained in `evidence/G9-SOURCE-ONLY-SHIPPED-ARCHIVE-TERMINAL-563-FINAL-CORRECTNESS.json` and `...-FINAL-QUALITY.json`. Original criteria and signed design remain unchanged. Historical `93eec214` SOURCE FIX-FIRST is not relabelled SHIP.
+- Actual current full Genie gate: 3294 pass / 2 existing live-fact skips / 0 fail, 19664 assertions, 158 files. Current authoritative npm CI/build/check/full Mikro suite and isolated installed-update smoke: 1244 pass / 0 fail, 218 suites. Owning G1 36/36 with 200 assertions; compiled receiving/Pi 80/80; actual old G2 terminal diagnostic now preserves partial44in7out/full totals unknown and complete55in14out, with unchanged Genie footer parser exercised.
+- Fresh four-target release builds/stamps/extracts/payload byte-kind-mode checks use root version6.261009.1; current glibc/musl executables ran, ARM/Mach-O did not. Standalone loader50/50. Host stock lifecycle failed on unattributed transient PID2660981; entire unchanged lifecycle passed in a real clean Docker PID namespace. Docs gate retained markdown's zero-file coverage limit, ignored URL markers and actual hydrated-root retired-term search. Doctor complexity26, three Knip hints and npm audit5warnings(3moderate2high) remain visible.
+- Owner-authorised G1 C5/B5 Q6/cap6 explicitly replaces all-ref retirement defaults with shipped references plus exact trusted Genie archives; G2 C6/B6 Q5/cap5 only carries existing incomplete usage into empty terminal failure; G4 C3/B3 Q3/cap3 unchanged. Effort0 and other caps unchanged. No unrelated G3 budget/retry/cancellation policy change.
+- Actual recorded original Mikro HEAD/index/nine WIP/settings and separately recorded operator helper match before fingerprints; original Genie HEAD is untouched. Broader original Genie dirty/untracked/index/auth before inventory remains unavailable, not retroactively certified.
+- Original paid108+18 histories remain incomplete/confounded/unknown. No paid rerun, JEV, resampling, cohort refreeze, regrading, canonical partial-report append, routing/adoption recommendation, foreign-history rewrite, main promotion, merge or production installation. Approved next operation is exact-path normal-hook source/evidence publication to the existing dev PR only, after graph/candidate correspondence, using the original553 own-branch force-with-lease. New remote CI and forge readback remain pending, not implied by local source SHIP.
+

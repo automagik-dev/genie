@@ -22,6 +22,14 @@ release is the git commit on `main`. See `docs/release-contract.md`.
 
 ## [Unreleased]
 
+### Security
+- **Narrow transitive proxy address fix.** The npm lockfile updates
+  `proxy-addr` from 2.0.7 to 2.0.8; the direct MCP SDK remains 1.29.0 and the
+  exact Pi SDK family remains 1.0.2. This dependency-only patch preserves MCP
+  schema-error responses and partial receipt accounting: known usage stays an
+  observed subtotal, while unreported totals remain unknown. It is not an
+  audit all-clear: the known residual audit warnings are 3 moderate and 2 high.
+
 ### Added
 - **Explicit engines and isolated Pi tools.** `engine: rlm | pi | prime |
   prime-sdk` replaces `backend`; explicit call selection outranks the agent,

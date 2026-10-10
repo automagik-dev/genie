@@ -1,0 +1,5057 @@
+{
+  "schemaVersion": 1,
+  "sourceOnly": true,
+  "job": "bg_144",
+  "actualSuccessExitCode": 0,
+  "successMarker": "RECEIVING563_FOUR_RELEASES_COMPLETE_EXIT_0",
+  "wallSecondsIncludingLockWait": 875.71,
+  "command": "env -i PATH=/home/genie/.local/bin:/home/genie/bin:/home/genie/.npm-global/bin:/home/genie/bin:/home/genie/.kimi-code/bin:/home/genie/.bun/bin:/home/genie/.local/bin:/home/genie/.local/bin:/home/genie/.config/orca/linux-orca-cli-shim:/home/genie/.local/bin:/home/genie/bin:/home/genie/.npm-global/bin:/home/genie/.kimi-code/bin:/home/genie/.bun/bin:/home/genie/.cargo/bin:/home/genie/.local/share/pnpm:/usr/local/bin:/usr/bin:/bin:/snap/bin:/home/genie/.volta/bin:/home/genie/.asdf/shims:/home/genie/.fnm/aliases/default/bin:/home/genie/.local/share/mise/shims:/home/genie/.yarn/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/sbin:/home/linuxbrew/.linuxbrew/bin:/nix/var/nix/profiles/default/bin:/home/genie/.nix-profile/bin:/home/genie/.opencode/bin:/home/genie/.vite-plus/bin HOME=/home/genie/.local/share/mikro-engine-split/experiments-g8/final-local-smokes/receiving-563-isolated-home GENIE_HOME=/home/genie/.local/share/mikro-engine-split/experiments-g8/final-local-smokes/receiving-563-isolated-home/.genie XDG_CONFIG_HOME=/home/genie/.local/share/mikro-engine-split/experiments-g8/final-local-smokes/receiving-563-isolated-home/.config TMPDIR=/home/genie/.local/share/mikro-engine-split/experiments-g8/final-local-smokes/receiving-563-temp-outside-home GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 flock /var/tmp/genie-full-check.lock bash /home/genie/.local/share/mikro-engine-split/experiments-g8/final-local-smokes/receiving563-four-release-gate.sh",
+  "runnerSource": "#!/usr/bin/env bash\nset -euo pipefail\nfor platform in linux-x64-glibc linux-x64-musl linux-arm64 darwin-arm64; do\n  bash scripts/build-binary.sh --platform \"$platform\"\ndone\nprintf \"RECEIVING563_FOUR_RELEASES_COMPLETE_EXIT_0\\n\"\n",
+  "builderSha256": "f900fe38a42ee2f1689bd4a4c4c58aaef46aa8a16516b02f2b282082aa51513e",
+  "everyBuilderObserved": [
+    "linux-x64-glibc",
+    "linux-x64-musl",
+    "linux-arm64",
+    "darwin-arm64"
+  ],
+  "actualObservedContractStages": {
+    "sourceVersion": "verify-source6.261009.1 eachtarget",
+    "freshSkillInput": "18validskills40references eachprebuild/stage/extract",
+    "stagedAndExtractedVersion": "stamp6.261009.1 and twoverify6.261009.1 pertarget",
+    "payloadByteKindModeParity": "existingactualbuilderassert_release_tree_equal ran bothdirections before successfultargettar output; root0700/no links/no tests/requiredpayloads/compatempty/80MBbudget",
+    "compileBundle": "252modules eachtarget"
+  },
+  "targets": [
+    {
+      "platform": "linux-x64-glibc",
+      "tarball": "/home/genie/.local/share/mikro-engine-split/experiments-g8/final-local-smokes/history-only-reword-6qjyzwas/tree/dist/genie-6.261009.1-linux-x64-glibc.tar.gz",
+      "sha256": "0dffc55f1cb03a56d6812f78bf3e4ba724d3b8d698b3eacffe8239d2140a6b7a",
+      "bytes": 36987611,
+      "binarySha256": "8055f44039b30f3d6ec6e3fa0e21fff6773330588aa82e08e7f34f98e2bf1a25",
+      "binaryMode": "0755",
+      "topLevelMembers": [
+        ".agents",
+        ".claude-plugin",
+        "LICENSE",
+        "VERSION",
+        "genie",
+        "plugins",
+        "skills",
+        "templates"
+      ],
+      "memberCount": 203,
+      "rootMode": "0700",
+      "version": "6.261009.1",
+      "pluginVersions": {
+        "dsh-genie-board": "6.261009.1",
+        "dsh-workflow-loader": "6.261009.1"
+      },
+      "noTopLevelMikro": true,
+      "noArchiveSymlinks": true,
+      "allArchiveEntryModes": [
+        {
+          "path": ".",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./genie",
+          "kind": "file",
+          "mode": "0755",
+          "bytes": 96757888
+        },
+        {
+          "path": "./templates",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./templates/genie-config.template.json",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 1108
+        },
+        {
+          "path": "./templates/workflows",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./templates/workflows/pm-ledger-verify.js",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 6324
+        },
+        {
+          "path": "./templates/workflows/observability-review.js",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 10854
+        },
+        {
+          "path": "./templates/workflows/docs-audit.js",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 50284
+        },
+        {
+          "path": "./templates/workflows/brainstorm.js",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 84949
+        },
+        {
+          "path": "./templates/workflows/skill-intake.js",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 65318
+        },
+        {
+          "path": "./templates/workflows/wish.js",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 154835
+        },
+        {
+          "path": "./templates/workflows/research-sweep.js",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 55837
+        },
+        {
+          "path": "./templates/workflows/workfly.js",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 34998
+        },
+        {
+          "path": "./templates/workflows/council.js",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 9502
+        },
+        {
+          "path": "./templates/workflows/skill-audit-sweep.js",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 41535
+        },
+        {
+          "path": "./templates/workflows/test-simplify.js",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 114921
+        },
+        {
+          "path": "./templates/workflows/evidence-gate.js",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 37350
+        },
+        {
+          "path": "./templates/mikro",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./templates/mikro/agents",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./templates/mikro/agents/wish-context",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./templates/mikro/agents/wish-context/agent.yaml",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 1170
+        },
+        {
+          "path": "./templates/mikro/agents/wish-context/SYSTEM.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 11372
+        },
+        {
+          "path": "./templates/mikro/agents/mikro-coach",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./templates/mikro/agents/mikro-coach/agent.yaml",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 1403
+        },
+        {
+          "path": "./templates/mikro/agents/mikro-coach/SYSTEM.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 11967
+        },
+        {
+          "path": "./templates/mikro/agents/review-prep",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./templates/mikro/agents/review-prep/agent.yaml",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 1220
+        },
+        {
+          "path": "./templates/mikro/agents/review-prep/SYSTEM.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 12431
+        },
+        {
+          "path": "./LICENSE",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 1066
+        },
+        {
+          "path": "./VERSION",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 11
+        },
+        {
+          "path": "./skills",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/brainstorm",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/brainstorm/references",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/brainstorm/references/without-a-workflow.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 5672
+        },
+        {
+          "path": "./skills/brainstorm/references/design-template.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 2445
+        },
+        {
+          "path": "./skills/brainstorm/references/design-review-evidence.mjs",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 10979
+        },
+        {
+          "path": "./skills/brainstorm/references/round-ledger.mjs",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 53103
+        },
+        {
+          "path": "./skills/brainstorm/references/design-review-evidence.d.mts",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 1682
+        },
+        {
+          "path": "./skills/brainstorm/SKILL.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 8218
+        },
+        {
+          "path": "./skills/brainstorm/agents",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/brainstorm/agents/openai.yaml",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 266
+        },
+        {
+          "path": "./skills/skill-audit",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/skill-audit/references",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/skill-audit/references/intake.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 4444
+        },
+        {
+          "path": "./skills/skill-audit/SKILL.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 8305
+        },
+        {
+          "path": "./skills/skill-audit/agents",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/skill-audit/agents/openai.yaml",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 280
+        },
+        {
+          "path": "./skills/genie",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/genie/SKILL.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 6169
+        },
+        {
+          "path": "./skills/genie/agents",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/genie/agents/openai.yaml",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 390
+        },
+        {
+          "path": "./skills/genie/reference",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/genie/reference/lifecycle.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 2937
+        },
+        {
+          "path": "./skills/README.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 11572
+        },
+        {
+          "path": "./skills/review",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/review/references",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/review/references/plan-executability.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 2367
+        },
+        {
+          "path": "./skills/review/references/evidence-identity.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 3778
+        },
+        {
+          "path": "./skills/review/references/lenses",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/review/references/lenses/repo-hygiene.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 1989
+        },
+        {
+          "path": "./skills/review/references/lenses/dx.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 1839
+        },
+        {
+          "path": "./skills/review/references/lenses/supply-chain.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 2153
+        },
+        {
+          "path": "./skills/review/references/lenses/architecture.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 1895
+        },
+        {
+          "path": "./skills/review/references/lenses/code-quality.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 2669
+        },
+        {
+          "path": "./skills/review/references/lenses/qa.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 2397
+        },
+        {
+          "path": "./skills/review/references/lenses/perf.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 1902
+        },
+        {
+          "path": "./skills/review/references/lenses/rendered-ui.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 2917
+        },
+        {
+          "path": "./skills/review/SKILL.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 7422
+        },
+        {
+          "path": "./skills/review/agents",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/review/agents/openai.yaml",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 302
+        },
+        {
+          "path": "./skills/council",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/council/SKILL.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 3915
+        },
+        {
+          "path": "./skills/council/agents",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/council/agents/openai.yaml",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 231
+        },
+        {
+          "path": "./skills/genie-hacks",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/genie-hacks/references",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/genie-hacks/references/catalog.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 14805
+        },
+        {
+          "path": "./skills/genie-hacks/references/contributing.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 2641
+        },
+        {
+          "path": "./skills/genie-hacks/SKILL.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 2757
+        },
+        {
+          "path": "./skills/genie-hacks/agents",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/genie-hacks/agents/openai.yaml",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 201
+        },
+        {
+          "path": "./skills/wish",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/wish/references",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/wish/references/native-fallback.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 39438
+        },
+        {
+          "path": "./skills/wish/references/design-review-evidence.mjs",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 10979
+        },
+        {
+          "path": "./skills/wish/references/design-preflight.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 776
+        },
+        {
+          "path": "./skills/wish/references/design-review-evidence.d.mts",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 1682
+        },
+        {
+          "path": "./skills/wish/templates",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/wish/templates/wish-template.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 3531
+        },
+        {
+          "path": "./skills/wish/SKILL.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 14662
+        },
+        {
+          "path": "./skills/wish/agents",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/wish/agents/openai.yaml",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 340
+        },
+        {
+          "path": "./skills/workfly",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/workfly/SKILL.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 7755
+        },
+        {
+          "path": "./skills/workfly/agents",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/workfly/agents/openai.yaml",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 222
+        },
+        {
+          "path": "./skills/fix",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/fix/SKILL.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 5054
+        },
+        {
+          "path": "./skills/fix/agents",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/fix/agents/openai.yaml",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 234
+        },
+        {
+          "path": "./skills/refine",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/refine/SKILL.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 5125
+        },
+        {
+          "path": "./skills/refine/agents",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/refine/agents/openai.yaml",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 278
+        },
+        {
+          "path": "./skills/refine/prompts",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/refine/prompts/claude-fable-5-1.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 6052
+        },
+        {
+          "path": "./skills/refine/prompts/claude-sonnet-5-5.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 3592
+        },
+        {
+          "path": "./skills/refine/prompts/claude.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 4204
+        },
+        {
+          "path": "./skills/refine/prompts/claude-opus-5-5.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 3222
+        },
+        {
+          "path": "./skills/refine/prompts/openai.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 2892
+        },
+        {
+          "path": "./skills/merge",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/merge/SKILL.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 3983
+        },
+        {
+          "path": "./skills/merge/agents",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/merge/agents/openai.yaml",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 283
+        },
+        {
+          "path": "./skills/report",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/report/references",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/report/references/issue-template.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 1177
+        },
+        {
+          "path": "./skills/report/SKILL.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 8065
+        },
+        {
+          "path": "./skills/report/agents",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/report/agents/openai.yaml",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 220
+        },
+        {
+          "path": "./skills/NOTICE",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 4895
+        },
+        {
+          "path": "./skills/verify",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/verify/SKILL.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 5572
+        },
+        {
+          "path": "./skills/verify/agents",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/verify/agents/openai.yaml",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 269
+        },
+        {
+          "path": "./skills/docs",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/docs/SKILL.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 5315
+        },
+        {
+          "path": "./skills/docs/agents",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/docs/agents/openai.yaml",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 249
+        },
+        {
+          "path": "./skills/work",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/work/references",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/work/references/exact-path-commit.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 3304
+        },
+        {
+          "path": "./skills/work/SKILL.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 10463
+        },
+        {
+          "path": "./skills/work/agents",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/work/agents/openai.yaml",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 228
+        },
+        {
+          "path": "./skills/authoring",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/authoring/SKILL.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 4047
+        },
+        {
+          "path": "./skills/authoring/agents",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/authoring/agents/openai.yaml",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 264
+        },
+        {
+          "path": "./skills/research",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/research/SKILL.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 7249
+        },
+        {
+          "path": "./skills/research/agents",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/research/agents/openai.yaml",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 256
+        },
+        {
+          "path": "./skills/deslop",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/deslop/references",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/deslop/references/design.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 2843
+        },
+        {
+          "path": "./skills/deslop/references/writing.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 2975
+        },
+        {
+          "path": "./skills/deslop/references/code.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 3175
+        },
+        {
+          "path": "./skills/deslop/SKILL.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 3923
+        },
+        {
+          "path": "./skills/deslop/agents",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/deslop/agents/openai.yaml",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 260
+        },
+        {
+          "path": "./.claude-plugin",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./.agents",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./plugins",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./plugins/genie",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./plugins/dsh-workflow-loader",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./plugins/dsh-workflow-loader/tsconfig.json",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 238
+        },
+        {
+          "path": "./plugins/dsh-workflow-loader/README.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 13945
+        },
+        {
+          "path": "./plugins/dsh-workflow-loader/package.json",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 673
+        },
+        {
+          "path": "./plugins/dsh-workflow-loader/agent.cordis.yml",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 274
+        },
+        {
+          "path": "./plugins/dsh-workflow-loader/src",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./plugins/dsh-workflow-loader/src/index.ts",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 9747
+        },
+        {
+          "path": "./plugins/dsh-workflow-loader/src/config.ts",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 4113
+        },
+        {
+          "path": "./plugins/dsh-workflow-loader/src/catalog.ts",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 6195
+        },
+        {
+          "path": "./plugins/dsh-workflow-loader/src/dialect.ts",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 18156
+        },
+        {
+          "path": "./plugins/dsh-workflow-loader/src/run.ts",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 2843
+        },
+        {
+          "path": "./plugins/dsh-workflow-loader/build.ts",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 851
+        },
+        {
+          "path": "./plugins/dsh-workflow-loader/dist",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./plugins/dsh-workflow-loader/dist/index.js",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 26464
+        },
+        {
+          "path": "./plugins/dsh-workflow-loader/cordis.patch.yml",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 2118
+        },
+        {
+          "path": "./plugins/dsh-genie-board",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./plugins/dsh-genie-board/tsconfig.json",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 421
+        },
+        {
+          "path": "./plugins/dsh-genie-board/README.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 21917
+        },
+        {
+          "path": "./plugins/dsh-genie-board/package.json",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 903
+        },
+        {
+          "path": "./plugins/dsh-genie-board/agent.cordis.yml",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 209
+        },
+        {
+          "path": "./plugins/dsh-genie-board/src",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./plugins/dsh-genie-board/src/board.ts",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 1814
+        },
+        {
+          "path": "./plugins/dsh-genie-board/src/service.ts",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 8807
+        },
+        {
+          "path": "./plugins/dsh-genie-board/src/client",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./plugins/dsh-genie-board/src/client/shell.tsx",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 4096
+        },
+        {
+          "path": "./plugins/dsh-genie-board/src/client/api.ts",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 3016
+        },
+        {
+          "path": "./plugins/dsh-genie-board/src/client/icons.tsx",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 1600
+        },
+        {
+          "path": "./plugins/dsh-genie-board/src/client/styles.ts",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 11411
+        },
+        {
+          "path": "./plugins/dsh-genie-board/src/client/index.ts",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 4979
+        },
+        {
+          "path": "./plugins/dsh-genie-board/src/client/CatalogPanel.tsx",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 5928
+        },
+        {
+          "path": "./plugins/dsh-genie-board/src/client/BoardPanel.tsx",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 20696
+        },
+        {
+          "path": "./plugins/dsh-genie-board/src/workflows.ts",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 1374
+        },
+        {
+          "path": "./plugins/dsh-genie-board/src/runtime.ts",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 12165
+        },
+        {
+          "path": "./plugins/dsh-genie-board/src/process.ts",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 6384
+        },
+        {
+          "path": "./plugins/dsh-genie-board/src/index.ts",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 3541
+        },
+        {
+          "path": "./plugins/dsh-genie-board/src/schema.ts",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 8319
+        },
+        {
+          "path": "./plugins/dsh-genie-board/src/config.ts",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 5711
+        },
+        {
+          "path": "./plugins/dsh-genie-board/src/catalog.ts",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 4708
+        },
+        {
+          "path": "./plugins/dsh-genie-board/types",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./plugins/dsh-genie-board/types/primitives.d.ts",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 1512
+        },
+        {
+          "path": "./plugins/dsh-genie-board/NOTICE",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 1502
+        },
+        {
+          "path": "./plugins/dsh-genie-board/build.ts",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 1550
+        },
+        {
+          "path": "./plugins/dsh-genie-board/dist",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./plugins/dsh-genie-board/dist/client.js",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 53058
+        },
+        {
+          "path": "./plugins/dsh-genie-board/dist/workflows.js",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 6376
+        },
+        {
+          "path": "./plugins/dsh-genie-board/dist/board.js",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 140188
+        },
+        {
+          "path": "./plugins/dsh-genie-board/dist/index.js",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 12973
+        },
+        {
+          "path": "./plugins/dsh-genie-board/cordis.patch.yml",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 1110
+        }
+      ]
+    },
+    {
+      "platform": "linux-x64-musl",
+      "tarball": "/home/genie/.local/share/mikro-engine-split/experiments-g8/final-local-smokes/history-only-reword-6qjyzwas/tree/dist/genie-6.261009.1-linux-x64-musl.tar.gz",
+      "sha256": "0b84f6c6cc1ebd606801ec740498a7a6f6444338fe0d4ebc387cd93fa4f547df",
+      "bytes": 35677052,
+      "binarySha256": "4b742843309120fa24001fc2e49cc38a45a074d8886a8d79619200dbcc6f9633",
+      "binaryMode": "0755",
+      "topLevelMembers": [
+        ".agents",
+        ".claude-plugin",
+        "LICENSE",
+        "VERSION",
+        "genie",
+        "plugins",
+        "skills",
+        "templates"
+      ],
+      "memberCount": 203,
+      "rootMode": "0700",
+      "version": "6.261009.1",
+      "pluginVersions": {
+        "dsh-genie-board": "6.261009.1",
+        "dsh-workflow-loader": "6.261009.1"
+      },
+      "noTopLevelMikro": true,
+      "noArchiveSymlinks": true,
+      "allArchiveEntryModes": [
+        {
+          "path": ".",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./genie",
+          "kind": "file",
+          "mode": "0755",
+          "bytes": 93337888
+        },
+        {
+          "path": "./templates",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./templates/genie-config.template.json",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 1108
+        },
+        {
+          "path": "./templates/workflows",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./templates/workflows/pm-ledger-verify.js",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 6324
+        },
+        {
+          "path": "./templates/workflows/observability-review.js",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 10854
+        },
+        {
+          "path": "./templates/workflows/docs-audit.js",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 50284
+        },
+        {
+          "path": "./templates/workflows/brainstorm.js",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 84949
+        },
+        {
+          "path": "./templates/workflows/skill-intake.js",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 65318
+        },
+        {
+          "path": "./templates/workflows/wish.js",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 154835
+        },
+        {
+          "path": "./templates/workflows/research-sweep.js",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 55837
+        },
+        {
+          "path": "./templates/workflows/workfly.js",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 34998
+        },
+        {
+          "path": "./templates/workflows/council.js",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 9502
+        },
+        {
+          "path": "./templates/workflows/skill-audit-sweep.js",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 41535
+        },
+        {
+          "path": "./templates/workflows/test-simplify.js",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 114921
+        },
+        {
+          "path": "./templates/workflows/evidence-gate.js",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 37350
+        },
+        {
+          "path": "./templates/mikro",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./templates/mikro/agents",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./templates/mikro/agents/wish-context",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./templates/mikro/agents/wish-context/agent.yaml",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 1170
+        },
+        {
+          "path": "./templates/mikro/agents/wish-context/SYSTEM.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 11372
+        },
+        {
+          "path": "./templates/mikro/agents/mikro-coach",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./templates/mikro/agents/mikro-coach/agent.yaml",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 1403
+        },
+        {
+          "path": "./templates/mikro/agents/mikro-coach/SYSTEM.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 11967
+        },
+        {
+          "path": "./templates/mikro/agents/review-prep",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./templates/mikro/agents/review-prep/agent.yaml",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 1220
+        },
+        {
+          "path": "./templates/mikro/agents/review-prep/SYSTEM.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 12431
+        },
+        {
+          "path": "./LICENSE",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 1066
+        },
+        {
+          "path": "./VERSION",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 11
+        },
+        {
+          "path": "./skills",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/brainstorm",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/brainstorm/references",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/brainstorm/references/without-a-workflow.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 5672
+        },
+        {
+          "path": "./skills/brainstorm/references/design-template.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 2445
+        },
+        {
+          "path": "./skills/brainstorm/references/design-review-evidence.mjs",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 10979
+        },
+        {
+          "path": "./skills/brainstorm/references/round-ledger.mjs",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 53103
+        },
+        {
+          "path": "./skills/brainstorm/references/design-review-evidence.d.mts",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 1682
+        },
+        {
+          "path": "./skills/brainstorm/SKILL.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 8218
+        },
+        {
+          "path": "./skills/brainstorm/agents",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/brainstorm/agents/openai.yaml",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 266
+        },
+        {
+          "path": "./skills/skill-audit",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/skill-audit/references",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/skill-audit/references/intake.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 4444
+        },
+        {
+          "path": "./skills/skill-audit/SKILL.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 8305
+        },
+        {
+          "path": "./skills/skill-audit/agents",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/skill-audit/agents/openai.yaml",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 280
+        },
+        {
+          "path": "./skills/genie",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/genie/SKILL.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 6169
+        },
+        {
+          "path": "./skills/genie/agents",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/genie/agents/openai.yaml",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 390
+        },
+        {
+          "path": "./skills/genie/reference",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/genie/reference/lifecycle.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 2937
+        },
+        {
+          "path": "./skills/README.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 11572
+        },
+        {
+          "path": "./skills/review",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/review/references",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/review/references/plan-executability.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 2367
+        },
+        {
+          "path": "./skills/review/references/evidence-identity.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 3778
+        },
+        {
+          "path": "./skills/review/references/lenses",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/review/references/lenses/repo-hygiene.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 1989
+        },
+        {
+          "path": "./skills/review/references/lenses/dx.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 1839
+        },
+        {
+          "path": "./skills/review/references/lenses/supply-chain.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 2153
+        },
+        {
+          "path": "./skills/review/references/lenses/architecture.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 1895
+        },
+        {
+          "path": "./skills/review/references/lenses/code-quality.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 2669
+        },
+        {
+          "path": "./skills/review/references/lenses/qa.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 2397
+        },
+        {
+          "path": "./skills/review/references/lenses/perf.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 1902
+        },
+        {
+          "path": "./skills/review/references/lenses/rendered-ui.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 2917
+        },
+        {
+          "path": "./skills/review/SKILL.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 7422
+        },
+        {
+          "path": "./skills/review/agents",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/review/agents/openai.yaml",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 302
+        },
+        {
+          "path": "./skills/council",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/council/SKILL.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 3915
+        },
+        {
+          "path": "./skills/council/agents",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/council/agents/openai.yaml",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 231
+        },
+        {
+          "path": "./skills/genie-hacks",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/genie-hacks/references",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/genie-hacks/references/catalog.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 14805
+        },
+        {
+          "path": "./skills/genie-hacks/references/contributing.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 2641
+        },
+        {
+          "path": "./skills/genie-hacks/SKILL.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 2757
+        },
+        {
+          "path": "./skills/genie-hacks/agents",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/genie-hacks/agents/openai.yaml",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 201
+        },
+        {
+          "path": "./skills/wish",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/wish/references",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/wish/references/native-fallback.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 39438
+        },
+        {
+          "path": "./skills/wish/references/design-review-evidence.mjs",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 10979
+        },
+        {
+          "path": "./skills/wish/references/design-preflight.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 776
+        },
+        {
+          "path": "./skills/wish/references/design-review-evidence.d.mts",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 1682
+        },
+        {
+          "path": "./skills/wish/templates",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/wish/templates/wish-template.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 3531
+        },
+        {
+          "path": "./skills/wish/SKILL.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 14662
+        },
+        {
+          "path": "./skills/wish/agents",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/wish/agents/openai.yaml",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 340
+        },
+        {
+          "path": "./skills/workfly",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/workfly/SKILL.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 7755
+        },
+        {
+          "path": "./skills/workfly/agents",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/workfly/agents/openai.yaml",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 222
+        },
+        {
+          "path": "./skills/fix",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/fix/SKILL.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 5054
+        },
+        {
+          "path": "./skills/fix/agents",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/fix/agents/openai.yaml",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 234
+        },
+        {
+          "path": "./skills/refine",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/refine/SKILL.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 5125
+        },
+        {
+          "path": "./skills/refine/agents",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/refine/agents/openai.yaml",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 278
+        },
+        {
+          "path": "./skills/refine/prompts",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/refine/prompts/claude-fable-5-1.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 6052
+        },
+        {
+          "path": "./skills/refine/prompts/claude-sonnet-5-5.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 3592
+        },
+        {
+          "path": "./skills/refine/prompts/claude.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 4204
+        },
+        {
+          "path": "./skills/refine/prompts/claude-opus-5-5.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 3222
+        },
+        {
+          "path": "./skills/refine/prompts/openai.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 2892
+        },
+        {
+          "path": "./skills/merge",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/merge/SKILL.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 3983
+        },
+        {
+          "path": "./skills/merge/agents",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/merge/agents/openai.yaml",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 283
+        },
+        {
+          "path": "./skills/report",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/report/references",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/report/references/issue-template.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 1177
+        },
+        {
+          "path": "./skills/report/SKILL.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 8065
+        },
+        {
+          "path": "./skills/report/agents",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/report/agents/openai.yaml",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 220
+        },
+        {
+          "path": "./skills/NOTICE",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 4895
+        },
+        {
+          "path": "./skills/verify",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/verify/SKILL.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 5572
+        },
+        {
+          "path": "./skills/verify/agents",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/verify/agents/openai.yaml",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 269
+        },
+        {
+          "path": "./skills/docs",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/docs/SKILL.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 5315
+        },
+        {
+          "path": "./skills/docs/agents",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/docs/agents/openai.yaml",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 249
+        },
+        {
+          "path": "./skills/work",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/work/references",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/work/references/exact-path-commit.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 3304
+        },
+        {
+          "path": "./skills/work/SKILL.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 10463
+        },
+        {
+          "path": "./skills/work/agents",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/work/agents/openai.yaml",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 228
+        },
+        {
+          "path": "./skills/authoring",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/authoring/SKILL.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 4047
+        },
+        {
+          "path": "./skills/authoring/agents",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/authoring/agents/openai.yaml",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 264
+        },
+        {
+          "path": "./skills/research",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/research/SKILL.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 7249
+        },
+        {
+          "path": "./skills/research/agents",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/research/agents/openai.yaml",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 256
+        },
+        {
+          "path": "./skills/deslop",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/deslop/references",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/deslop/references/design.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 2843
+        },
+        {
+          "path": "./skills/deslop/references/writing.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 2975
+        },
+        {
+          "path": "./skills/deslop/references/code.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 3175
+        },
+        {
+          "path": "./skills/deslop/SKILL.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 3923
+        },
+        {
+          "path": "./skills/deslop/agents",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/deslop/agents/openai.yaml",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 260
+        },
+        {
+          "path": "./.claude-plugin",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./.agents",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./plugins",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./plugins/genie",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./plugins/dsh-workflow-loader",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./plugins/dsh-workflow-loader/tsconfig.json",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 238
+        },
+        {
+          "path": "./plugins/dsh-workflow-loader/README.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 13945
+        },
+        {
+          "path": "./plugins/dsh-workflow-loader/package.json",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 673
+        },
+        {
+          "path": "./plugins/dsh-workflow-loader/agent.cordis.yml",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 274
+        },
+        {
+          "path": "./plugins/dsh-workflow-loader/src",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./plugins/dsh-workflow-loader/src/index.ts",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 9747
+        },
+        {
+          "path": "./plugins/dsh-workflow-loader/src/config.ts",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 4113
+        },
+        {
+          "path": "./plugins/dsh-workflow-loader/src/catalog.ts",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 6195
+        },
+        {
+          "path": "./plugins/dsh-workflow-loader/src/dialect.ts",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 18156
+        },
+        {
+          "path": "./plugins/dsh-workflow-loader/src/run.ts",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 2843
+        },
+        {
+          "path": "./plugins/dsh-workflow-loader/build.ts",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 851
+        },
+        {
+          "path": "./plugins/dsh-workflow-loader/dist",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./plugins/dsh-workflow-loader/dist/index.js",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 26464
+        },
+        {
+          "path": "./plugins/dsh-workflow-loader/cordis.patch.yml",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 2118
+        },
+        {
+          "path": "./plugins/dsh-genie-board",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./plugins/dsh-genie-board/tsconfig.json",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 421
+        },
+        {
+          "path": "./plugins/dsh-genie-board/README.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 21917
+        },
+        {
+          "path": "./plugins/dsh-genie-board/package.json",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 903
+        },
+        {
+          "path": "./plugins/dsh-genie-board/agent.cordis.yml",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 209
+        },
+        {
+          "path": "./plugins/dsh-genie-board/src",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./plugins/dsh-genie-board/src/board.ts",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 1814
+        },
+        {
+          "path": "./plugins/dsh-genie-board/src/service.ts",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 8807
+        },
+        {
+          "path": "./plugins/dsh-genie-board/src/client",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./plugins/dsh-genie-board/src/client/shell.tsx",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 4096
+        },
+        {
+          "path": "./plugins/dsh-genie-board/src/client/api.ts",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 3016
+        },
+        {
+          "path": "./plugins/dsh-genie-board/src/client/icons.tsx",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 1600
+        },
+        {
+          "path": "./plugins/dsh-genie-board/src/client/styles.ts",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 11411
+        },
+        {
+          "path": "./plugins/dsh-genie-board/src/client/index.ts",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 4979
+        },
+        {
+          "path": "./plugins/dsh-genie-board/src/client/CatalogPanel.tsx",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 5928
+        },
+        {
+          "path": "./plugins/dsh-genie-board/src/client/BoardPanel.tsx",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 20696
+        },
+        {
+          "path": "./plugins/dsh-genie-board/src/workflows.ts",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 1374
+        },
+        {
+          "path": "./plugins/dsh-genie-board/src/runtime.ts",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 12165
+        },
+        {
+          "path": "./plugins/dsh-genie-board/src/process.ts",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 6384
+        },
+        {
+          "path": "./plugins/dsh-genie-board/src/index.ts",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 3541
+        },
+        {
+          "path": "./plugins/dsh-genie-board/src/schema.ts",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 8319
+        },
+        {
+          "path": "./plugins/dsh-genie-board/src/config.ts",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 5711
+        },
+        {
+          "path": "./plugins/dsh-genie-board/src/catalog.ts",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 4708
+        },
+        {
+          "path": "./plugins/dsh-genie-board/types",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./plugins/dsh-genie-board/types/primitives.d.ts",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 1512
+        },
+        {
+          "path": "./plugins/dsh-genie-board/NOTICE",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 1502
+        },
+        {
+          "path": "./plugins/dsh-genie-board/build.ts",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 1550
+        },
+        {
+          "path": "./plugins/dsh-genie-board/dist",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./plugins/dsh-genie-board/dist/client.js",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 53058
+        },
+        {
+          "path": "./plugins/dsh-genie-board/dist/workflows.js",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 6376
+        },
+        {
+          "path": "./plugins/dsh-genie-board/dist/board.js",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 140188
+        },
+        {
+          "path": "./plugins/dsh-genie-board/dist/index.js",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 12973
+        },
+        {
+          "path": "./plugins/dsh-genie-board/cordis.patch.yml",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 1110
+        }
+      ]
+    },
+    {
+      "platform": "linux-arm64",
+      "tarball": "/home/genie/.local/share/mikro-engine-split/experiments-g8/final-local-smokes/history-only-reword-6qjyzwas/tree/dist/genie-6.261009.1-linux-arm64.tar.gz",
+      "sha256": "3fe90ef50db525f051828190197fd27edc5ed26ea363ff8d7dfe1fc5fd43bbe3",
+      "bytes": 36708634,
+      "binarySha256": "3bd01611b16bae4010983655c6c05bd5759d207ed097a212fd3d95ae4839179d",
+      "binaryMode": "0755",
+      "topLevelMembers": [
+        ".agents",
+        ".claude-plugin",
+        "LICENSE",
+        "VERSION",
+        "genie",
+        "plugins",
+        "skills",
+        "templates"
+      ],
+      "memberCount": 203,
+      "rootMode": "0700",
+      "version": "6.261009.1",
+      "pluginVersions": {
+        "dsh-genie-board": "6.261009.1",
+        "dsh-workflow-loader": "6.261009.1"
+      },
+      "noTopLevelMikro": true,
+      "noArchiveSymlinks": true,
+      "allArchiveEntryModes": [
+        {
+          "path": ".",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./genie",
+          "kind": "file",
+          "mode": "0755",
+          "bytes": 95856784
+        },
+        {
+          "path": "./templates",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./templates/genie-config.template.json",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 1108
+        },
+        {
+          "path": "./templates/workflows",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./templates/workflows/pm-ledger-verify.js",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 6324
+        },
+        {
+          "path": "./templates/workflows/observability-review.js",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 10854
+        },
+        {
+          "path": "./templates/workflows/docs-audit.js",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 50284
+        },
+        {
+          "path": "./templates/workflows/brainstorm.js",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 84949
+        },
+        {
+          "path": "./templates/workflows/skill-intake.js",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 65318
+        },
+        {
+          "path": "./templates/workflows/wish.js",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 154835
+        },
+        {
+          "path": "./templates/workflows/research-sweep.js",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 55837
+        },
+        {
+          "path": "./templates/workflows/workfly.js",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 34998
+        },
+        {
+          "path": "./templates/workflows/council.js",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 9502
+        },
+        {
+          "path": "./templates/workflows/skill-audit-sweep.js",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 41535
+        },
+        {
+          "path": "./templates/workflows/test-simplify.js",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 114921
+        },
+        {
+          "path": "./templates/workflows/evidence-gate.js",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 37350
+        },
+        {
+          "path": "./templates/mikro",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./templates/mikro/agents",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./templates/mikro/agents/wish-context",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./templates/mikro/agents/wish-context/agent.yaml",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 1170
+        },
+        {
+          "path": "./templates/mikro/agents/wish-context/SYSTEM.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 11372
+        },
+        {
+          "path": "./templates/mikro/agents/mikro-coach",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./templates/mikro/agents/mikro-coach/agent.yaml",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 1403
+        },
+        {
+          "path": "./templates/mikro/agents/mikro-coach/SYSTEM.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 11967
+        },
+        {
+          "path": "./templates/mikro/agents/review-prep",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./templates/mikro/agents/review-prep/agent.yaml",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 1220
+        },
+        {
+          "path": "./templates/mikro/agents/review-prep/SYSTEM.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 12431
+        },
+        {
+          "path": "./LICENSE",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 1066
+        },
+        {
+          "path": "./VERSION",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 11
+        },
+        {
+          "path": "./skills",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/brainstorm",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/brainstorm/references",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/brainstorm/references/without-a-workflow.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 5672
+        },
+        {
+          "path": "./skills/brainstorm/references/design-template.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 2445
+        },
+        {
+          "path": "./skills/brainstorm/references/design-review-evidence.mjs",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 10979
+        },
+        {
+          "path": "./skills/brainstorm/references/round-ledger.mjs",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 53103
+        },
+        {
+          "path": "./skills/brainstorm/references/design-review-evidence.d.mts",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 1682
+        },
+        {
+          "path": "./skills/brainstorm/SKILL.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 8218
+        },
+        {
+          "path": "./skills/brainstorm/agents",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/brainstorm/agents/openai.yaml",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 266
+        },
+        {
+          "path": "./skills/skill-audit",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/skill-audit/references",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/skill-audit/references/intake.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 4444
+        },
+        {
+          "path": "./skills/skill-audit/SKILL.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 8305
+        },
+        {
+          "path": "./skills/skill-audit/agents",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/skill-audit/agents/openai.yaml",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 280
+        },
+        {
+          "path": "./skills/genie",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/genie/SKILL.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 6169
+        },
+        {
+          "path": "./skills/genie/agents",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/genie/agents/openai.yaml",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 390
+        },
+        {
+          "path": "./skills/genie/reference",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/genie/reference/lifecycle.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 2937
+        },
+        {
+          "path": "./skills/README.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 11572
+        },
+        {
+          "path": "./skills/review",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/review/references",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/review/references/plan-executability.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 2367
+        },
+        {
+          "path": "./skills/review/references/evidence-identity.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 3778
+        },
+        {
+          "path": "./skills/review/references/lenses",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/review/references/lenses/repo-hygiene.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 1989
+        },
+        {
+          "path": "./skills/review/references/lenses/dx.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 1839
+        },
+        {
+          "path": "./skills/review/references/lenses/supply-chain.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 2153
+        },
+        {
+          "path": "./skills/review/references/lenses/architecture.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 1895
+        },
+        {
+          "path": "./skills/review/references/lenses/code-quality.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 2669
+        },
+        {
+          "path": "./skills/review/references/lenses/qa.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 2397
+        },
+        {
+          "path": "./skills/review/references/lenses/perf.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 1902
+        },
+        {
+          "path": "./skills/review/references/lenses/rendered-ui.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 2917
+        },
+        {
+          "path": "./skills/review/SKILL.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 7422
+        },
+        {
+          "path": "./skills/review/agents",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/review/agents/openai.yaml",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 302
+        },
+        {
+          "path": "./skills/council",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/council/SKILL.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 3915
+        },
+        {
+          "path": "./skills/council/agents",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/council/agents/openai.yaml",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 231
+        },
+        {
+          "path": "./skills/genie-hacks",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/genie-hacks/references",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/genie-hacks/references/catalog.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 14805
+        },
+        {
+          "path": "./skills/genie-hacks/references/contributing.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 2641
+        },
+        {
+          "path": "./skills/genie-hacks/SKILL.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 2757
+        },
+        {
+          "path": "./skills/genie-hacks/agents",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/genie-hacks/agents/openai.yaml",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 201
+        },
+        {
+          "path": "./skills/wish",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/wish/references",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/wish/references/native-fallback.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 39438
+        },
+        {
+          "path": "./skills/wish/references/design-review-evidence.mjs",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 10979
+        },
+        {
+          "path": "./skills/wish/references/design-preflight.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 776
+        },
+        {
+          "path": "./skills/wish/references/design-review-evidence.d.mts",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 1682
+        },
+        {
+          "path": "./skills/wish/templates",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/wish/templates/wish-template.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 3531
+        },
+        {
+          "path": "./skills/wish/SKILL.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 14662
+        },
+        {
+          "path": "./skills/wish/agents",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/wish/agents/openai.yaml",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 340
+        },
+        {
+          "path": "./skills/workfly",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/workfly/SKILL.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 7755
+        },
+        {
+          "path": "./skills/workfly/agents",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/workfly/agents/openai.yaml",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 222
+        },
+        {
+          "path": "./skills/fix",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/fix/SKILL.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 5054
+        },
+        {
+          "path": "./skills/fix/agents",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/fix/agents/openai.yaml",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 234
+        },
+        {
+          "path": "./skills/refine",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/refine/SKILL.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 5125
+        },
+        {
+          "path": "./skills/refine/agents",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/refine/agents/openai.yaml",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 278
+        },
+        {
+          "path": "./skills/refine/prompts",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/refine/prompts/claude-fable-5-1.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 6052
+        },
+        {
+          "path": "./skills/refine/prompts/claude-sonnet-5-5.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 3592
+        },
+        {
+          "path": "./skills/refine/prompts/claude.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 4204
+        },
+        {
+          "path": "./skills/refine/prompts/claude-opus-5-5.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 3222
+        },
+        {
+          "path": "./skills/refine/prompts/openai.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 2892
+        },
+        {
+          "path": "./skills/merge",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/merge/SKILL.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 3983
+        },
+        {
+          "path": "./skills/merge/agents",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/merge/agents/openai.yaml",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 283
+        },
+        {
+          "path": "./skills/report",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/report/references",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/report/references/issue-template.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 1177
+        },
+        {
+          "path": "./skills/report/SKILL.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 8065
+        },
+        {
+          "path": "./skills/report/agents",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/report/agents/openai.yaml",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 220
+        },
+        {
+          "path": "./skills/NOTICE",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 4895
+        },
+        {
+          "path": "./skills/verify",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/verify/SKILL.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 5572
+        },
+        {
+          "path": "./skills/verify/agents",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/verify/agents/openai.yaml",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 269
+        },
+        {
+          "path": "./skills/docs",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/docs/SKILL.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 5315
+        },
+        {
+          "path": "./skills/docs/agents",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/docs/agents/openai.yaml",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 249
+        },
+        {
+          "path": "./skills/work",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/work/references",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/work/references/exact-path-commit.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 3304
+        },
+        {
+          "path": "./skills/work/SKILL.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 10463
+        },
+        {
+          "path": "./skills/work/agents",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/work/agents/openai.yaml",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 228
+        },
+        {
+          "path": "./skills/authoring",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/authoring/SKILL.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 4047
+        },
+        {
+          "path": "./skills/authoring/agents",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/authoring/agents/openai.yaml",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 264
+        },
+        {
+          "path": "./skills/research",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/research/SKILL.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 7249
+        },
+        {
+          "path": "./skills/research/agents",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/research/agents/openai.yaml",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 256
+        },
+        {
+          "path": "./skills/deslop",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/deslop/references",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/deslop/references/design.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 2843
+        },
+        {
+          "path": "./skills/deslop/references/writing.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 2975
+        },
+        {
+          "path": "./skills/deslop/references/code.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 3175
+        },
+        {
+          "path": "./skills/deslop/SKILL.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 3923
+        },
+        {
+          "path": "./skills/deslop/agents",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/deslop/agents/openai.yaml",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 260
+        },
+        {
+          "path": "./.claude-plugin",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./.agents",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./plugins",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./plugins/genie",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./plugins/dsh-workflow-loader",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./plugins/dsh-workflow-loader/tsconfig.json",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 238
+        },
+        {
+          "path": "./plugins/dsh-workflow-loader/README.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 13945
+        },
+        {
+          "path": "./plugins/dsh-workflow-loader/package.json",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 673
+        },
+        {
+          "path": "./plugins/dsh-workflow-loader/agent.cordis.yml",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 274
+        },
+        {
+          "path": "./plugins/dsh-workflow-loader/src",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./plugins/dsh-workflow-loader/src/index.ts",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 9747
+        },
+        {
+          "path": "./plugins/dsh-workflow-loader/src/config.ts",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 4113
+        },
+        {
+          "path": "./plugins/dsh-workflow-loader/src/catalog.ts",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 6195
+        },
+        {
+          "path": "./plugins/dsh-workflow-loader/src/dialect.ts",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 18156
+        },
+        {
+          "path": "./plugins/dsh-workflow-loader/src/run.ts",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 2843
+        },
+        {
+          "path": "./plugins/dsh-workflow-loader/build.ts",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 851
+        },
+        {
+          "path": "./plugins/dsh-workflow-loader/dist",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./plugins/dsh-workflow-loader/dist/index.js",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 26464
+        },
+        {
+          "path": "./plugins/dsh-workflow-loader/cordis.patch.yml",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 2118
+        },
+        {
+          "path": "./plugins/dsh-genie-board",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./plugins/dsh-genie-board/tsconfig.json",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 421
+        },
+        {
+          "path": "./plugins/dsh-genie-board/README.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 21917
+        },
+        {
+          "path": "./plugins/dsh-genie-board/package.json",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 903
+        },
+        {
+          "path": "./plugins/dsh-genie-board/agent.cordis.yml",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 209
+        },
+        {
+          "path": "./plugins/dsh-genie-board/src",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./plugins/dsh-genie-board/src/board.ts",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 1814
+        },
+        {
+          "path": "./plugins/dsh-genie-board/src/service.ts",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 8807
+        },
+        {
+          "path": "./plugins/dsh-genie-board/src/client",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./plugins/dsh-genie-board/src/client/shell.tsx",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 4096
+        },
+        {
+          "path": "./plugins/dsh-genie-board/src/client/api.ts",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 3016
+        },
+        {
+          "path": "./plugins/dsh-genie-board/src/client/icons.tsx",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 1600
+        },
+        {
+          "path": "./plugins/dsh-genie-board/src/client/styles.ts",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 11411
+        },
+        {
+          "path": "./plugins/dsh-genie-board/src/client/index.ts",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 4979
+        },
+        {
+          "path": "./plugins/dsh-genie-board/src/client/CatalogPanel.tsx",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 5928
+        },
+        {
+          "path": "./plugins/dsh-genie-board/src/client/BoardPanel.tsx",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 20696
+        },
+        {
+          "path": "./plugins/dsh-genie-board/src/workflows.ts",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 1374
+        },
+        {
+          "path": "./plugins/dsh-genie-board/src/runtime.ts",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 12165
+        },
+        {
+          "path": "./plugins/dsh-genie-board/src/process.ts",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 6384
+        },
+        {
+          "path": "./plugins/dsh-genie-board/src/index.ts",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 3541
+        },
+        {
+          "path": "./plugins/dsh-genie-board/src/schema.ts",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 8319
+        },
+        {
+          "path": "./plugins/dsh-genie-board/src/config.ts",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 5711
+        },
+        {
+          "path": "./plugins/dsh-genie-board/src/catalog.ts",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 4708
+        },
+        {
+          "path": "./plugins/dsh-genie-board/types",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./plugins/dsh-genie-board/types/primitives.d.ts",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 1512
+        },
+        {
+          "path": "./plugins/dsh-genie-board/NOTICE",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 1502
+        },
+        {
+          "path": "./plugins/dsh-genie-board/build.ts",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 1550
+        },
+        {
+          "path": "./plugins/dsh-genie-board/dist",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./plugins/dsh-genie-board/dist/client.js",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 53058
+        },
+        {
+          "path": "./plugins/dsh-genie-board/dist/workflows.js",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 6376
+        },
+        {
+          "path": "./plugins/dsh-genie-board/dist/board.js",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 140188
+        },
+        {
+          "path": "./plugins/dsh-genie-board/dist/index.js",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 12973
+        },
+        {
+          "path": "./plugins/dsh-genie-board/cordis.patch.yml",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 1110
+        }
+      ]
+    },
+    {
+      "platform": "darwin-arm64",
+      "tarball": "/home/genie/.local/share/mikro-engine-split/experiments-g8/final-local-smokes/history-only-reword-6qjyzwas/tree/dist/genie-6.261009.1-darwin-arm64.tar.gz",
+      "sha256": "1a07ad52d7b503735beb98862b08a562eab27f00da59623412595cdf7f83d0d0",
+      "bytes": 24980820,
+      "binarySha256": "4a72c99a8cbb755afa6d475cabd7276c6377a3e832c3c86d8bc39d702cb42273",
+      "binaryMode": "0755",
+      "topLevelMembers": [
+        ".agents",
+        ".claude-plugin",
+        "LICENSE",
+        "VERSION",
+        "genie",
+        "plugins",
+        "skills",
+        "templates"
+      ],
+      "memberCount": 203,
+      "rootMode": "0700",
+      "version": "6.261009.1",
+      "pluginVersions": {
+        "dsh-genie-board": "6.261009.1",
+        "dsh-workflow-loader": "6.261009.1"
+      },
+      "noTopLevelMikro": true,
+      "noArchiveSymlinks": true,
+      "allArchiveEntryModes": [
+        {
+          "path": ".",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./genie",
+          "kind": "file",
+          "mode": "0755",
+          "bytes": 65625698
+        },
+        {
+          "path": "./templates",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./templates/genie-config.template.json",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 1108
+        },
+        {
+          "path": "./templates/workflows",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./templates/workflows/pm-ledger-verify.js",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 6324
+        },
+        {
+          "path": "./templates/workflows/observability-review.js",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 10854
+        },
+        {
+          "path": "./templates/workflows/docs-audit.js",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 50284
+        },
+        {
+          "path": "./templates/workflows/brainstorm.js",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 84949
+        },
+        {
+          "path": "./templates/workflows/skill-intake.js",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 65318
+        },
+        {
+          "path": "./templates/workflows/wish.js",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 154835
+        },
+        {
+          "path": "./templates/workflows/research-sweep.js",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 55837
+        },
+        {
+          "path": "./templates/workflows/workfly.js",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 34998
+        },
+        {
+          "path": "./templates/workflows/council.js",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 9502
+        },
+        {
+          "path": "./templates/workflows/skill-audit-sweep.js",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 41535
+        },
+        {
+          "path": "./templates/workflows/test-simplify.js",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 114921
+        },
+        {
+          "path": "./templates/workflows/evidence-gate.js",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 37350
+        },
+        {
+          "path": "./templates/mikro",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./templates/mikro/agents",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./templates/mikro/agents/wish-context",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./templates/mikro/agents/wish-context/agent.yaml",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 1170
+        },
+        {
+          "path": "./templates/mikro/agents/wish-context/SYSTEM.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 11372
+        },
+        {
+          "path": "./templates/mikro/agents/mikro-coach",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./templates/mikro/agents/mikro-coach/agent.yaml",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 1403
+        },
+        {
+          "path": "./templates/mikro/agents/mikro-coach/SYSTEM.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 11967
+        },
+        {
+          "path": "./templates/mikro/agents/review-prep",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./templates/mikro/agents/review-prep/agent.yaml",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 1220
+        },
+        {
+          "path": "./templates/mikro/agents/review-prep/SYSTEM.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 12431
+        },
+        {
+          "path": "./LICENSE",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 1066
+        },
+        {
+          "path": "./VERSION",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 11
+        },
+        {
+          "path": "./skills",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/brainstorm",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/brainstorm/references",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/brainstorm/references/without-a-workflow.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 5672
+        },
+        {
+          "path": "./skills/brainstorm/references/design-template.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 2445
+        },
+        {
+          "path": "./skills/brainstorm/references/design-review-evidence.mjs",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 10979
+        },
+        {
+          "path": "./skills/brainstorm/references/round-ledger.mjs",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 53103
+        },
+        {
+          "path": "./skills/brainstorm/references/design-review-evidence.d.mts",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 1682
+        },
+        {
+          "path": "./skills/brainstorm/SKILL.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 8218
+        },
+        {
+          "path": "./skills/brainstorm/agents",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/brainstorm/agents/openai.yaml",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 266
+        },
+        {
+          "path": "./skills/skill-audit",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/skill-audit/references",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/skill-audit/references/intake.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 4444
+        },
+        {
+          "path": "./skills/skill-audit/SKILL.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 8305
+        },
+        {
+          "path": "./skills/skill-audit/agents",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/skill-audit/agents/openai.yaml",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 280
+        },
+        {
+          "path": "./skills/genie",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/genie/SKILL.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 6169
+        },
+        {
+          "path": "./skills/genie/agents",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/genie/agents/openai.yaml",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 390
+        },
+        {
+          "path": "./skills/genie/reference",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/genie/reference/lifecycle.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 2937
+        },
+        {
+          "path": "./skills/README.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 11572
+        },
+        {
+          "path": "./skills/review",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/review/references",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/review/references/plan-executability.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 2367
+        },
+        {
+          "path": "./skills/review/references/evidence-identity.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 3778
+        },
+        {
+          "path": "./skills/review/references/lenses",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/review/references/lenses/repo-hygiene.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 1989
+        },
+        {
+          "path": "./skills/review/references/lenses/dx.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 1839
+        },
+        {
+          "path": "./skills/review/references/lenses/supply-chain.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 2153
+        },
+        {
+          "path": "./skills/review/references/lenses/architecture.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 1895
+        },
+        {
+          "path": "./skills/review/references/lenses/code-quality.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 2669
+        },
+        {
+          "path": "./skills/review/references/lenses/qa.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 2397
+        },
+        {
+          "path": "./skills/review/references/lenses/perf.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 1902
+        },
+        {
+          "path": "./skills/review/references/lenses/rendered-ui.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 2917
+        },
+        {
+          "path": "./skills/review/SKILL.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 7422
+        },
+        {
+          "path": "./skills/review/agents",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/review/agents/openai.yaml",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 302
+        },
+        {
+          "path": "./skills/council",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/council/SKILL.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 3915
+        },
+        {
+          "path": "./skills/council/agents",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/council/agents/openai.yaml",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 231
+        },
+        {
+          "path": "./skills/genie-hacks",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/genie-hacks/references",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/genie-hacks/references/catalog.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 14805
+        },
+        {
+          "path": "./skills/genie-hacks/references/contributing.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 2641
+        },
+        {
+          "path": "./skills/genie-hacks/SKILL.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 2757
+        },
+        {
+          "path": "./skills/genie-hacks/agents",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/genie-hacks/agents/openai.yaml",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 201
+        },
+        {
+          "path": "./skills/wish",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/wish/references",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/wish/references/native-fallback.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 39438
+        },
+        {
+          "path": "./skills/wish/references/design-review-evidence.mjs",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 10979
+        },
+        {
+          "path": "./skills/wish/references/design-preflight.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 776
+        },
+        {
+          "path": "./skills/wish/references/design-review-evidence.d.mts",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 1682
+        },
+        {
+          "path": "./skills/wish/templates",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/wish/templates/wish-template.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 3531
+        },
+        {
+          "path": "./skills/wish/SKILL.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 14662
+        },
+        {
+          "path": "./skills/wish/agents",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/wish/agents/openai.yaml",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 340
+        },
+        {
+          "path": "./skills/workfly",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/workfly/SKILL.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 7755
+        },
+        {
+          "path": "./skills/workfly/agents",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/workfly/agents/openai.yaml",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 222
+        },
+        {
+          "path": "./skills/fix",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/fix/SKILL.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 5054
+        },
+        {
+          "path": "./skills/fix/agents",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/fix/agents/openai.yaml",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 234
+        },
+        {
+          "path": "./skills/refine",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/refine/SKILL.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 5125
+        },
+        {
+          "path": "./skills/refine/agents",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/refine/agents/openai.yaml",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 278
+        },
+        {
+          "path": "./skills/refine/prompts",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/refine/prompts/claude-fable-5-1.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 6052
+        },
+        {
+          "path": "./skills/refine/prompts/claude-sonnet-5-5.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 3592
+        },
+        {
+          "path": "./skills/refine/prompts/claude.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 4204
+        },
+        {
+          "path": "./skills/refine/prompts/claude-opus-5-5.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 3222
+        },
+        {
+          "path": "./skills/refine/prompts/openai.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 2892
+        },
+        {
+          "path": "./skills/merge",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/merge/SKILL.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 3983
+        },
+        {
+          "path": "./skills/merge/agents",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/merge/agents/openai.yaml",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 283
+        },
+        {
+          "path": "./skills/report",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/report/references",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/report/references/issue-template.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 1177
+        },
+        {
+          "path": "./skills/report/SKILL.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 8065
+        },
+        {
+          "path": "./skills/report/agents",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/report/agents/openai.yaml",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 220
+        },
+        {
+          "path": "./skills/NOTICE",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 4895
+        },
+        {
+          "path": "./skills/verify",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/verify/SKILL.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 5572
+        },
+        {
+          "path": "./skills/verify/agents",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/verify/agents/openai.yaml",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 269
+        },
+        {
+          "path": "./skills/docs",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/docs/SKILL.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 5315
+        },
+        {
+          "path": "./skills/docs/agents",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/docs/agents/openai.yaml",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 249
+        },
+        {
+          "path": "./skills/work",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/work/references",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/work/references/exact-path-commit.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 3304
+        },
+        {
+          "path": "./skills/work/SKILL.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 10463
+        },
+        {
+          "path": "./skills/work/agents",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/work/agents/openai.yaml",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 228
+        },
+        {
+          "path": "./skills/authoring",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/authoring/SKILL.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 4047
+        },
+        {
+          "path": "./skills/authoring/agents",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/authoring/agents/openai.yaml",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 264
+        },
+        {
+          "path": "./skills/research",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/research/SKILL.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 7249
+        },
+        {
+          "path": "./skills/research/agents",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/research/agents/openai.yaml",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 256
+        },
+        {
+          "path": "./skills/deslop",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/deslop/references",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/deslop/references/design.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 2843
+        },
+        {
+          "path": "./skills/deslop/references/writing.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 2975
+        },
+        {
+          "path": "./skills/deslop/references/code.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 3175
+        },
+        {
+          "path": "./skills/deslop/SKILL.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 3923
+        },
+        {
+          "path": "./skills/deslop/agents",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./skills/deslop/agents/openai.yaml",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 260
+        },
+        {
+          "path": "./.claude-plugin",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./.agents",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./plugins",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./plugins/genie",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./plugins/dsh-workflow-loader",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./plugins/dsh-workflow-loader/tsconfig.json",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 238
+        },
+        {
+          "path": "./plugins/dsh-workflow-loader/README.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 13945
+        },
+        {
+          "path": "./plugins/dsh-workflow-loader/package.json",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 673
+        },
+        {
+          "path": "./plugins/dsh-workflow-loader/agent.cordis.yml",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 274
+        },
+        {
+          "path": "./plugins/dsh-workflow-loader/src",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./plugins/dsh-workflow-loader/src/index.ts",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 9747
+        },
+        {
+          "path": "./plugins/dsh-workflow-loader/src/config.ts",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 4113
+        },
+        {
+          "path": "./plugins/dsh-workflow-loader/src/catalog.ts",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 6195
+        },
+        {
+          "path": "./plugins/dsh-workflow-loader/src/dialect.ts",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 18156
+        },
+        {
+          "path": "./plugins/dsh-workflow-loader/src/run.ts",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 2843
+        },
+        {
+          "path": "./plugins/dsh-workflow-loader/build.ts",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 851
+        },
+        {
+          "path": "./plugins/dsh-workflow-loader/dist",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./plugins/dsh-workflow-loader/dist/index.js",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 26464
+        },
+        {
+          "path": "./plugins/dsh-workflow-loader/cordis.patch.yml",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 2118
+        },
+        {
+          "path": "./plugins/dsh-genie-board",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./plugins/dsh-genie-board/tsconfig.json",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 421
+        },
+        {
+          "path": "./plugins/dsh-genie-board/README.md",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 21917
+        },
+        {
+          "path": "./plugins/dsh-genie-board/package.json",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 903
+        },
+        {
+          "path": "./plugins/dsh-genie-board/agent.cordis.yml",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 209
+        },
+        {
+          "path": "./plugins/dsh-genie-board/src",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./plugins/dsh-genie-board/src/board.ts",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 1814
+        },
+        {
+          "path": "./plugins/dsh-genie-board/src/service.ts",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 8807
+        },
+        {
+          "path": "./plugins/dsh-genie-board/src/client",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./plugins/dsh-genie-board/src/client/shell.tsx",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 4096
+        },
+        {
+          "path": "./plugins/dsh-genie-board/src/client/api.ts",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 3016
+        },
+        {
+          "path": "./plugins/dsh-genie-board/src/client/icons.tsx",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 1600
+        },
+        {
+          "path": "./plugins/dsh-genie-board/src/client/styles.ts",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 11411
+        },
+        {
+          "path": "./plugins/dsh-genie-board/src/client/index.ts",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 4979
+        },
+        {
+          "path": "./plugins/dsh-genie-board/src/client/CatalogPanel.tsx",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 5928
+        },
+        {
+          "path": "./plugins/dsh-genie-board/src/client/BoardPanel.tsx",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 20696
+        },
+        {
+          "path": "./plugins/dsh-genie-board/src/workflows.ts",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 1374
+        },
+        {
+          "path": "./plugins/dsh-genie-board/src/runtime.ts",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 12165
+        },
+        {
+          "path": "./plugins/dsh-genie-board/src/process.ts",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 6384
+        },
+        {
+          "path": "./plugins/dsh-genie-board/src/index.ts",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 3541
+        },
+        {
+          "path": "./plugins/dsh-genie-board/src/schema.ts",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 8319
+        },
+        {
+          "path": "./plugins/dsh-genie-board/src/config.ts",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 5711
+        },
+        {
+          "path": "./plugins/dsh-genie-board/src/catalog.ts",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 4708
+        },
+        {
+          "path": "./plugins/dsh-genie-board/types",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./plugins/dsh-genie-board/types/primitives.d.ts",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 1512
+        },
+        {
+          "path": "./plugins/dsh-genie-board/NOTICE",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 1502
+        },
+        {
+          "path": "./plugins/dsh-genie-board/build.ts",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 1550
+        },
+        {
+          "path": "./plugins/dsh-genie-board/dist",
+          "kind": "directory",
+          "mode": "0700",
+          "bytes": 0
+        },
+        {
+          "path": "./plugins/dsh-genie-board/dist/client.js",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 53058
+        },
+        {
+          "path": "./plugins/dsh-genie-board/dist/workflows.js",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 6376
+        },
+        {
+          "path": "./plugins/dsh-genie-board/dist/board.js",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 140188
+        },
+        {
+          "path": "./plugins/dsh-genie-board/dist/index.js",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 12973
+        },
+        {
+          "path": "./plugins/dsh-genie-board/cordis.patch.yml",
+          "kind": "file",
+          "mode": "0600",
+          "bytes": 1110
+        }
+      ]
+    }
+  ],
+  "linuxSurface": {
+    "command": [
+      "/home/genie/.local/share/mikro-engine-split/experiments-g8/final-local-smokes/history-only-reword-6qjyzwas/tree/dist/linux-x64-glibc/genie",
+      "--version"
+    ],
+    "cwd": "/home/genie/.local/share/mikro-engine-split/experiments-g8/final-local-smokes/history-only-reword-6qjyzwas/tree",
+    "exitCode": 0,
+    "stdout": "6.261009.1\n",
+    "stderr": "",
+    "seconds": 0.496
+  },
+  "muslSurface": {
+    "command": [
+      "docker",
+      "run",
+      "--rm",
+      "--pull=never",
+      "--network",
+      "none",
+      "--read-only",
+      "--user",
+      "1001:1001",
+      "--cap-drop",
+      "ALL",
+      "--security-opt",
+      "no-new-privileges",
+      "--mount",
+      "type=bind,source=/home/genie/.local/share/mikro-engine-split/experiments-g8/final-local-smokes/history-only-reword-6qjyzwas/tree/dist/linux-x64-musl,target=/candidate,readonly",
+      "sha256:5acc90a93e91ff07bf72aa90a7c9f0fa189765aec90b47bdbf2152d2196383c0",
+      "/candidate/genie",
+      "--version"
+    ],
+    "cwd": "/home/genie/.local/share/mikro-engine-split/experiments-g8/final-local-smokes/history-only-reword-6qjyzwas/tree",
+    "exitCode": 0,
+    "stdout": "6.261009.1\n",
+    "stderr": "",
+    "seconds": 5.368
+  },
+  "sourceCandidateSha256": "7241a0a39d2a270093e6ae0d1af905f9603b3092eff373795146f493ff8e29e9",
+  "inputDisposition": "Freshallfour rebuild required/newupstreamruntime+skills+version; no old435release reuse credited. Source/runtime remainsfrozenafterbuild.",
+  "outputRetentionLimit": "Shortcompleted backgroundresult directlydeliveredfulloutputandmarker without spilledartifactURL; proccompletedresult expired. Exactcommands/runner, observedstages+marker/currenttarbinaryhashes+independentactualarchiveinspection/CLI outputsdurable here; no inventedartifactnumber.",
+  "platformLimits": "Linuxx64glibc andmuslactuallyexecuted; LinuxARM64andDarwinARM64compiled/staged/extracted/hashed butnotexecutedonhost; no fullcross-platformruntimeclaim.",
+  "protectedScope": "No rootreleasepromotion/signing/upload/productioninstall/branchmerge."
+}

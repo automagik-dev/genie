@@ -31,16 +31,10 @@ jobs:
       - name: Install locked commitlint tooling
         run: bun install --frozen-lockfile --ignore-scripts
 
-      - name: Lint the exact pushed commit range
+      - name: Strictly lint the exact Genie-owned commit range
         env:
           BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
           HEAD_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
         run: |
           set -euo pipefail
-          [[ "$BASE_SHA" =~ ^[0-9a-f]{40}$ && "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]] || {
-            echo "invalid commit range" >&2
-            exit 2
-          }
-          git cat-file -e "${BASE_SHA}^{commit}"
-          git cat-file -e "${HEAD_SHA}^{commit}"
-          bun x --no-install commitlint --config commitlint.config.ts --from "$BASE_SHA" --to "$HEAD_SHA" --verbose
+          bun scripts/commitlint.ts --from "$BASE_SHA" --to "$HEAD_SHA"

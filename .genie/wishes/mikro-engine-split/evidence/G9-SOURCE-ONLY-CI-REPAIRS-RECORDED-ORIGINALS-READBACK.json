@@ -1,0 +1,37 @@
+{
+  "sourceCandidateManifestSha256": "b11593ce864e1f77b645fccd991068d17aab6535bda0e79a41fcaac972ab2da6",
+  "actualOriginalMikroHead": {
+    "argv": [
+      "git",
+      "rev-parse",
+      "HEAD"
+    ],
+    "cwd": "/home/genie/workspace/repos/mikro",
+    "exitCode": 0,
+    "seconds": 0.011302624130621552,
+    "stdout": "62894e49314bad07382492ac074ea96df6776f61\n",
+    "stderr": ""
+  },
+  "actualOriginalMikroIndexPath": "/home/genie/workspace/repos/mikro/.git/index",
+  "actualIndexSha256": "aa74f553e19f8107b24220a146412e7fdc4a9f3514b941be258cc184f0e8435c",
+  "actualOriginalMikroStatus": " M .genie/INDEX.md\u0000 M CHANGELOG.md\u0000 M bin/install-state.mjs\u0000 M dist/src/cli.js\u0000 M dist/tests/install-coordination.test.js\u0000 M dist/tests/npm-authority.test.js\u0000 M scripts/install.sh\u0000 M src/cli.ts\u0000 M tests/install-coordination.test.ts\u0000 M tests/npm-authority.test.ts\u0000?? .genie/brainstorms/mikro-engine-split/BASELINE-REGISTRATION.md\u0000?? .genie/brainstorms/mikro-engine-split/DESIGN.md\u0000?? .genie/brainstorms/mikro-engine-split/DRAFT.md\u0000?? .genie/brainstorms/mikro-engine-split/HANDOFF.md\u0000?? .genie/brainstorms/mikro-engine-split/evidence/FROZEN-FIXTURES.json\u0000?? .genie/brainstorms/mikro-engine-split/evidence/INTEGRATION-RESEARCH.md\u0000?? .genie/brainstorms/mikro-engine-split/evidence/baseline-2026-10-04.json\u0000?? .genie/brainstorms/mikro-engine-split/evidence/mikro-diag/FINDINGS.txt\u0000?? .genie/brainstorms/mikro-engine-split/evidence/mikro-diag/attempts.json\u0000?? .genie/brainstorms/mikro-engine-split/evidence/mikro-diag/citation-by-repo.txt\u0000?? .genie/brainstorms/mikro-engine-split/evidence/mikro-diag/concurrency.txt\u0000?? .genie/brainstorms/mikro-engine-split/evidence/mikro-diag/correlations.txt\u0000?? .genie/brainstorms/mikro-engine-split/evidence/mikro-diag/failures-by-category.csv\u0000?? .genie/brainstorms/mikro-engine-split/evidence/mikro-diag/failures.py\u0000?? .genie/brainstorms/mikro-engine-split/evidence/mikro-diag/iteration-cap.txt\u0000?? .genie/brainstorms/mikro-engine-split/evidence/mikro-eval/analyze.py\u0000?? .genie/brainstorms/mikro-engine-split/evidence/mikro-eval/bench-quality.csv\u0000?? .genie/brainstorms/mikro-engine-split/evidence/mikro-eval/ledger-files-a.txt\u0000?? .genie/brainstorms/mikro-engine-split/evidence/mikro-eval/ledger-files-b.txt\u0000?? .genie/brainstorms/mikro-engine-split/evidence/mikro-eval/ledger-files.txt\u0000?? .genie/brainstorms/mikro-engine-split/evidence/mikro-eval/per-agent-stats.csv\u0000?? .genie/brainstorms/mikro-engine-split/evidence/mikro-eval/phoenix-spans.json\u0000?? .genie/brainstorms/mikro-engine-split/evidence/mikro-eval/phoenix.py\u0000?? .genie/brainstorms/mikro-engine-split/evidence/mikro-eval/runs-unified.json\u0000?? .genie/brainstorms/mikro-engine-split/evidence/mikro-eval/wish-files.txt\u0000?? .genie/brainstorms/mikro-engine-split/evidence/mikro-eval/wish-offload-groups.csv\u0000?? .genie/brainstorms/mikro-engine-split/evidence/mikro-eval/wish-runs.json\u0000?? .genie/brainstorms/mikro-engine-split/evidence/mikro-eval/wish.py\u0000?? .genie/genie.db\u0000?? .genie/genie.db-shm\u0000?? .genie/genie.db-wal\u0000?? .genie/roadmap-sync\u0000?? brain/.khortex-memory/.write.lock\u0000",
+  "operatorSettingsSha256": "379be5e12e7321362b776390cb9ff36d019e105aebff7b206014f795f777e1e4",
+  "operatorHelperSha256": "15fa26c639dc5d7b81313be54ada4f0a8ce4c5035b29288684a86a8eaa2c77fd",
+  "comparedToPreviouslyRecordedHashes": true,
+  "limits": [
+    "Broader original Genie dirty/auth/global before inventory remains unavailable; original criterion5/Q02 full protection remains BLOCKED, not invented",
+    "No original checkout/operator mutation performed by source-only CI repairs"
+  ],
+  "actualNineUnrelatedWipSha256": {
+    "CHANGELOG.md": "a4ad0fc9ba6a8a3ac79db85a5468b3962e08f102d283d3f8421e4ede42f75ffa",
+    "bin/install-state.mjs": "cc7b8232cac67a688d12789a03b705d26f912837aeda8b6fff9d172d4b590bca",
+    "dist/src/cli.js": "9255ddf790f80ff943a262d231d535863d34441bec3fea113f37ad670ec5601c",
+    "dist/tests/install-coordination.test.js": "79b29a3c6550a0d4de00d94ba18f028d6a76c3bd2216f156b0dcc20849fbddf4",
+    "dist/tests/npm-authority.test.js": "f7657e6a1d0e14a144ebcd2cfbfeffc912659cf70adfbe6532ee9d6fe738b618",
+    "scripts/install.sh": "ad2a999d543ebfae682714098f3c6e30a5203393f2c83d3577bd7bd0d5eb0736",
+    "src/cli.ts": "03af08b963b07d66d7a98de2adf06235a27f265babe016386702facd5427b8d2",
+    "tests/install-coordination.test.ts": "c4e9107debdef921168ddb1706dd57ded88b9b12dc5a0421f6b3aad110821792",
+    "tests/npm-authority.test.ts": "997e66c2f7d59868bd4a89948940b504a48e4829b41404f110e81ce70b678ca8"
+  },
+  "allNineMatchRecordedBefore": true
+}

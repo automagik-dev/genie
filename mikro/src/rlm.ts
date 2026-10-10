@@ -587,6 +587,7 @@ export async function rlmLoop(
   let removeCallerAbort: (() => void) | undefined;
   let actualIterations = 0;
   let rootFailure: LLMCompletionError | undefined;
+  let usageComplete = true;
   let repl!: REPL;
 
   try {
@@ -748,7 +749,13 @@ export async function rlmLoop(
             }
           },
         }
-      ).finally(recordBudgetUsage);
+      ).catch((error: unknown) => {
+        // Conservatively treat every failed child receipt as an observed
+        // subtotal: mixed batches can include an unreported failed operation.
+        // A later repair cannot establish that missing operation's total usage.
+        usageComplete = false;
+        throw error;
+      }).finally(recordBudgetUsage);
       // Record sub-calls to observability
       if (recorder && request.request_type !== "llm_query" && request.request_type !== "llm_query_batched") {
         recorder.recordSubCall(
@@ -789,7 +796,9 @@ export async function rlmLoop(
         payload: { answer, iterations },
       }));
       closeEmitter("complete");
-      return buildResult(answer, usage, iterations, config, budget.getState().budgetHit, geminiCounts, repl.getGeminiBatteriesUsed(), buildUsageBreakdown(usage, childUsage), validationFailed);
+      const result = buildResult(answer, usage, iterations, config, budget.getState().budgetHit, geminiCounts, repl.getGeminiBatteriesUsed(), buildUsageBreakdown(usage, childUsage), validationFailed);
+      if (!usageComplete) result.usageComplete = false;
+      return result;
     };
 
     // Every accepted final checks both output.schema and VALIDATE.md, if declared.
@@ -1092,6 +1101,12 @@ export async function rlmLoop(
             execDurationMs, !!execResult.error
           );
         }
+        if (execResult.llmError !== undefined) {
+          // Neither caught/in-REPL FINAL nor text FINAL from this failed turn
+          // can certify success. The existing next iteration owns any repair.
+          retryState.hint = execResult.llmError;
+          break;
+        }
 
         if (execResult.final) {
           const settled = await settle(execResult.final.value, "retry-capable");
@@ -1254,7 +1269,7 @@ export async function rlmLoop(
       }));
       closeEmitter("abort");
 
-      return buildResult(
+      const result = buildResult(
         "Error: aborted after 3 consecutive empty LLM responses. Context may exceed API token limits.",
         usage,
         actualIterations,
@@ -1264,6 +1279,8 @@ export async function rlmLoop(
         repl.getGeminiBatteriesUsed(),
         buildUsageBreakdown(usage, childUsage)
       );
+      if (!usageComplete) result.usageComplete = false;
+      return result;
     }
 
     // No completion is allowed outside the model-turn cap or after cost/token

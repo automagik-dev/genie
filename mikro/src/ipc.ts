@@ -8,10 +8,9 @@ export interface ExecuteCommand {
   code: string;
 }
 
-export interface LLMResponseMessage {
-  type: "llm_response";
-  results: string[];
-}
+export type LLMResponseMessage =
+  | { type: "llm_response"; ok: true; results: string[] }
+  | { type: "llm_response"; ok: false; error: string };
 
 export interface InjectCommand {
   type: "inject";
@@ -49,6 +48,8 @@ export interface ExecuteResult {
   variables: string[];
   final?: FinalSignal;
   error?: string;
+  /** Node-owned marker: a failed child request invalidates this execution's FINAL. */
+  llmError?: string;
 }
 
 export interface LLMRequest {

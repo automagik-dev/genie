@@ -7,7 +7,17 @@
  * nothing), which is also why the agents-dir check is gated on there being a job at all.
  */
 import { afterEach, describe, expect, test } from 'bun:test';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { runBenchCli } from './bench';
@@ -236,50 +246,114 @@ test('invalid bench engine refuses before any job can call the runner', async ()
 });
 
 test('historical evaluation overlays current runtime config before the real runAgent trust gate', async () => {
-  const dir = tmp('mikro-bench-trusted-overlay-');
-  const git = (args: string[]) => {
-    const result = Bun.spawnSync(['git', '-C', dir, '-c', 'user.email=t@t', '-c', 'user.name=t', ...args]);
-    if (result.exitCode !== 0) throw new Error(result.stderr.toString());
-    return result.stdout.toString().trim();
-  };
-  git(['init', '-q', '-b', 'main']);
-  write(dir, 'src/base.ts', 'export const base = 1;\n');
-  write(dir, '.mikro/mikro.yaml', 'model: { provider: deepseek-api, model: deepseek-flash }\n');
-  write(dir, '.mikro/TOOLS.md', '# historical executable tools\n');
-  git(['add', '-A']);
-  git(['commit', '-qm', 'base']);
-  const parent = git(['rev-parse', 'HEAD']);
-  write(dir, 'src/nested/implementation.ts', 'export const implemented = true;\n');
-  git(['add', '-A']);
-  git(['commit', '-qm', 'feat: nested implementation']);
-  expect(runFixturesCli(['--from-commits', 'HEAD^..HEAD', '--agent', 'wish-context', '--dir', dir])).toBe(0);
-  const currentConfig = 'model: { provider: deepseek, model: deepseek-flash }\n';
-  write(dir, '.mikro/mikro.yaml', currentConfig);
-  rmSync(join(dir, '.mikro/TOOLS.md'));
-  write(dir, '.mikro/agents/wish-context/agent.yaml', 'model: deepseek/deepseek-flash\nsystem: SYSTEM.md\n');
-  write(dir, '.mikro/agents/wish-context/SYSTEM.md', '# trusted current prompt\n');
-  let evaluationDir: string | undefined;
-  const stop = new Error('real runAgent reached execution boundary without a model call');
-  const runner: typeof runAgent = (options) => runAgent({
-    ...options, ledger: false, phoenix: false,
-    openBoundary: async (request) => {
-      evaluationDir = request.dir;
-      const head = Bun.spawnSync(['git', '-C', request.dir, 'rev-parse', 'HEAD']);
-      expect(head.exitCode).toBe(0);
-      expect(head.stdout.toString().trim()).toBe(parent);
-      expect(readFileSync(join(request.dir, '.mikro/mikro.yaml'), 'utf8')).toBe(currentConfig);
-      expect(existsSync(join(request.dir, '.mikro/TOOLS.md'))).toBe(false);
-      expect(existsSync(join(request.dir, 'src/nested/implementation.ts'))).toBe(false);
-      expect(existsSync(join(request.dir, 'src/base.ts'))).toBe(true);
-      throw stop;
-    },
-  });
-  await expect(bench(['wish-context', '--dir', dir, '--boundary', 'bwrap', '--concurrency', '1', '--no-phoenix'], runner)).rejects.toThrow(stop.message);
-  expect(evaluationDir).toBeDefined();
-  expect(existsSync(evaluationDir!)).toBe(false);
-  expect(git(['worktree', 'list', '--porcelain'])).not.toContain(evaluationDir!);
-  expect(readFileSync(join(dir, '.mikro/mikro.yaml'), 'utf8')).toBe(currentConfig);
+  // An OS temporary-directory alias is outside both trusted configuration trees.
+  const tempRoot = tmp('mikro-bench-os-temp-alias-');
+  const physical = join(realpathSync(tempRoot), 'physical');
+  const alias = join(tempRoot, 'alias');
+  mkdirSync(physical);
+  symlinkSync(physical, alias, 'dir');
+  const previousTmpdir = process.env.TMPDIR;
+  process.env.TMPDIR = alias;
+  try {
+    const dir = tmp('mikro-bench-trusted-overlay-');
+    const git = (args: string[]) => {
+      const result = Bun.spawnSync(['git', '-C', dir, '-c', 'user.email=t@t', '-c', 'user.name=t', ...args]);
+      if (result.exitCode !== 0) throw new Error(result.stderr.toString());
+      return result.stdout.toString().trim();
+    };
+    git(['init', '-q', '-b', 'main']);
+    write(dir, 'src/base.ts', 'export const base = 1;\n');
+    write(dir, '.mikro/mikro.yaml', 'model: { provider: deepseek-api, model: deepseek-flash }\n');
+    write(dir, '.mikro/TOOLS.md', '# historical executable tools\n');
+    git(['add', '-A']);
+    git(['commit', '-qm', 'base']);
+    const parent = git(['rev-parse', 'HEAD']);
+    write(dir, 'src/nested/implementation.ts', 'export const implemented = true;\n');
+    git(['add', '-A']);
+    git(['commit', '-qm', 'feat: nested implementation']);
+    expect(runFixturesCli(['--from-commits', 'HEAD^..HEAD', '--agent', 'wish-context', '--dir', dir])).toBe(0);
+    const currentConfig = 'model: { provider: deepseek, model: deepseek-flash }\n';
+    write(dir, '.mikro/mikro.yaml', currentConfig);
+    rmSync(join(dir, '.mikro/TOOLS.md'));
+    write(dir, '.mikro/agents/wish-context/agent.yaml', 'model: deepseek/deepseek-flash\nsystem: SYSTEM.md\n');
+    write(dir, '.mikro/agents/wish-context/SYSTEM.md', '# trusted current prompt\n');
+    let evaluationDir: string | undefined;
+    const stop = new Error('real runAgent reached execution boundary without a model call');
+    const runner: typeof runAgent = (options) => runAgent({
+      ...options, ledger: false, phoenix: false,
+      openBoundary: async (request) => {
+        evaluationDir = request.dir;
+        const head = Bun.spawnSync(['git', '-C', request.dir, 'rev-parse', 'HEAD']);
+        expect(head.exitCode).toBe(0);
+        expect(head.stdout.toString().trim()).toBe(parent);
+        expect(readFileSync(join(request.dir, '.mikro/mikro.yaml'), 'utf8')).toBe(currentConfig);
+        expect(existsSync(join(request.dir, '.mikro/TOOLS.md'))).toBe(false);
+        expect(existsSync(join(request.dir, 'src/nested/implementation.ts'))).toBe(false);
+        expect(existsSync(join(request.dir, 'src/base.ts'))).toBe(true);
+        throw stop;
+      },
+    });
+    await expect(bench(['wish-context', '--dir', dir, '--boundary', 'bwrap', '--concurrency', '1', '--no-phoenix'], runner)).rejects.toThrow(stop.message);
+    expect(evaluationDir).toBeDefined();
+    expect(existsSync(evaluationDir!)).toBe(false);
+    expect(git(['worktree', 'list', '--porcelain'])).not.toContain(evaluationDir!);
+    expect(readFileSync(join(dir, '.mikro/mikro.yaml'), 'utf8')).toBe(currentConfig);
+  } finally {
+    if (previousTmpdir === undefined) delete process.env.TMPDIR;
+    else process.env.TMPDIR = previousTmpdir;
+  }
 });
+
+for (const owner of ['source', 'historical'] as const) {
+  for (const component of ['file', 'directory'] as const) {
+    test(`runtime overlays reject ${owner} configuration ${component} symlinks before execution`, async () => {
+      const dir = tmp('mikro-bench-config-symlink-');
+      const outside = tmp('mikro-bench-external-config-');
+      const outsideConfig = join(outside, 'mikro.yaml');
+      const outsideBytes = 'model: { provider: deepseek, model: deepseek-flash }\n';
+      write(outside, 'mikro.yaml', outsideBytes);
+      const git = (args: string[]) => {
+        const result = Bun.spawnSync(['git', '-C', dir, '-c', 'user.email=t@t', '-c', 'user.name=t', ...args]);
+        if (result.exitCode !== 0) throw new Error(result.stderr.toString());
+        return result.stdout.toString().trim();
+      };
+      const linkConfiguration = () => {
+        if (component === 'directory') {
+          rmSync(join(dir, '.mikro'), { recursive: true, force: true });
+          symlinkSync(outside, join(dir, '.mikro'), 'dir');
+        } else {
+          mkdirSync(join(dir, '.mikro'), { recursive: true });
+          rmSync(join(dir, '.mikro/mikro.yaml'), { force: true });
+          symlinkSync(outsideConfig, join(dir, '.mikro/mikro.yaml'));
+        }
+      };
+      git(['init', '-q', '-b', 'main']);
+      write(dir, 'README.md', '# parent\n');
+      if (owner === 'historical') linkConfiguration();
+      git(['add', '-A']);
+      git(['commit', '-qm', 'base']);
+      const parent = git(['rev-parse', 'HEAD']);
+      rmSync(join(dir, '.mikro'), { recursive: true, force: true });
+      write(dir, '.mikro/mikro.yaml', outsideBytes);
+      if (owner === 'source') linkConfiguration();
+      write(dir, '.mikro/agents/wish-context/agent.yaml', 'model: deepseek/deepseek-flash\n');
+      const fixtures = join(dir, 'fixtures.json');
+      write(dir, 'fixtures.json', JSON.stringify({ fixtures: [{
+        id: 'configuration-symlink', prompt: 'Intent: add a source file', evaluationCommit: parent,
+        truth: { newFiles: ['src/new.ts'] },
+      }] }));
+      const worktrees = git(['worktree', 'list', '--porcelain']);
+      let calls = 0;
+      const runner: typeof runAgent = async () => { calls++; throw new Error('must not execute'); };
+      await expect(bench([
+        'wish-context', '--dir', dir, '--fixtures', fixtures, '--concurrency', '1', '--no-phoenix',
+      ], runner)).rejects.toThrow('runtime configuration has a symlink component');
+      expect(calls).toBe(0);
+      expect(git(['worktree', 'list', '--porcelain'])).toBe(worktrees);
+      expect(readFileSync(outsideConfig, 'utf8')).toBe(outsideBytes);
+    });
+  }
+}
 
 test('runtime overlays reject overlapping NEW truth without calling the runner or leaking a worktree', async () => {
   const dir = tmp('mikro-bench-overlay-overlap-');

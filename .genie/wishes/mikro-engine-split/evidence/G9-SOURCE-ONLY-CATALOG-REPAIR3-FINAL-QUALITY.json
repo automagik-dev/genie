@@ -1,0 +1,256 @@
+{
+  "phase": "B",
+  "reviewer": "Catalog3Original22 \u2014 final amendment including actual child-failure consumer proof",
+  "criteriaSha256": "3f59563b814baae42fafdd19f7d704fad52293f72e439a770dd25821fbbdeb36",
+  "candidateManifestSha256": "7b98ccbad1fe6bc3f6f1205939865c5188231e10ab15a0403ed5d6833430302b",
+  "sourceVerdict": "FIX-FIRST",
+  "comparisonVerdict": "BLOCKED",
+  "wholeWishVerdict": "BLOCKED",
+  "criteria": [
+    {
+      "id": "Q01",
+      "score": "BLOCKED",
+      "evidence": [
+        "Original22 criteria were bound before implementation reads; no refreeze. Manifest7b98,2454 canonical byte/mode records,includes generated/untracked/deletion/gitlink coverage and explicit exclusions; source snapshot40ddcadbe9ae5690bafae23f523179bf91a8e4eb.",
+        "Fresh current SDK/root gate receipts bind this identity; durable root receipt records bg_131/exit0 and coordinator verified all2454 records exact after gates."
+      ],
+      "limits": "Current local identity/validation supported; final committed and delivered correspondence remains absent. Reviewer did not recompute hashes or run gates."
+    },
+    {
+      "id": "Q02",
+      "score": "BLOCKED",
+      "evidence": [
+        "Non-squash import/history-reword receipts preserve original source history and initial subtree identity.",
+        "Recorded original readback matches Mikro HEAD/index,nine WIP hashes,settings and helper proof."
+      ],
+      "limits": "Broader original Genie dirty/index/auth/global before-inventory remains absent; narrower proof is not substituted. No actual unauthorized mutation was shown."
+    },
+    {
+      "id": "Q03",
+      "score": "FIX-FIRST",
+      "evidence": [
+        "Actual nested/shared/archived-Genie repair cases pass,including owner28/0/104assertions and CLI/full-clone/strict-range boundary proof.",
+        "Actual unchanged candidate artifact1114 includes a foreign-only retired skill from imported-source ancestorF tagged separately from declared split tipP.",
+        "Root filter removes exact split tips only; independently traced all-ref root\u2192graph\u2192catalog\u2192name/description classifier\u2192backup-first archive. Prefix/additive/strict-tip/update boundaries remain intact."
+      ],
+      "limits": "Nested omission is fixed,but original imported-history authority invariant is not. Provenance distinction between genuinely foreign source refs and legitimate shared archived Genie roots remains unresolved; blanket ancestry exclusion would regress omission."
+    },
+    {
+      "id": "Q04",
+      "score": "BLOCKED",
+      "evidence": [
+        "Direct Pi-family pins1.0.2,Node>=22.19.0,independent npm authority and fresh provider/settings regressions agree.",
+        "Built-in deepseek/deepseek-flash default and current local compiled selectors are valid; historical no-override generic query succeeds."
+      ],
+      "limits": "Complete exact-current correspondence for historical external generic-call proof is not established through all repairs. No scored Prime inference or re-pin."
+    },
+    {
+      "id": "Q05",
+      "score": "PASS",
+      "evidence": [
+        "Explicit project/reference-only auth and private physical0700/0600 storage restrict management authority to provisioning.",
+        "Fresh actual overlapping SDK/rotation/environment tests and unchanged project-management receipts establish invocation isolation."
+      ],
+      "limits": "No new provisioning/external calls or assertion that historical deployment state is current."
+    },
+    {
+      "id": "Q06",
+      "score": "FIX-FIRST",
+      "evidence": [
+        "Secret redaction/storage/public-evidence boundaries and fresh independent secret canaries remain supported.",
+        "Actual child length/HTTP400 failures in artifact1119 become schema-valid successful FINAL/MCP answers. This violates frozenQ06 safe failures retain truthful classification/masked external failure prohibition."
+      ],
+      "limits": "No credential leak is alleged. Previously reported Q06PASS is superseded for failure classification only; this is the same underlying Q10 defect,not a separate finding."
+    },
+    {
+      "id": "Q07",
+      "score": "PASS",
+      "evidence": [
+        "Explicit isolated Pi resources expose only scoped tools; lexical/realpath/recursive containment and credential denial have real-SDK hostile-resource proof."
+      ],
+      "limits": "Post-final reproduction reads an allowed ordinary path,not a scope escape; artifact1116 hidden-path denial is not a reproduction."
+    },
+    {
+      "id": "Q08",
+      "score": "PASS",
+      "evidence": [
+        "Closed Git operations/fixed arguments/physical containment,stripped configuration and disabled helpers have actual configured-repository/nested-worktree SDK canary proof."
+      ],
+      "limits": "Pi inspection boundary only; trusted maintenance scripts and RLM Python are not general sandboxes."
+    },
+    {
+      "id": "Q09",
+      "score": "PASS",
+      "evidence": [
+        "NEW proposal-only/path/no-line/tracked-ancestor/containment checks and separate dedup reject citation authority leakage.",
+        "Frozen parent fixtures lack implementations; actual alias trust-gate smoke rejects runtime-config overlap/internal symlinks and cleans worktrees; ordered replay excludes stale failed answers."
+      ],
+      "limits": "Alias smoke stops before inference/bwrap; no resampling or regrading of retained paid cohorts."
+    },
+    {
+      "id": "Q10",
+      "score": "FIX-FIRST",
+      "evidence": [
+        "New LLMCompletionError/assertLLMCompletion and handleLLMRequest usage-once/rethrow are introduced relative to imported source62894; actual source diff1124 confirms this.",
+        "Receiving repl.ts671-677 generic catch converts the typed failure to ordinary results:string[]; Python llm_bridge.py81-97 returns it as child answer. The consumer was read,not inferred from the producer.",
+        "Actual compiled Node+real Python+RLM+MCP artifact1119:successful control correct; child length and HTTP400 both outcome.failedfalse/isErrorfalse after ordinary error text enters FINAL. Six local requests total;zero external/JEV.",
+        "Length cumulative22in/14out retained once; default3/explicit0 retry and other fresh failure/usage cases remain supported."
+      ],
+      "limits": "Typed classification fails at child bridge; not a lost-usage defect. Existing bridge generic catch alone is pre-existing,but its incompatibility with newly introduced typed failure producer/rethrow is a patch integration defect."
+    },
+    {
+      "id": "Q11",
+      "score": "PASS",
+      "evidence": [
+        "Safe FINAL parsing,literal/missing/ellipsis behavior and in-budget schema validation have current real provider/Python/Legacy call-count proof."
+      ],
+      "limits": "Schema-valid content is not proof of typed child success; that separate bridge breach is scoredQ06/Q10. No expression-evaluation or out-of-budget finalization defect was shown."
+    },
+    {
+      "id": "Q12",
+      "score": "FIX-FIRST",
+      "evidence": [
+        "Actual REPL timeout/kill/wait/detach/stale/state-loss/snapshot/once-side-effect tests pass.",
+        "Actual compiled Pi artifact1117 proves allowed read work continues after accepted final."
+      ],
+      "limits": "Completion-ordering defect is distinct from otherwise passing timeout/cancellation lifecycle behavior."
+    },
+    {
+      "id": "Q13",
+      "score": "PASS",
+      "evidence": [
+        "Strict selector precedence/obsolete-key rejection precedes inference; actual generic/backend/call/bench/wish consumers receive it.",
+        "Fresh compiled MCP and behavioral saved-wish tests cover both offload stages,off/native behavior and invalid zero-dispatch."
+      ],
+      "limits": "Default/native models unchanged; treatment execution does not establish comparison completeness."
+    },
+    {
+      "id": "Q14",
+      "score": "FIX-FIRST",
+      "evidence": [
+        "Current schema/first-final/MCP/history/progress tests pass,but beforeToolCall omits accepted-answer denial.",
+        "Actual unchanged compiled SDK artifact1117RED:final-only control leaves atime untouched;final\u2192read updates allowed canary atime and progress shows emit_done thenread while answeraccepted,iterations1,requests1. Two local requests total,zero external/JEV."
+      ],
+      "limits": "Now actually reproduced,not merely code-traced. Scope-denied hidden-path probe1116 excluded; read\u2192final owning case misses final\u2192read ordering."
+    },
+    {
+      "id": "Q15",
+      "score": "PASS",
+      "evidence": [
+        "Project-key api_key_viewer authentication,permitted aggregate routes,bounded finally logout,immutable query/source/time/project/capability provenance and unknownnull semantics have historical actual/fresh local proof on unchanged bytes."
+      ],
+      "limits": "Aggregates are not request exports/invoices; no new extraction. Historical logout proof is finally execution rather than independent wire capture."
+    },
+    {
+      "id": "Q16",
+      "score": "BLOCKED",
+      "evidence": [
+        "Manual one-shot typed JEV adapter/source reattachment and fresh malformed/cancel/one-call tests support source.",
+        "Historical one-time sanctioned public receipt records393/37 usage and immutable public source mapping."
+      ],
+      "limits": "Current approved external manual extraction/auth remains unavailable; expired local SSO/prior one-time sanction does not authorize a substitute or new call."
+    },
+    {
+      "id": "Q17",
+      "score": "PASS",
+      "evidence": [
+        "Existing supported runtime/SDK/verifier/ledger/report/workflow consumers reused; package/runtime/release and experiment authorities stay distinct; affected docs/changelog state behavior/limits."
+      ],
+      "limits": "Structural PASS does not waive three confirmed integration defects or permit authority/criteria redesign. No additional concrete maintainability defect is asserted."
+    },
+    {
+      "id": "Q18",
+      "score": "BLOCKED",
+      "evidence": [
+        "Concrete tool/history/input/time bounds and once-per-owned-node graph traversal; actual full-clone catalog receipt8.111s.",
+        "Measured experiment/failure accounting is retained; actual unnecessary post-final work separately reported."
+      ],
+      "limits": "Exact-current cold/repeated resource non-regression and complete paired measurements remain insufficient. No speculative allocation/cache defect."
+    },
+    {
+      "id": "Q19",
+      "score": "FIX-FIRST",
+      "evidence": [
+        "Current SDK1228pass/218suites/zero failures;current root durable bg_131 exit0,3227pass/2skip/0fail,19240assertions,157files;all2454 records exact afterward per coordinator.",
+        "Actual foreign-tag1114,Pi post-final1117 and child-failure1119 counterexamples expose omitted meaningful owning-boundary coverage despite green suites.",
+        "Relevant unchanged bytes support standalone/release/dependency proof reuse."
+      ],
+      "limits": "Need owner boundary tests/fixes if authorized. Root wrapper timeout is inconsistent reporting,not test failure;bg_130 not credited. Two existing root bwrap/runtime facts skips remain disclosed."
+    },
+    {
+      "id": "Q20",
+      "score": "BLOCKED",
+      "evidence": [
+        "Frozen36controls+72candidate/4fixtures/3reps/serial matrix retains all108 executed cells/360receipts and failures.",
+        "Final report preserves seven engine accounting gaps,parityfalse,recommendationnull,RLM default and unknown totals."
+      ],
+      "limits": "Executed cells do not complete cost/latency comparison; no paid resampling/refreeze/regrade authorized. New source fixes would require new attribution,not silent acceptance of old runtime proofs."
+    },
+    {
+      "id": "Q21",
+      "score": "BLOCKED",
+      "evidence": [
+        "Real native smoke/UUID/session/routes and18 jobs retained,15 accounting-complete/3incomplete,7missed/2pr-open/9refused,0business successes.",
+        "Owned-suffix/message/attempt/tool/lifecycle reconciliation and all-attempt offloads preserve unknowns through unchanged reports."
+      ],
+      "limits": "Three native gaps and unknown native/private billing prevent completed accounting/business adoption; aggregates are not rebilled."
+    },
+    {
+      "id": "Q22",
+      "score": "BLOCKED",
+      "evidence": [
+        "Unchanged Mikro source/lock/dist supports standalone proof;four actual release payloads preserve contract/noMikro/bidirectional equality and glibc/musl execution with matching builder hash.",
+        "PR3139remote553eebab is not candidate7b98 and remainsred/CONFLICTING;WISHIN_PROGRESS."
+      ],
+      "limits": "Three source defects plus final committed/current remote delivery and remaining original prerequisites prevent clearance. ARM/Mach-O were built,not executed;local clean merge-tree is not remote mergeability."
+    }
+  ],
+  "findings": [
+    {
+      "severity": "HIGH / P2",
+      "blocking": true,
+      "criterion": "Q03; related Q19",
+      "anchor": "scripts/git-history-ownership.ts:50-56, exact candidate7b98",
+      "trigger": "Complete clone contains an imported-source historical tag at foreign-only retired ancestorF below declared source split tipP.",
+      "impact": "Removing only exact split-tip refs promotesF to Genie ownership. Actual generated catalog includes foreign name+description,which can grant a matching physical skill proven retirement status and backup-first archival. Keeping legitimate archived Genie/shared proof does not justify foreign-source authority.",
+      "provenance": "Actual artifact1114 on unchanged7b98,catalogExit0/genuineForeignEntryPresenttrue,refs/tags/mikro-source-history,zero external/JEV calls;independently traced graph/catalog/classifier/archive consumer. Prior nested/shared omission remains repaired.",
+      "correction": "Establish independent Genie versus imported-source ref provenance before admitting ambiguous all-ref roots,or fail closed on ambiguity while retaining proven archived Genie/shared roots. Add the actual foreign historical-tag CLI case alongside nested/archive cases. Blanket source-ancestry subtraction would regress omission. No new repair permission granted."
+    },
+    {
+      "severity": "HIGH / P2",
+      "blocking": true,
+      "criterion": "Q14; related Q12 and Q19",
+      "anchor": "mikro/src/mcp/backends/pi.ts:181-195, exact candidate7b98",
+      "trigger": "One actual SDK assistant batch contains valid emit_done('accepted') then an allowed scoped read.",
+      "impact": "beforeToolCall admits ordinary work after accepted final;SDK executes it before finishTurn. Correct returned answer and one request do not satisfy frozen no-post-final-work behavior.",
+      "provenance": "Actual compiled SDK artifact1117RED,diagnosticexit1:final-only control leaves atime946684800000 unchanged;final\u2192read changes it1791566214198.8923,progressemit_done thenread,accepted/iterations1/request1 inboth. Two local provider requests,zero external/JEV. InstalledSDK1.0.2/source dispatch independently read;hidden-path1116 excluded.",
+      "correction": "Deny subsequent tool bodies when answer!==undefined at beforeToolCall;retain first answer/normal end/schema/usage/no-extra-model semantics. Add real-SDK final\u2192ordinary-tool case with independent no-work negative control,if repair authorized."
+    },
+    {
+      "severity": "HIGH / P2",
+      "blocking": true,
+      "criterion": "Q10; related Q06 and Q19",
+      "anchor": "mikro/src/llm.ts:1414-1416, introduced failure rethrow; consuming repl.ts:671-677 and python/llm_bridge.py:81-97",
+      "trigger": "RLM Python invokes llm_query whose completion stops with length or provider HTTP400,then serializes the returned value into an otherwise schema-valid FINAL.",
+      "impact": "New typed LLMCompletionError is accounted/rethrown by the handler,but existing receiving REPL catch replaces it with ordinary Error:LLMhandlerfailed text. Python consumes that as a successful child result;RLM and MCP accept the final and reportfailedfalse/isErrorfalse. External failed work is presented as successful output despite truthful retained usage.",
+      "provenance": "Actual unchanged compiled Node+realPython+RLM+actualMCP runTurn/sessionResult artifact1119RED:successcontrol correct;length andHTTP400 cases both falsely successful;two loopback requests each/six total,zero external/JEV. Length22in/14out retained once. Independently read producer/assert/handler,REPL dispatch,Python value consumer and RLM error escape. Diff1124 versus imported62894 proves new typed producer/rethrow;generic bridge catch is pre-existing,not independently claimed as newly introduced.",
+      "correction": "Preserve newly typed completion failure across the receiving REPL boundary rather than synthesizing normal string results;route it through existing execution/RLM terminal-error path to failed MCP result,without remerging usage. Add real Python/local-provider/compiled-MCP length and transport-error child cases with a success control and independent failed-envelope/usage-once assertions. Do not special-case answer strings or weaken the final schema. No repair permission inferred."
+    }
+  ],
+  "validation": [
+    "This full amendment supersedes earlier Q06/Q10PASS and adds the third confirmed finding while retaining Q03/Q14 findings. Original22 frozen criteria and exact7b98 identity are unchanged.",
+    "Read artifact1119 actual child failure control/length/HTTP400 outputs and independent assertions. Traced new typed producer/rethrow into existing incompatible receiving dispatcher/Python consumer and RLM terminal path;read import-baseline diff1124 to distinguish introduced integration from pre-existing generic catch.",
+    "Read actual artifact1114 foreign-tag catalog inclusion and retirement consumer,artifact1117 final-only versus final\u2192allowed-read compiled SDK oracle. Diagnostic requests are local only:1117two,1119six,zero external model/JEV. Probe1116 is not accepted.",
+    "Current SDK1228/0/218suites and durable current-root bg_1313227/2skip/0fail with explicit chainedexit0 are accepted;coordinator reports all2454 records exact after gates. Wrapper timeout headline is a documented harness inconsistency;cancelledbg_130 is not accepted.",
+    "Other source/compiled/process/Git/provider/alias/preservation/install/release/experiment receipts retain the attribution and limitations recorded above. Reviewer executed no builds/tests/lint/formatters/mutations/inference/provisioning/network probes."
+  ],
+  "publicationLimits": [
+    "SourceFIX-FIRST now has three confirmed blockers:catalog foreign historical-ref authority,Pi post-final tool work,and typed child failure converted to successful Python/MCP output. Secret privacy and once-only failure usage are not alleged broken by the third finding.",
+    "Current full-root/SDK gates and exact post-gate candidate continuity are supported;green suites do not supersede actualRED boundary counterexamples. Final committed and remote correspondence remains missing.",
+    "G1C3/B3Q4/cap4,G4C2/B2Q2/cap2,andG2C4/B4Q3/cap3 are exhausted,effort0. No additional repair,waiver,criteria rewrite or scope expansion authorized.",
+    "Comparison/whole-wish remainBLOCKED for retained accounting gaps,broader missing original Genie baseline,current sanctioned external manual extraction and remote delivery. Confirmed source defects remain separately visible,not hidden by those blockers.",
+    "Any authorized repair requires refreshed candidate/source-dist/owning tests/docs,attributable red/green,required gates and affected independent reviews. No paid resampling/refreeze/regrade or new inference follows from these findings.",
+    "PR3139remote553eebab/red/CONFLICTING is not reviewed candidate7b98. No merge,main promotion,production install/update,force-push or G8/G9/whole-wish closure;keepIN_PROGRESS."
+  ],
+  "postBlindCriteria": []
+}

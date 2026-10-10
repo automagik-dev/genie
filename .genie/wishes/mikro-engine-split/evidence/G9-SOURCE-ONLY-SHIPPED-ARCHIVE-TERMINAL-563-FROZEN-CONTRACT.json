@@ -1,0 +1,46 @@
+{
+  "originalCriteria": [
+    {
+      "path": "/home/genie/.omp/agent/sessions/-workspace-repos-genie/2026-10-05T14-02-09-036Z_01a10c5f-370c-7000-b1a1-e7fa3d0156ea/local/mikro-g9-final-correctness-criteria.txt",
+      "sha256": "4c1c29f61bd7389197eff5d421c26e47d9d4f67003cfb3a101c1953b78eae868",
+      "unchanged": true
+    },
+    {
+      "path": "/home/genie/.omp/agent/sessions/-workspace-repos-genie/2026-10-05T14-02-09-036Z_01a10c5f-370c-7000-b1a1-e7fa3d0156ea/local/mikro-g9-final-quality-criteria.txt",
+      "sha256": "3f59563b814baae42fafdd19f7d704fad52293f72e439a770dd25821fbbdeb36",
+      "unchanged": true
+    }
+  ],
+  "design": {
+    "path": "/home/genie/orca/workspaces/genie/mikro-engine-split/.genie/brainstorms/mikro-engine-split/DESIGN.md",
+    "fullStampedFileSha256": "4e8eb60b794e3fcc22a5f2bb77d7f354b83976439d499b91ca78a87538afbc3c",
+    "reviewedBodyDigest": "f473c5dfff23221fabbcb2aec89880e3199f572ba4dd098ab4be8258a82b79f2",
+    "digest": {
+      "command": [
+        "node",
+        "/home/genie/.local/share/mikro-engine-split/experiments-g8/final-local-smokes/history-only-reword-6qjyzwas/tree/skills/brainstorm/references/design-review-evidence.mjs",
+        "digest",
+        "/home/genie/orca/workspaces/genie/mikro-engine-split/.genie/brainstorms/mikro-engine-split/DESIGN.md"
+      ],
+      "cwd": "/home/genie/.local/share/mikro-engine-split/experiments-g8/final-local-smokes/history-only-reword-6qjyzwas/tree",
+      "exitCode": 0,
+      "stdout": "f473c5dfff23221fabbcb2aec89880e3199f572ba4dd098ab4be8258a82b79f2\n",
+      "stderr": "",
+      "seconds": 0.066
+    },
+    "verify": {
+      "command": [
+        "node",
+        "/home/genie/.local/share/mikro-engine-split/experiments-g8/final-local-smokes/history-only-reword-6qjyzwas/tree/skills/brainstorm/references/design-review-evidence.mjs",
+        "verify",
+        "/home/genie/orca/workspaces/genie/mikro-engine-split/.genie/brainstorms/mikro-engine-split/DESIGN.md"
+      ],
+      "cwd": "/home/genie/.local/share/mikro-engine-split/experiments-g8/final-local-smokes/history-only-reword-6qjyzwas/tree",
+      "exitCode": 0,
+      "stdout": "",
+      "stderr": "",
+      "seconds": 0.076
+    }
+  },
+  "original108plus18": "no newcohort/model/JEV/reportappend/resampling/refreeze/regrade"
+}

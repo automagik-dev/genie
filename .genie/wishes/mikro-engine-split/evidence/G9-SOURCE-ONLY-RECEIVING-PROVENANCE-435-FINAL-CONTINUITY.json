@@ -1,0 +1,358 @@
+{
+  "sourceOnly": true,
+  "sourceCandidateManifestSha256": "93eec2144bb70115d4c287d616772cd9c712746af2da90c4133c26d65dd016cd",
+  "recordCount": 2466,
+  "allPostValidationRecordsUnchanged": true,
+  "actualSourceDiff": {
+    "localArtifact": "local://mikro-receiving-provenance-435-actual-source.patch",
+    "sha256": "f7503afe5cce35ed805d5c8efa94822e636bf7000e60118fb2f83206de2598d6",
+    "bytes": 62653,
+    "command": [
+      "git",
+      "diff",
+      "--binary",
+      "HEAD",
+      "--",
+      ".genie/wishes/mikro-engine-split/WISH.md",
+      "CHANGELOG.md",
+      "scripts/git-history-ownership.ts",
+      "scripts/legacy-skills-catalog.ts",
+      "scripts/legacy-skills-catalog.test.ts",
+      "mikro/src",
+      "mikro/python",
+      "mikro/tests"
+    ]
+  },
+  "frozenOriginalCriteria": {
+    "mikro-g9-final-correctness-criteria.txt": {
+      "path": "/home/genie/.omp/agent/sessions/-workspace-repos-genie/2026-10-05T14-02-09-036Z_01a10c5f-370c-7000-b1a1-e7fa3d0156ea/local/mikro-g9-final-correctness-criteria.txt",
+      "sha256": "4c1c29f61bd7389197eff5d421c26e47d9d4f67003cfb3a101c1953b78eae868"
+    },
+    "mikro-g9-final-quality-criteria.txt": {
+      "path": "/home/genie/.omp/agent/sessions/-workspace-repos-genie/2026-10-05T14-02-09-036Z_01a10c5f-370c-7000-b1a1-e7fa3d0156ea/local/mikro-g9-final-quality-criteria.txt",
+      "sha256": "3f59563b814baae42fafdd19f7d704fad52293f72e439a770dd25821fbbdeb36"
+    }
+  },
+  "signedDesign": {
+    "privateOriginalPath": "/home/genie/orca/workspaces/genie/mikro-engine-split/.genie/brainstorms/mikro-engine-split/DESIGN.md",
+    "reviewedContentSha256": "f473c5dfff23221fabbcb2aec89880e3199f572ba4dd098ab4be8258a82b79f2",
+    "fullStampedFileSha256": "4e8eb60b794e3fcc22a5f2bb77d7f354b83976439d499b91ca78a87538afbc3c",
+    "verifyReceipt": {
+      "command": [
+        "node",
+        "skills/brainstorm/references/design-review-evidence.mjs",
+        "verify",
+        "/home/genie/orca/workspaces/genie/mikro-engine-split/.genie/brainstorms/mikro-engine-split/DESIGN.md"
+      ],
+      "cwd": "/home/genie/.local/share/mikro-engine-split/experiments-g8/final-local-smokes/history-only-reword-6qjyzwas/tree",
+      "exitCode": 0,
+      "stdout": "",
+      "stderr": "",
+      "seconds": 0.06241138488985598
+    },
+    "digestReceipt": {
+      "command": [
+        "node",
+        "skills/brainstorm/references/design-review-evidence.mjs",
+        "digest",
+        "/home/genie/orca/workspaces/genie/mikro-engine-split/.genie/brainstorms/mikro-engine-split/DESIGN.md"
+      ],
+      "cwd": "/home/genie/.local/share/mikro-engine-split/experiments-g8/final-local-smokes/history-only-reword-6qjyzwas/tree",
+      "exitCode": 0,
+      "stdout": "f473c5dfff23221fabbcb2aec89880e3199f572ba4dd098ab4be8258a82b79f2\n",
+      "stderr": "",
+      "seconds": 0.0685035849455744
+    }
+  },
+  "preservationReceipt": "G9-SOURCE-ONLY-RECEIVING-PROVENANCE-435-PRESERVATION.json",
+  "boundariesReceipt": "G9-SOURCE-ONLY-RECEIVING-PROVENANCE-435-BOUNDARY-PROOF.json",
+  "currentWholeGates": {
+    "root": "G9-SOURCE-ONLY-RECEIVING-PROVENANCE-435-WHOLE-GENIE-GATE.json",
+    "mikroDepsInstalled": "G9-SOURCE-ONLY-RECEIVING-PROVENANCE-435-DEPS-INSTALL-MIKRO-GATE.json",
+    "priorRootTimeoutRetained": "G9-SOURCE-ONLY-RECEIVING-PROVENANCE-435-ROOT-TIMEOUT.json"
+  },
+  "releaseProofReuse": {
+    "receipt": "G9-SOURCE-ONLY-CI-REPAIRS-FOUR-RELEASE-PAYLOADS.json",
+    "originalInputManifest": "G9-SOURCE-ONLY-AUTHORIZED-CI-REPAIRS-CANDIDATE-MANIFEST.json",
+    "originalInputManifestSha256": "7b2accb60afb63f1be7870c50e16de320a3d7ea10a662d6cedc8003c7b6b32f4",
+    "boundUnchangedInputRecords": 282,
+    "inputPrefixes": [
+      "src/",
+      "plugins/",
+      "skills/",
+      "templates/",
+      ".mikro/agents/"
+    ],
+    "inputNamed": [
+      "LICENSE",
+      "VERSION",
+      "biome.json",
+      "bun.lock",
+      "package.json",
+      "scripts/build-binary.sh",
+      "scripts/fresh-install-smoke.ts",
+      "scripts/release-payload-version.ts",
+      "scripts/verify-release.sh",
+      "tsconfig.json"
+    ],
+    "inputByteModeChanges": [],
+    "actualUnchangedOutputHashes": [
+      {
+        "platform": "linux-x64-glibc",
+        "tarSha256": "0441137953c69f92f90d0b433c836919d5c308956e04cab37da4e280de39095a",
+        "binarySha256": "1c2d5bb21451387964056b62b602aad2db1e4dfe135fcf29ffbd89b4faae8db8",
+        "samePreviouslyBuiltAndValidatedArtifact": true
+      },
+      {
+        "platform": "linux-x64-musl",
+        "tarSha256": "e49af72f9fa7b1886ca993e4e3cad0d4d697c16aa77f898f732cc6b8a55818bd",
+        "binarySha256": "235382f428e64a2a3268be9e1700a8cefd5521be01d6af7522c75924c628f552",
+        "samePreviouslyBuiltAndValidatedArtifact": true
+      },
+      {
+        "platform": "linux-arm64",
+        "tarSha256": "eb137b624f57d7149434883fe8a9092629f51886d7e703201cfe38ac47689970",
+        "binarySha256": "c11eb70dffd1f4a4f9e8a39af6205ff60eb2dcb03be6025882eb655cb8ffb353",
+        "samePreviouslyBuiltAndValidatedArtifact": true
+      },
+      {
+        "platform": "darwin-arm64",
+        "tarSha256": "7e71cb9a2904acb72c498a1f8cec9d006f4d6d3e935153653253c516d655cef7",
+        "binarySha256": "ae49621ef3677085f090a1410835c9bf3b02c20c724a5cff3f7068de6d6781b1",
+        "samePreviouslyBuiltAndValidatedArtifact": true
+      }
+    ],
+    "reuseNotFreshExecution": true,
+    "executionLimits": [
+      "ARM and Mach-O compiled/extracted/validated but not executed",
+      "Local unsigned builds, not promotion or production install",
+      "No paid inference, JEV, resampling, refreeze or regrading"
+    ],
+    "reason": "Only history collector/devtests/rootdocs and independently gated Mikro runtime changed; Genie entrypoint/imports/dependencies/skills/plugins/templates/staged agents/builder/version/validation inputs unchanged. All4previous compiled/extracted tarballs remain exact artifacts; glibcCLI/muslDocker prior executions reused, ARM/Machnot executed. No currentMikro receiving claim credited from oldSDK gates."
+  },
+  "comparisonAndWholeWish": "Original108+18 cohorts incomplete/confounded/unknown, no rerun/JEV/resampling/refreeze/regrade/routing/report append; full preservation baseline missing. No sourceSHIP inferred from current gates alone; fresh original40/22 reviews pending.",
+  "publication": "BLOCKED: both current independent sourceFIX-FIRST, actual terminal billingRED, G2caps exhausted; livebasefa84620commits includes material shipped-ref-policy conflict. No new commit/push/forcelease/merge/main/prodinstall; preserve private40dd, original553and628head/index/WIP.",
+  "postReviewDisposition": {
+    "candidateManifestSha256": "93eec2144bb70115d4c287d616772cd9c712746af2da90c4133c26d65dd016cd",
+    "source": "FIX-FIRST",
+    "reviewers": [
+      "Receiving435Correctness",
+      "Receiving435Quality"
+    ],
+    "verbatimReviews": [
+      "G9-SOURCE-ONLY-RECEIVING-PROVENANCE-435-FINAL-CORRECTNESS.json",
+      "G9-SOURCE-ONLY-RECEIVING-PROVENANCE-435-FINAL-QUALITY.json"
+    ],
+    "G1AndG4RepairBoundaries": "Both independent original matrices found no remaining blocking defect in current approved G1/G4 receiving boundaries; current entire source is NOT SHIP because G2 omission below.",
+    "G2Budget": "C5/B5 andQ4/cap4 exhausted; no additional repair/review or publication inferred. All othercaps/effort0 unchanged.",
+    "comparisonAndWholeWish": "Original108+18 unchanged/incomplete/confounded/unknown; wholeWishFIX-FIRST for current source defect plus preservation/comparison/remote BLOCKED prerequisites."
+  },
+  "actualNewG2TerminalBlocker": {
+    "anchor": "mikro/src/rlm.ts:752–758 setsusageCompletefalse;799–800 finalize forwards;1253–1281 direct emptyAbort buildResult omits. Compiled counterpart same; Legacy145–155 false-only; MCP772–797 formatsmissingflag complete; actual scripts/mikro/call.ts parseFooter83–103 accepts numeric receipt.",
+    "trigger": "One real child HTTP400 without usage, then3genuinelyempty stop root responses with zerooutputtokens, withinmaxIterations5.",
+    "impact": "Failure staysisErrortrue; known44in7out subtotal and rounded$0.0001 presented as complete bill even child totals unknown. No lost/double known usage allegation.",
+    "source": "import assert from 'node:assert/strict';\nimport { mkdtemp, rm } from 'node:fs/promises';\nimport { createServer } from 'node:http';\nimport { join } from 'node:path';\nimport { loadConfig } from './history-only-reword-6qjyzwas/tree/mikro/dist/src/config.js';\nimport { parseCustomProviders } from './history-only-reword-6qjyzwas/tree/mikro/dist/src/custom-providers.js';\nimport { LegacyMikroBackend } from './history-only-reword-6qjyzwas/tree/mikro/dist/src/mcp/backends/legacy.js';\nimport { runTurn, sessionResult } from './history-only-reword-6qjyzwas/tree/mikro/dist/src/mcp/server.js';\nconst parent = '/home/genie/.local/share/mikro-engine-split/experiments-g8/final-local-smokes';\nasync function run(childError) {\n  const root = await mkdtemp(join(parent, 'child-empty-terminal-'));\n  let requests = 0;\n  const server = createServer(async (request, response) => {\n    for await (const _chunk of request) {}\n    const index = requests++;\n    if (index > 4) { response.writeHead(400); response.end('unexpected extra request'); return; }\n    if (index === 1 && childError) {\n      response.writeHead(400, { 'Content-Type': 'application/json' });\n      response.end(JSON.stringify({ error: { message: 'local child rejected; no usage packet' } }));\n      return;\n    }\n    const content = index === 0 ? '```repl\\nchild = llm_query(\"local child prompt\")\\n```' : index === 1 ? 'known child answer' : '';\n    response.writeHead(200, { 'Content-Type': 'text/event-stream' });\n    response.end(`data: ${JSON.stringify({ id: `child-empty-${index}`, object: 'chat.completion.chunk', model: 'control', choices: [{ index: 0, delta: { role: 'assistant', content }, finish_reason: 'stop' }], usage: { prompt_tokens: 11, completion_tokens: index < 2 ? 7 : 0, total_tokens: index < 2 ? 18 : 11 } })}\\n\\ndata: [DONE]\\n\\n`);\n  });\n  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));\n  process.env.CHILD_EMPTY_TERMINAL_KEY = 'local-fixture-only';\n  try {\n    const base = await loadConfig(root);\n    const config = { ...base, system: null, criteria: null, tools: [], toolsLevel: 'core', validate: null, output: { schema: null }, budget: { maxCost: null, maxTokens: null, maxDepth: 0 }, cache: { ...base.cache, enabled: false }, storage: { ...base.storage, enabled: 'never' }, gemini: { ...base.gemini, thinkingLevel: null }, model: { provider: 'child-empty-fixture', model: 'control', providers: parseCustomProviders({ 'child-empty-fixture': { 'base-url': `http://127.0.0.1:${server.address().port}/v1`, 'api-key-env': 'CHILD_EMPTY_TERMINAL_KEY', models: { control: { cost: { input: 1, output: 2 } } } } }, 'local terminal coverage fixture') } };\n    const outcome = await runTurn(new LegacyMikroBackend(), undefined, config, 'child-empty-fixture', 'Run the bounded child experiment', 'sess_child_empty', undefined, root, undefined, 5);\n    const mcp = sessionResult(outcome.text, 'sess_child_empty', outcome.failed);\n    const observedLine = outcome.text.split('\\n').find((line) => line.startsWith('observed_usage: '));\n    return { childError, requests, outcome, isError: mcp.isError === true, structuredContent: mcp.structuredContent, observedUsage: observedLine ? JSON.parse(observedLine.slice('observed_usage: '.length)) : null };\n  } finally {\n    delete process.env.CHILD_EMPTY_TERMINAL_KEY;\n    server.closeAllConnections();\n    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));\n    await rm(root, { recursive: true, force: true });\n  }\n}\nconst completeControl = await run(false);\nconst unknownChildReceipt = await run(true);\nconsole.log(JSON.stringify({ completeControl, unknownChildReceipt, externalModelCalls: 0, localProviderRequests: completeControl.requests + unknownChildReceipt.requests, jevCalls: 0 }));\nfor (const result of [completeControl, unknownChildReceipt]) {\n  assert.equal(result.requests, 5, 'one child and four root calls, no outside-cap forced completion');\n  assert.equal(result.isError, true, 'three empty replies remain a truthful terminal failure');\n  assert.match(result.outcome.answer, /3 consecutive empty LLM responses/);\n}\nassert.equal(completeControl.observedUsage, null, 'complete observed control may keep the existing numeric footer');\nassert.equal(unknownChildReceipt.observedUsage?.subtotal.inputTokens, 44, 'retain each known root input receipt once');\nassert.equal(unknownChildReceipt.observedUsage?.subtotal.outputTokens, 7, 'retain known root output; genuinely empty calls reported zero output');\nassert.ok(Math.abs((unknownChildReceipt.observedUsage?.subtotal.totalCost ?? NaN) - 0.000058) < 1e-12, 'known subtotal is not a complete bill');\nassert.equal(unknownChildReceipt.observedUsage?.coverage, 'partial', 'missing child usage must survive the three-empty-response terminal return');\nassert.equal(unknownChildReceipt.observedUsage?.totals, null, 'unreported child totals stay unknown');\n",
+    "actualCompiledPythonRlmMcpRun": {
+      "command": [
+        "node",
+        "/home/genie/.local/share/mikro-engine-split/experiments-g8/final-local-smokes/receiving435-child-empty-terminal.mjs"
+      ],
+      "cwd": "/home/genie/.local/share/mikro-engine-split/experiments-g8/final-local-smokes",
+      "exitCode": 1,
+      "stdout": "{\"completeControl\":{\"childError\":false,\"requests\":5,\"outcome\":{\"answer\":\"Error: aborted after 3 consecutive empty LLM responses. Context may exceed API token limits.\",\"text\":\"Error: aborted after 3 consecutive empty LLM responses. Context may exceed API token limits.\\n\\n---\\nmikro · child-empty-fixture · child-empty-fixture/control · 4 iterations · 55 in / 14 out · $0.0001 · 0.3s · budget hit: empty_responses · session sess_child_empty\",\"failed\":true},\"isError\":true,\"structuredContent\":{\"answer\":\"Error: aborted after 3 consecutive empty LLM responses. Context may exceed API token limits.\\n\\n---\\nmikro · child-empty-fixture · child-empty-fixture/control · 4 iterations · 55 in / 14 out · $0.0001 · 0.3s · budget hit: empty_responses · session sess_child_empty\",\"session_id\":\"sess_child_empty\"},\"observedUsage\":null},\"unknownChildReceipt\":{\"childError\":true,\"requests\":5,\"outcome\":{\"answer\":\"Error: aborted after 3 consecutive empty LLM responses. Context may exceed API token limits.\",\"text\":\"Error: aborted after 3 consecutive empty LLM responses. Context may exceed API token limits.\\n\\n---\\nmikro · child-empty-fixture · child-empty-fixture/control · 4 iterations · 44 in / 7 out · $0.0001 · 0.1s · budget hit: empty_responses · session sess_child_empty\",\"failed\":true},\"isError\":true,\"structuredContent\":{\"answer\":\"Error: aborted after 3 consecutive empty LLM responses. Context may exceed API token limits.\\n\\n---\\nmikro · child-empty-fixture · child-empty-fixture/control · 4 iterations · 44 in / 7 out · $0.0001 · 0.1s · budget hit: empty_responses · session sess_child_empty\",\"session_id\":\"sess_child_empty\"},\"observedUsage\":null},\"externalModelCalls\":0,\"localProviderRequests\":10,\"jevCalls\":0}\n",
+      "stderr": "mikro [iter 1]: WARNING — LLM returned empty response. Possible context size limit.\nmikro [iter 2]: WARNING — LLM returned empty response. Possible context size limit.\nmikro [iter 3]: WARNING — LLM returned empty response. Possible context size limit.\nmikro: 3 consecutive empty LLM responses — aborting. Context may exceed API limits.\nmikro [iter 1]: WARNING — LLM returned empty response. Possible context size limit.\nmikro [iter 2]: WARNING — LLM returned empty response. Possible context size limit.\nmikro [iter 3]: WARNING — LLM returned empty response. Possible context size limit.\nmikro: 3 consecutive empty LLM responses — aborting. Context may exceed API limits.\nnode:internal/modules/run_main:107\n    triggerUncaughtException(\n    ^\n\nAssertionError [ERR_ASSERTION]: retain each known root input receipt once\n\nundefined !== 44\n\n    at file:///home/genie/.local/share/mikro-engine-split/experiments-g8/final-local-smokes/receiving435-child-empty-terminal.mjs:51:8 {\n  generatedMessage: false,\n  code: 'ERR_ASSERTION',\n  actual: undefined,\n  expected: 44,\n  operator: 'strictEqual',\n  diff: 'simple'\n}\n\nNode.js v26.7.0\n",
+      "seconds": 2.272175676189363
+    },
+    "observed": {
+      "completeControl": {
+        "childError": false,
+        "requests": 5,
+        "outcome": {
+          "answer": "Error: aborted after 3 consecutive empty LLM responses. Context may exceed API token limits.",
+          "text": "Error: aborted after 3 consecutive empty LLM responses. Context may exceed API token limits.\n\n---\nmikro · child-empty-fixture · child-empty-fixture/control · 4 iterations · 55 in / 14 out · $0.0001 · 0.3s · budget hit: empty_responses · session sess_child_empty",
+          "failed": true
+        },
+        "isError": true,
+        "structuredContent": {
+          "answer": "Error: aborted after 3 consecutive empty LLM responses. Context may exceed API token limits.\n\n---\nmikro · child-empty-fixture · child-empty-fixture/control · 4 iterations · 55 in / 14 out · $0.0001 · 0.3s · budget hit: empty_responses · session sess_child_empty",
+          "session_id": "sess_child_empty"
+        },
+        "observedUsage": null
+      },
+      "unknownChildReceipt": {
+        "childError": true,
+        "requests": 5,
+        "outcome": {
+          "answer": "Error: aborted after 3 consecutive empty LLM responses. Context may exceed API token limits.",
+          "text": "Error: aborted after 3 consecutive empty LLM responses. Context may exceed API token limits.\n\n---\nmikro · child-empty-fixture · child-empty-fixture/control · 4 iterations · 44 in / 7 out · $0.0001 · 0.1s · budget hit: empty_responses · session sess_child_empty",
+          "failed": true
+        },
+        "isError": true,
+        "structuredContent": {
+          "answer": "Error: aborted after 3 consecutive empty LLM responses. Context may exceed API token limits.\n\n---\nmikro · child-empty-fixture · child-empty-fixture/control · 4 iterations · 44 in / 7 out · $0.0001 · 0.1s · budget hit: empty_responses · session sess_child_empty",
+          "session_id": "sess_child_empty"
+        },
+        "observedUsage": null
+      },
+      "externalModelCalls": 0,
+      "localProviderRequests": 10,
+      "jevCalls": 0
+    },
+    "actualExistingHostParser": {
+      "command": [
+        "bun",
+        "--eval",
+        "import { parseFooter } from \"/home/genie/.local/share/mikro-engine-split/experiments-g8/final-local-smokes/history-only-reword-6qjyzwas/tree/scripts/mikro/call.ts\"; const rows={\"completeControl\": \"Error: aborted after 3 consecutive empty LLM responses. Context may exceed API token limits.\\n\\n---\\nmikro \\u00b7 child-empty-fixture \\u00b7 child-empty-fixture/control \\u00b7 4 iterations \\u00b7 55 in / 14 out \\u00b7 $0.0001 \\u00b7 0.3s \\u00b7 budget hit: empty_responses \\u00b7 session sess_child_empty\", \"unknownChildReceipt\": \"Error: aborted after 3 consecutive empty LLM responses. Context may exceed API token limits.\\n\\n---\\nmikro \\u00b7 child-empty-fixture \\u00b7 child-empty-fixture/control \\u00b7 4 iterations \\u00b7 44 in / 7 out \\u00b7 $0.0001 \\u00b7 0.1s \\u00b7 budget hit: empty_responses \\u00b7 session sess_child_empty\"}; console.log(JSON.stringify(Object.fromEntries(Object.entries(rows).map(([name,text])=>[name,parseFooter(text)]))));"
+      ],
+      "cwd": "/home/genie/.local/share/mikro-engine-split/experiments-g8/final-local-smokes/history-only-reword-6qjyzwas/tree",
+      "exitCode": 0,
+      "stdout": "{\"completeControl\":{\"label\":\"child-empty-fixture\",\"model\":\"child-empty-fixture/control\",\"iterations\":4,\"tokensIn\":55,\"tokensOut\":14,\"cost\":0.0001,\"seconds\":0.3,\"budgetHit\":\"empty_responses\",\"validationFailed\":false,\"sessionId\":\"sess_child_empty\"},\"unknownChildReceipt\":{\"label\":\"child-empty-fixture\",\"model\":\"child-empty-fixture/control\",\"iterations\":4,\"tokensIn\":44,\"tokensOut\":7,\"cost\":0.0001,\"seconds\":0.1,\"budgetHit\":\"empty_responses\",\"validationFailed\":false,\"sessionId\":\"sess_child_empty\"}}\n",
+      "stderr": "",
+      "seconds": 0.0965496338903904
+    },
+    "hostParsedReceipts": {
+      "completeControl": {
+        "label": "child-empty-fixture",
+        "model": "child-empty-fixture/control",
+        "iterations": 4,
+        "tokensIn": 55,
+        "tokensOut": 14,
+        "cost": 0.0001,
+        "seconds": 0.3,
+        "budgetHit": "empty_responses",
+        "validationFailed": false,
+        "sessionId": "sess_child_empty"
+      },
+      "unknownChildReceipt": {
+        "label": "child-empty-fixture",
+        "model": "child-empty-fixture/control",
+        "iterations": 4,
+        "tokensIn": 44,
+        "tokensOut": 7,
+        "cost": 0.0001,
+        "seconds": 0.1,
+        "budgetHit": "empty_responses",
+        "validationFailed": false,
+        "sessionId": "sess_child_empty"
+      }
+    },
+    "localProviderRequests": 10,
+    "externalModelCalls": 0,
+    "jevCalls": 0,
+    "negativeControl": "Complete observed child +same3emptyroot abort alsoisErrortrue;55in14out complete bill remainsvalid. Both5requestsonechild4root, nooutside-cap completion.",
+    "neededFocusedChange": "Carry existing run-local incomplete-usage marker through this direct terminal result, owning real receiving regression; no unrelatedG3 timeout/finalizationbudget/retry changes.",
+    "diagnosticRemovedAfterPersistence": true
+  },
+  "liveBaseAdvanceAndMaterialPolicyConflict": {
+    "actualObservedDev": "fa8469e0e1beb953823bb2619ed0a39fe581dba7",
+    "previousObservedDev": "27739552066c18cde858d9bd2f8f9b1e041220c4",
+    "actualCompare": {
+      "command": [
+        "gh",
+        "api",
+        "repos/automagik-dev/genie/compare/27739552066c18cde858d9bd2f8f9b1e041220c4...fa8469e0e1beb953823bb2619ed0a39fe581dba7",
+        "--jq",
+        "{status,ahead_by,behind_by,total_commits,files:[.files[]|{filename,status,changes}]}"
+      ],
+      "cwd": "/home/genie/.local/share/mikro-engine-split/experiments-g8/final-local-smokes/history-only-reword-6qjyzwas/tree",
+      "exitCode": 0,
+      "stdout": "{\"ahead_by\":20,\"behind_by\":0,\"files\":[{\"changes\":2,\"filename\":\".claude/rules/skills-installer.md\",\"status\":\"modified\"},{\"changes\":602,\"filename\":\".genie/wishes/genie-bench/WISH.md\",\"status\":\"added\"},{\"changes\":3,\"filename\":\".github/workflows/ci.yml\",\"status\":\"modified\"},{\"changes\":2,\"filename\":\"CLAUDE.md\",\"status\":\"modified\"},{\"changes\":2,\"filename\":\"package.json\",\"status\":\"modified\"},{\"changes\":124,\"filename\":\"scripts/legacy-skills-catalog.test.ts\",\"status\":\"modified\"},{\"changes\":84,\"filename\":\"scripts/legacy-skills-catalog.ts\",\"status\":\"modified\"},{\"changes\":4,\"filename\":\"skills/genie/SKILL.md\",\"status\":\"modified\"},{\"changes\":4,\"filename\":\"skills/work/SKILL.md\",\"status\":\"modified\"},{\"changes\":114,\"filename\":\"src/genie-commands/doctor.test.ts\",\"status\":\"modified\"},{\"changes\":100,\"filename\":\"src/genie-commands/doctor.ts\",\"status\":\"modified\"},{\"changes\":16,\"filename\":\"src/lib/metrics-export.test.ts\",\"status\":\"modified\"},{\"changes\":6,\"filename\":\"src/lib/metrics-usage.ts\",\"status\":\"modified\"}],\"status\":\"ahead\",\"total_commits\":20}\n",
+      "stderr": "",
+      "seconds": 1.0770580740645528
+    },
+    "observed": {
+      "ahead_by": 20,
+      "behind_by": 0,
+      "files": [
+        {
+          "changes": 2,
+          "filename": ".claude/rules/skills-installer.md",
+          "status": "modified"
+        },
+        {
+          "changes": 602,
+          "filename": ".genie/wishes/genie-bench/WISH.md",
+          "status": "added"
+        },
+        {
+          "changes": 3,
+          "filename": ".github/workflows/ci.yml",
+          "status": "modified"
+        },
+        {
+          "changes": 2,
+          "filename": "CLAUDE.md",
+          "status": "modified"
+        },
+        {
+          "changes": 2,
+          "filename": "package.json",
+          "status": "modified"
+        },
+        {
+          "changes": 124,
+          "filename": "scripts/legacy-skills-catalog.test.ts",
+          "status": "modified"
+        },
+        {
+          "changes": 84,
+          "filename": "scripts/legacy-skills-catalog.ts",
+          "status": "modified"
+        },
+        {
+          "changes": 4,
+          "filename": "skills/genie/SKILL.md",
+          "status": "modified"
+        },
+        {
+          "changes": 4,
+          "filename": "skills/work/SKILL.md",
+          "status": "modified"
+        },
+        {
+          "changes": 114,
+          "filename": "src/genie-commands/doctor.test.ts",
+          "status": "modified"
+        },
+        {
+          "changes": 100,
+          "filename": "src/genie-commands/doctor.ts",
+          "status": "modified"
+        },
+        {
+          "changes": 16,
+          "filename": "src/lib/metrics-export.test.ts",
+          "status": "modified"
+        },
+        {
+          "changes": 6,
+          "filename": "src/lib/metrics-usage.ts",
+          "status": "modified"
+        }
+      ],
+      "status": "ahead",
+      "total_commits": 20
+    },
+    "exactUpstreamPatch": "diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml\nindex 0800bd105..697e8f9a7 100644\n--- a/.github/workflows/ci.yml\n+++ b/.github/workflows/ci.yml\n@@ -79,7 +79,8 @@ jobs:\n           submodules: recursive\n           persist-credentials: false\n           # FULL history, for the legacy-skills-catalog step below: that\n-          # generator walks `git log --all` over every `skills/*/SKILL.md` blob\n+          # generator walks the shipped refs (HEAD, tags, origin/main, origin/dev,\n+          # refs/archive/*) over every `skills/*/SKILL.md` blob\n           # genie ever committed. On the default depth-1 checkout it would see\n           # almost no history and regenerate an incomplete catalog — the exact\n           # failure the script's header warns about and why it is not in\ndiff --git a/package.json b/package.json\nindex 034361914..ea2920928 100644\n--- a/package.json\n+++ b/package.json\n@@ -1,6 +1,6 @@\n {\n   \"name\": \"@automagik/genie\",\n-  \"version\": \"6.261007.1\",\n+  \"version\": \"6.261009.1\",\n   \"description\": \"Collaborative terminal toolkit for human + AI workflows. NOTE: npm distribution discontinued 2026-05-09 — install via `curl -fsSL https://raw.githubusercontent.com/automagik-dev/genie/main/install.sh | bash` (cosign + SLSA verified). See https://docs.automagik.dev/genie/security\",\n   \"license\": \"MIT\",\n   \"type\": \"module\",\ndiff --git a/scripts/legacy-skills-catalog.test.ts b/scripts/legacy-skills-catalog.test.ts\nindex 4373d3fa1..2f58e18ea 100644\n--- a/scripts/legacy-skills-catalog.test.ts\n+++ b/scripts/legacy-skills-catalog.test.ts\n@@ -5,7 +5,9 @@ import { tmpdir } from 'node:os';\n import { join } from 'node:path';\n import {\n   CATALOG_CHECK_GAP,\n+  collectCatalog,\n   evaluateCatalogCheck,\n+  historyRevisions,\n   mergeCatalog,\n   recordedCatalog,\n   render,\n@@ -153,7 +155,7 @@ describe('--check is an additive-union SUPERSET check', () => {\n });\n \n /**\n- * The vacuous-green case: on a shallow clone `git log --all` sees nothing, the\n+ * The vacuous-green case: on a shallow clone the history walk sees nothing, the\n  * collected catalog is empty, and the additive union leaves the committed file\n  * unchanged — so `--check` would pass having proven nothing at all. It refuses\n  * instead, BEFORE any history walk or biome call. `--write` is untouched.\n@@ -220,6 +222,126 @@ describe('--check refuses a shallow clone', () => {\n   });\n });\n \n+/**\n+ * History is read from SHIPPED refs only. `git log --all` also walked every unmerged remote\n+ * branch, so a pull request that added a skill turned `--check` red on every other branch\n+ * (#3139's two new skills did exactly that), and a `--write` would have catalogued a skill\n+ * nobody ever installed as a retired one.\n+ */\n+describe('history is read from shipped refs, never from an unmerged branch', () => {\n+  const scratch: string[] = [];\n+  afterEach(() => {\n+    for (const dir of scratch.splice(0)) rmSync(dir, { recursive: true, force: true });\n+  });\n+\n+  function git(cwd: string, ...args: string[]): string {\n+    return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });\n+  }\n+\n+  function commitSkill(dir: string, name: string): void {\n+    mkdirSync(join(dir, 'skills', name), { recursive: true });\n+    writeFileSync(\n+      join(dir, 'skills', name, 'SKILL.md'),\n+      `---\\nname: ${name}\\ndescription: \"The ${name} skill.\"\\n---\\n`,\n+    );\n+    git(dir, 'add', '-A');\n+    git(dir, 'commit', '-q', '-m', `add ${name}`);\n+  }\n+\n+  /** A commit on top of `base` that adds one skill, reachable ONLY through `ref`. */\n+  function sideRef(dir: string, base: string, ref: string, skill: string): void {\n+    git(dir, 'checkout', '-q', '--detach', base);\n+    commitSkill(dir, skill);\n+    git(dir, 'update-ref', ref, 'HEAD');\n+    git(dir, 'checkout', '-q', 'main');\n+  }\n+\n+  /**\n+   * `kept` ships today; `old` shipped in the tagged release v1 and was removed afterwards;\n+   * `new` lives only on the unmerged `origin/feature`. No `origin/main`, no `origin/dev` and no\n+   * `refs/archive/*` exist yet, so the base fixture is also the absent-ref case.\n+   */\n+  function seedRepo(): { dir: string; base: string } {\n+    const dir = mkdtempSync(join(tmpdir(), 'legacy-catalog-refs-'));\n+    scratch.push(dir);\n+    mkdirSync(join(dir, 'scripts'), { recursive: true });\n+    writeFileSync(\n+      join(dir, 'scripts', 'legacy-skills-catalog.ts'),\n+      readFileSync(join(ROOT, 'scripts', 'legacy-skills-catalog.ts'), 'utf8'),\n+    );\n+    git(dir, 'init', '-q', '-b', 'main');\n+    git(dir, 'config', 'user.email', 'test@example.com');\n+    git(dir, 'config', 'user.name', 'Test');\n+    git(dir, 'config', 'commit.gpgsign', 'false');\n+    commitSkill(dir, 'kept');\n+    commitSkill(dir, 'old');\n+    git(dir, 'tag', 'v1');\n+    // Rewrite main so `old` is reachable through the TAG alone, never through HEAD.\n+    git(dir, 'reset', '-q', '--hard', 'HEAD~1');\n+    writeFileSync(join(dir, 'README.md'), 'after the release\\n');\n+    git(dir, 'add', '-A');\n+    git(dir, 'commit', '-q', '-m', 'move on');\n+    const base = git(dir, 'rev-parse', 'HEAD').trim();\n+    sideRef(dir, base, 'refs/remotes/origin/feature', 'new');\n+    return { dir, base };\n+  }\n+\n+  /** The `--check` verdict for a committed catalog that carries nothing. */\n+  function verdictAgainstEmptyCatalog(dir: string) {\n+    const merged = mergeCatalog(\n+      collectCatalog(dir),\n+      { names: [], descriptions: [] },\n+      new Set(['kept']),\n+      new Set(['The kept skill.']),\n+    );\n+    return evaluateCatalogCheck('// committed', '// regenerated', {\n+      merged,\n+      recorded: { names: [], descriptions: [] },\n+    });\n+  }\n+\n+  test('a tagged-then-removed skill is reported; a skill on an unmerged remote branch is not', () => {\n+    const { dir } = seedRepo();\n+\n+    const verdict = verdictAgainstEmptyCatalog(dir);\n+    expect(verdict.stale).toBe(true);\n+    expect(verdict.missingNames).toEqual(['old']);\n+    expect(verdict.missingDescriptions).toEqual(['The old skill.']);\n+    expect(verdict.lines.join('\\n')).toContain('1 name(s) and 1 description(s)');\n+    expect(verdict.lines.join('\\n')).toContain('(old)');\n+  });\n+\n+  test('the CLI derives the same set: the generator run inside that repo names old and never new', () => {\n+    const { dir } = seedRepo();\n+\n+    const run = spawnSync('bun', [join(dir, 'scripts', 'legacy-skills-catalog.ts')], { encoding: 'utf8' });\n+    expect(run.status).toBe(0);\n+    expect(run.stdout).toContain('LEGACY_SKILL_NAMES: readonly string[] = [\"old\"]');\n+    expect(run.stdout).toContain('\"The old skill.\"');\n+    expect(run.stdout).not.toContain('The new skill.');\n+  });\n+\n+  test('origin/main, origin/dev and refs/archive/* join the walk when present, and only those', () => {\n+    const { dir, base } = seedRepo();\n+    expect(historyRevisions(dir)).toEqual(['HEAD', '--tags', '--glob=refs/archive/*']);\n+\n+    sideRef(dir, base, 'refs/remotes/origin/main', 'on-main');\n+    sideRef(dir, base, 'refs/remotes/origin/dev', 'on-dev');\n+    sideRef(dir, base, 'refs/archive/shelved', 'archived');\n+    // A branch whose NAME merely starts like a shipped one is still unmerged work.\n+    sideRef(dir, base, 'refs/remotes/origin/dev-experiment', 'lookalike');\n+\n+    expect(historyRevisions(dir)).toEqual([\n+      'HEAD',\n+      '--tags',\n+      'refs/remotes/origin/dev',\n+      'refs/remotes/origin/main',\n+      '--glob=refs/archive/*',\n+    ]);\n+    expect([...collectCatalog(dir).keys()].sort()).toEqual(['archived', 'kept', 'old', 'on-dev', 'on-main']);\n+  });\n+});\n+\n describe('recordedCatalog', () => {\n   test('reads the committed catalog back, so a regeneration can only ever add to it', async () => {\n     const recorded = await recordedCatalog();\ndiff --git a/scripts/legacy-skills-catalog.ts b/scripts/legacy-skills-catalog.ts\nindex 4618e9162..68c1e9067 100644\n--- a/scripts/legacy-skills-catalog.ts\n+++ b/scripts/legacy-skills-catalog.ts\n@@ -4,17 +4,17 @@\n  *\n  * The catalog is how `genie update` and `genie doctor` recognise a skill\n  * directory genie shipped BEFORE the install record existed: every skill name\n- * that ever lived under a `skills/` directory on any ref and is no longer\n- * delivered, plus every frontmatter `description` any genie skill ever shipped\n+ * that ever lived under a `skills/` directory on a SHIPPED ref\n+ * ({@link historyRevisions}) and is no longer delivered, plus every frontmatter `description` any genie skill ever shipped\n  * under any name that NO currently shipped skill carries. A retired description\n  * under a genie name proves a directory is genie's own pre-record install — a\n  * third party does not copy genie's description verbatim, and a user's fork of a\n  * CURRENT skill keeps a current description, which is deliberately absent here.\n  *\n- * Run from a FULL clone (`git log --all` needs the whole history; a shallow\n- * checkout would silently produce an incomplete catalog, which is why this is\n- * not part of `bun run check` — `bun run check` has no say over checkout\n- * depth):\n+ * Run from a FULL clone (the walk over the shipped refs needs their whole\n+ * history; a shallow checkout would silently produce an incomplete catalog,\n+ * which is why this is not part of `bun run check` — `bun run check` has no say\n+ * over checkout depth):\n  *\n  *   bun scripts/legacy-skills-catalog.ts --write\n  *   bun scripts/legacy-skills-catalog.ts --check   # exits 1 when the file is stale\n@@ -34,8 +34,45 @@ const ROOT = join(import.meta.dir, '..');\n const OUTPUT = join(ROOT, 'src', 'lib', 'legacy-skills-catalog.ts');\n const MARKER_DIRS = ['.genie-codex-fallback-retirement'];\n \n+function gitIn(cwd: string, ...args: string[]): string {\n+  return execFileSync('git', args, { cwd, encoding: 'utf8', maxBuffer: 1 << 28 });\n+}\n+\n function git(...args: string[]): string {\n-  return execFileSync('git', args, { cwd: ROOT, encoding: 'utf8', maxBuffer: 1 << 28 });\n+  return gitIn(ROOT, ...args);\n+}\n+\n+/** The two branches a release is cut from. Every other remote branch is unmerged work. */\n+const SHIPPED_REMOTE_BRANCHES = ['refs/remotes/origin/main', 'refs/remotes/origin/dev'];\n+\n+/**\n+ * The revisions history is read from — the refs that stand for SHIPPED or\n+ * archived history, never every branch the clone happens to hold:\n+ *\n+ *   HEAD                      the tree under check\n+ *   --tags                    every release\n+ *   origin/main, origin/dev   the release branches, each only when it exists\n+ *   --glob=refs/archive/*     archived work whose names the catalog already carries\n+ *\n+ * `git log --all` was the previous read, and `--all` includes every unmerged\n+ * remote branch: a pull request that ADDED a skill made `--check` report the\n+ * committed catalog stale on every OTHER branch, and a `--write` there would\n+ * have catalogued a skill that never shipped as a retired one. A skill that\n+ * only ever lived on an unmerged branch was never delivered, so nobody has it\n+ * installed and there is nothing for the catalog to recognise.\n+ *\n+ * The two remote branches are resolved with `for-each-ref` rather than passed\n+ * as `--remotes=origin/main`: a `--remotes`/`--glob` pattern with no wildcard\n+ * has `/*` appended by git, so that spelling matches `origin/main/*` and never\n+ * the branch itself (observed on git 2.55). `for-each-ref` prints nothing for\n+ * an absent ref, and `--tags` / `--glob` match nothing without error, so a\n+ * clone with no `origin`, no tags or no archive is not a failure.\n+ */\n+export function historyRevisions(root: string): string[] {\n+  const shippedBranches = gitIn(root, 'for-each-ref', '--format=%(refname)', ...SHIPPED_REMOTE_BRANCHES)\n+    .split('\\n')\n+    .filter((ref) => SHIPPED_REMOTE_BRANCHES.includes(ref));\n+  return ['HEAD', '--tags', ...shippedBranches, '--glob=refs/archive/*'];\n }\n \n function parseDescription(markdown: string): string | null {\n@@ -65,15 +102,26 @@ function currentSkillNames(): Set<string> {\n   );\n }\n \n-/** `{ name: Set<description> }` for every skill dir on any ref that is no longer shipped. */\n-function collectCatalog(): Map<string, Set<string>> {\n+/**\n+ * `{ name: Set<description> }` for every skill dir in the history of a shipped ref\n+ * ({@link historyRevisions}). `--write` and `--check` both read it, so they are one derivation.\n+ */\n+export function collectCatalog(root: string = ROOT): Map<string, Set<string>> {\n   const catalog = new Map<string, Set<string>>();\n-  const commits = git('log', '--all', '--pretty=format:%H', '--', 'skills/*/SKILL.md', '*/skills/*/SKILL.md')\n+  const commits = gitIn(\n+    root,\n+    'log',\n+    ...historyRevisions(root),\n+    '--pretty=format:%H',\n+    '--',\n+    'skills/*/SKILL.md',\n+    '*/skills/*/SKILL.md',\n+  )\n     .split('\\n')\n     .filter((line) => /^[0-9a-f]{40}$/.test(line));\n   const seenBlobs = new Set<string>();\n   for (const commit of commits) {\n-    const tree = git('ls-tree', '-r', commit).split('\\n');\n+    const tree = gitIn(root, 'ls-tree', '-r', commit).split('\\n');\n     for (const row of tree) {\n       // `(?:.*\\/)?` — a root-level `skills/<name>/SKILL.md` has no leading\n       // slash; anchoring on one silently skipped every skill genie ever shipped\n@@ -91,7 +139,7 @@ function collectCatalog(): Map<string, Set<string>> {\n       // `description:` at all — so the 2026-02 `gog` skill (which used `summary:`) could never be\n       // recognised on disk under any roster, while listing it would only widen the `unproven`\n       // reporting surface that already misfires on third-party products sharing a name.\n-      const description = parseDescription(git('cat-file', 'blob', blob));\n+      const description = parseDescription(gitIn(root, 'cat-file', 'blob', blob));\n       if (description === null) continue;\n       if (!catalog.has(name)) catalog.set(name, new Set());\n       (catalog.get(name) as Set<string>).add(description);\n@@ -117,9 +165,9 @@ function currentDescriptions(): Set<string> {\n }\n \n /**\n- * What the committed catalog already carries. `git log --all` sees only the refs THIS clone holds,\n- * so a description that lives on a branch another machine fetched would silently drop out of the\n- * catalog on the next regeneration — and the proof it backs would weaken with it. The catalog is\n+ * What the committed catalog already carries. The history walk sees only the shipped refs THIS clone\n+ * holds ({@link historyRevisions}), so a description that lives on a tag or an archived ref another\n+ * machine fetched would silently drop out of the catalog on the next regeneration — and the proof it backs would weaken with it. The catalog is\n  * therefore additive: a run unions what it can see with what is already recorded, and only the\n  * currently shipped names and descriptions are ever subtracted.\n  */\n@@ -197,7 +245,7 @@ export function render(\n  * a hand-added entry or a shallow checkout goes unnoticed.\n  */\n export const CATALOG_CHECK_GAP =\n-  \"legacy-skills-catalog: --check is an additive-union SUPERSET check: it proves the committed catalog carries everything THIS clone's history yields, never that it carries nothing more. An entry added by hand, or one retired on a ref this clone never fetched, is invisible to it — which is why it must run on a FULL clone (`fetch-depth: 0`), never a shallow checkout.\";\n+  \"legacy-skills-catalog: --check is an additive-union SUPERSET check: it proves the committed catalog carries everything THIS clone's shipped history yields (HEAD, every tag, origin/main, origin/dev and refs/archive/* — never an unmerged branch, whose skills were never delivered), never that it carries nothing more. An entry added by hand, or one retired on a ref this clone never fetched, is invisible to it — which is why it must run on a FULL clone (`fetch-depth: 0`), never a shallow checkout.\";\n \n export interface CatalogCheckVerdict {\n   /** True when the committed file differs from what a regeneration would write. */\n@@ -251,7 +299,7 @@ function formatted(source: string): string {\n }\n \n /**\n- * The one refusal `--check` owns. On a shallow clone `git log --all` sees\n+ * The one refusal `--check` owns. On a shallow clone the history walk sees\n  * (almost) nothing, so the collected catalog is empty, the additive union\n  * leaves the committed file unchanged, and the check passes having proven\n  * NOTHING — the exact vacuous green the CI `fetch-depth: 0` exists to prevent.\n@@ -259,7 +307,7 @@ function formatted(source: string): string {\n  * only ever adds, and the union protects the rest.\n  */\n export const SHALLOW_REFUSAL =\n-  'legacy-skills-catalog: refusing --check on a shallow clone — `git log --all` cannot see the history this catalog is derived from, so the additive union would pass vacuously; re-run on a FULL clone (`fetch-depth: 0`). `--write` is still allowed.';\n+  'legacy-skills-catalog: refusing --check on a shallow clone — the walk over the shipped refs cannot see the history this catalog is derived from, so the additive union would pass vacuously; re-run on a FULL clone (`fetch-depth: 0`). `--write` is still allowed.';\n \n function isShallowClone(): boolean {\n   try {\n",
+    "upstreamDeltaArtifact": "local://mikro-receiving435-live-base-catalog.patch",
+    "readOnlyHistoricalHeadMergeTree": {
+      "command": [
+        "git",
+        "merge-tree",
+        "--write-tree",
+        "--messages",
+        "40ddcadbe9ae5690bafae23f523179bf91a8e4eb",
+        "fa8469e0e1beb953823bb2619ed0a39fe581dba7"
+      ],
+      "cwd": "/home/genie/.local/share/mikro-engine-split/experiments-g8/final-local-smokes/history-only-reword-6qjyzwas/tree",
+      "exitCode": 1,
+      "stdout": "e8dd4830ed553a8619234099ef2a7ca5cda41dc1\n100644 4618e9162d4838b568d886d276f56c9d0f1ce5e8 1\tscripts/legacy-skills-catalog.ts\n100644 a5cd081831a0422782395467e64f1ab3d52f5b6c 2\tscripts/legacy-skills-catalog.ts\n100644 68c1e90675af0ffd1e2af9dd6751c064f42bd2aa 3\tscripts/legacy-skills-catalog.ts\n\nAuto-merging README.md\nAuto-merging knip.json\nAuto-merging scripts/legacy-skills-catalog.test.ts\nAuto-merging scripts/legacy-skills-catalog.ts\nCONFLICT (content): Merge conflict in scripts/legacy-skills-catalog.ts\n",
+      "stderr": "",
+      "seconds": 0.037769577000290155
+    },
+    "preflightLimitation": "Pre-repair historicalHEAD40dd, not current uncommitted source mergeability proof. No HEAD/index/source mutation. Real content conflict in catalog; current source/remote readiness pending.",
+    "materialChoice": "Owner approved all-ref Genie shared/archive retirement authority +exactcommit-bound source-role proof; newdev deliberately restricts retirement scan to HEAD/tags/originmain/origindev/refsarchive and excludes unmerged branches (upstream regression cites#3139). These are distinct authority/eligibility policies; cannot silently accept/revert incoming approved behavior or waive retainedarchiveproof. Requires explicit owner old→newdecision and integration budget before source changes.",
+    "proposedConservativeResolution": "Keep exact source/Genie ownership trust proof, adopt shipped default retirement roots, permit exact trustedGenre archive proofs to optin legitimate archive roots beyonddefaultset, so unmerged unproved PRskill cannot become retirementauthority. This changesapprovedall-ref default and therefore mustwait owner.",
+    "noIntegrationOrPublication": true
+  }
+}

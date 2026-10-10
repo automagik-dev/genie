@@ -1,0 +1,23 @@
+{
+  "sourceCandidateManifestSha256": "7b98ccbad1fe6bc3f6f1205939865c5188231e10ab15a0403ed5d6833430302b",
+  "job": "bg_129",
+  "exitCode": 0,
+  "commands": [
+    "npm run check",
+    "npm run build",
+    "npm test"
+  ],
+  "cwd": "/home/genie/.local/share/mikro-engine-split/experiments-g8/final-local-smokes/history-only-reword-6qjyzwas/tree/mikro",
+  "artifact": "artifact://1081",
+  "pass": 1228,
+  "fail": 0,
+  "suites": 218,
+  "seconds": 290.09,
+  "generatedArtifactContinuity": {
+    "previousManifestSha256": "b11593ce864e1f77b645fccd991068d17aab6535bda0e79a41fcaac972ab2da6",
+    "unchangedRecords": 1526,
+    "unchangedGeneratedDistRecords": 276,
+    "changedAddedRemoved": 0
+  },
+  "attribution": "Fresh complete SDK gate completed during catalog-only repair. Every Mikro source/config/lock/test/generated-dist record exactly matches the previous candidate and the renewed final-source manifest."
+}

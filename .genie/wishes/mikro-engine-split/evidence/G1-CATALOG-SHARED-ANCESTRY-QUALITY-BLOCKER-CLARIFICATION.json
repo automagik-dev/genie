@@ -1,0 +1,13 @@
+{
+  "error": "schema_violation",
+  "message": "sourceVerdict: is required",
+  "missingRequired": [
+    "sourceVerdict",
+    "wholeWishVerdict",
+    "candidateSha256",
+    "criteriaSha256",
+    "criteria",
+    "findings"
+  ],
+  "data": "{\"explanation\":\"CLARIFICATION OF FINAL-QUALITY-FIX-FIRST: There is ONE confirmed source finding, not two. The two empty objects in the findings array do not represent two independently identified defects; please discard those unusable objects and preserve this exact finding narrative. Title: Preserve shared Genie ancestry across all catalog imports. Priority: P2 / blocking Q03 contract violation; confidence 0.93. Anchor: scripts/legacy-skills-catalog.ts:75-83 (the introduced importedMikroCommits\u2026"
+}

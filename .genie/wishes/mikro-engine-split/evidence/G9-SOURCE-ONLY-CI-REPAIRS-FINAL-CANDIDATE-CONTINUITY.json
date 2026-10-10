@@ -1,0 +1,34 @@
+{
+  "currentCandidateManifestSha256": "b11593ce864e1f77b645fccd991068d17aab6535bda0e79a41fcaac972ab2da6",
+  "currentCandidateRecords": 2440,
+  "priorAuthorizedCandidateManifestSha256": "7b2accb60afb63f1be7870c50e16de320a3d7ea10a662d6cedc8003c7b6b32f4",
+  "allMikroByteRecordsUnchanged": true,
+  "onlySourceDeltaFromPriorAuthorizedCandidate": [
+    "scripts/release-docs.test.ts: removal of obsolete implementation-copy assertions",
+    "WISH: explicit path declaration"
+  ],
+  "declaredDeletedPathsActuallyAbsent": [
+    "mikro/dist/tests/llm-temperature.test.d.ts",
+    "mikro/dist/tests/llm-temperature.test.js",
+    "mikro/tests/llm-temperature.test.ts",
+    "scripts/wish-workflow-mikro.test.ts"
+  ],
+  "actualGitlinkIndexReadback": {
+    "argv": [
+      "git",
+      "ls-files",
+      "--stage",
+      "--",
+      ".docs-vendor"
+    ],
+    "cwd": "/home/genie/.local/share/mikro-engine-split/experiments-g8/final-local-smokes/history-only-reword-6qjyzwas/tree",
+    "exitCode": 0,
+    "seconds": 0.004959341138601303,
+    "stdout": "160000 1275fcea5b1eb5eb8b7118170c24ebcb8f825a03 0\t.docs-vendor\n",
+    "stderr": ""
+  },
+  "sourceOnly": true,
+  "noPaidRefreezeOrRegrade": true,
+  "all2440RecordsExactlyUnchangedAfterCurrentFullGateAndSmokes": true,
+  "wholeRootActualExit": 0
+}

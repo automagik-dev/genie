@@ -9,6 +9,7 @@ import {
   captureStatus,
   disableCapture,
   enableCapture,
+  isCanonicalRepoDb,
   isCaptureEnabled,
   metricsDir,
   recordLifecycleEvent,
@@ -172,5 +173,45 @@ describe('resolveRuntimeSession', () => {
       id: null,
       ambiguous: true,
     });
+  });
+});
+
+describe('only a per-repo database is captured (#3135)', () => {
+  test('the predicate: an absolute <root>/.genie/genie.db, wherever the repository lives', () => {
+    for (const yes of ['/a/.genie/genie.db', '/.genie/genie.db', '/tmp/fixture/repo/.genie/genie.db']) {
+      expect(isCanonicalRepoDb(yes)).toBe(true);
+    }
+    for (const no of [
+      '/a/genie.db',
+      '/a/.genie/other.db',
+      '/a/x.genie/genie.db',
+      '/a/.genie/sub/genie.db',
+      '/a/.genie/genie.db-wal',
+      '/var/tmp/sofia-agents/genie-task-AbCd/race.db',
+      // Relative: it names no repository without a cwd the ledger line does not carry.
+      '.genie/genie.db',
+      'genie.db',
+      ':memory:',
+      '',
+    ]) {
+      expect(isCanonicalRepoDb(no)).toBe(false);
+    }
+  });
+
+  test('an event of a test or scratch database writes no line and creates no ledger', () => {
+    enableCapture();
+    for (const db of [join(home, 'genie-task-x', 'race.db'), join(home, 'scratch', 'genie.db'), '']) {
+      recordLifecycleEvent({ ...EVENT, db }, NO_RUNTIME);
+    }
+    expect(existsSync(captureLedgerPath())).toBe(false);
+  });
+
+  test('a fixture repository under a temp directory is canonical: one line', () => {
+    enableCapture();
+    const db = join(home, 'repo', '.genie', 'genie.db');
+    recordLifecycleEvent({ ...EVENT, db }, NO_RUNTIME);
+    const lines = readFileSync(captureLedgerPath(), 'utf8').trim().split('\n');
+    expect(lines).toHaveLength(1);
+    expect(JSON.parse(lines[0] as string).db).toBe(db);
   });
 });

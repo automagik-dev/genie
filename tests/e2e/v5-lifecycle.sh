@@ -22,6 +22,11 @@
 
 set -euo pipefail
 
+# The lifecycle verbs below run under the ambient GENIE_HOME against a fixture repo whose
+# database IS a per-repo `.genie/genie.db`, so on a host that ran `genie metrics enable` they
+# would append this run's card events to the operator's real ledger. The env can only disable.
+export GENIE_METRICS=off
+
 # ----------------------------------------------------------------------------
 # Locate the repo + the CLI bundle. Resolve from this script's own location so
 # the harness can invoke it from anywhere.

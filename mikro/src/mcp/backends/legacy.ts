@@ -147,6 +147,7 @@ export class LegacyMikroBackend implements RuntimeBackend {
       // and `false` mean the same thing to `formatFooter`, and omitting it
       // keeps this result byte-identical to before for unvalidated packs.
       ...(result.validation_failed ? { validationFailed: true } : {}),
+      ...(result.usageComplete === false ? { usageComplete: false } : {}),
       usage: {
         inputTokens: result.usage.inputTokens,
         outputTokens: result.usage.outputTokens,

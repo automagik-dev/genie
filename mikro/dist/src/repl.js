@@ -553,6 +553,7 @@ export class REPL {
             const generation = this.generation;
             const signal = this.childController.signal;
             let settled = false;
+            let llmError;
             const timeout = setTimeout(() => {
                 if (!settled) {
                     settled = true;
@@ -582,29 +583,36 @@ export class REPL {
                             settled = true;
                             clearTimeout(timeout);
                             signal.removeEventListener("abort", onAbort);
-                            resolve(msg);
+                            // A caught Python exception or an earlier FINAL cannot turn a
+                            // failed child operation into a successful execution.
+                            resolve(llmError === undefined ? msg : {
+                                ...msg,
+                                error: msg.error ?? llmError,
+                                llmError,
+                                final: undefined,
+                            });
                         }
                         return;
                     }
                     if (msg.type === "llm_request") {
                         // Handle LLM request from Python
                         const llmReq = msg;
-                        let results;
-                        if (this.llmHandler) {
-                            try {
-                                results = await this.llmHandler(llmReq, signal);
-                            }
-                            catch (err) {
-                                const msg = err instanceof Error ? err.message : String(err);
-                                results = llmReq.prompts.map(() => `Error: LLM handler failed — ${msg}`);
-                            }
+                        let response;
+                        try {
+                            if (!this.llmHandler)
+                                throw new Error("No LLM handler configured");
+                            const results = await this.llmHandler(llmReq, signal);
+                            response = { type: "llm_response", ok: true, results };
                         }
-                        else {
-                            results = llmReq.prompts.map(() => "Error: No LLM handler configured");
+                        catch (err) {
+                            const error = `LLM handler failed — ${errorString(err)}`;
+                            if (llmError === undefined)
+                                llmError = error;
+                            response = { type: "llm_response", ok: false, error };
                         }
-                        if (settled || generation !== this.generation)
+                        if (settled || signal.aborted || generation !== this.generation)
                             return;
-                        this._send({ type: "llm_response", results });
+                        this._send(response);
                     }
                     if (msg.type === "tool_request") {
                         await this._handleToolRequest(msg, generation, signal);

@@ -69,6 +69,13 @@ implementation tree at its recorded evaluation commit. Each result records the o
 root and per-file historical/runtime SHA256 (or absence); the ordinary `runAgent` configuration
 trust gate still applies. Fixtures whose ground truth overlaps those runtime files are refused
 rather than exposing an added implementation through the overlay.
+An explicitly trusted runtime root and the bench-owned OS temporary root may be reached through
+filesystem aliases (for example, an aliased `--agents-dir` checkout or `TMPDIR`). Historical overlays
+canonicalize those roots for containment checks and file access, while `runtimeOverlay.sourceRoot`
+retains the lexical runtime path for provenance. This does not authorize configuration symlinks:
+every file or directory symlink component within the runtime or historical configuration tree is
+still refused before execution. The NEW-path containment and runtime-truth overlap checks are
+unchanged; an OS root alias is not permission to expose implementation files through configuration.
 
 
 ### Where the agent files come from — the trust boundary

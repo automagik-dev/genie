@@ -1,0 +1,44 @@
+{
+  "scope": "Owner-authorized source-only G1 correctness 2/B2, quality 3/cap3; original criteria and paid cohorts unchanged",
+  "strictRules": "unchanged commitlint.config.ts; existing parser/default ignores/plugins preserved",
+  "ownership": "Cut only source-parent edges of validated Mikro subtree imports. Traverse every ordinary merge parent. Shared and nested-import Genie ancestry stays strict. Catalog all-ref authority unchanged.",
+  "actualCompleteGraphSmoke": {
+    "argv": [
+      "bun",
+      "scripts/commitlint.ts",
+      "--from",
+      "27739552066c18cde858d9bd2f8f9b1e041220c4",
+      "--to",
+      "40ddcadbe9ae5690bafae23f523179bf91a8e4eb"
+    ],
+    "cwd": "/home/genie/.local/share/mikro-engine-split/experiments-g8/final-local-smokes/history-only-reword-6qjyzwas/tree",
+    "exitCode": 0,
+    "seconds": 0.6217702848371118,
+    "stdout": "dd77518c978759ff4e99a163c3230709ea1e645c: valid\nc844ea6fdb7bf4ffacf1b68c2eeb0b2597231cf5: valid\n1c00fbe8c88e9e51bae7d47e7585de915bcd5cb3: valid\n81245a699b2b88536278eab336c3b12e5efe280a: valid\n40ddcadbe9ae5690bafae23f523179bf91a8e4eb: valid\nChecked 5 Genie-owned commits; excluded 455 proven foreign-only Mikro commits.\n",
+    "stderr": ""
+  },
+  "owningTests": {
+    "command": "bun test scripts/commitlint.test.ts scripts/legacy-skills-catalog.test.ts scripts/mikro/bench-cli.test.ts scripts/mikro/bench-options.test.ts scripts/mikro/fixtures-from-commits.test.ts scripts/mikro/trusted-source.test.ts",
+    "exitCode": 0,
+    "pass": 72,
+    "fail": 0,
+    "assertions": 313,
+    "files": 6,
+    "actualOutput": "artifact://1000"
+  },
+  "regressionRed": {
+    "command": "bun test scripts/commitlint.test.ts --test-name-pattern 'foreign nested imports'",
+    "exitCode": 1,
+    "pass": 0,
+    "fail": 1,
+    "observed": "Expected refusal status 1; received 0 using union-only classifier on actual nested Git graph. Not an unresolved import or fixture setup failure."
+  },
+  "remoteVisibility": "Original remote output ends mid-body. 201 visible inputs do not prove graph size or absent foreign success. Immutable server and local graph 460 commits. No collector count cap; process.exit stdout hazard is a causal inference only.",
+  "originalPublishedHead": "553eebab32c33a667a7c96634c4b7f488a223fcc",
+  "limitations": [
+    "No foreign rewrite, prefix waiver or reduced rules",
+    "No paid inference, new JEV, resampling, refreeze or regrading",
+    "Historical 108+18 and G8/full G9 incomplete",
+    "Current full gates, renewed independent reviews and current-head remote CI remain publication requirements"
+  ]
+}

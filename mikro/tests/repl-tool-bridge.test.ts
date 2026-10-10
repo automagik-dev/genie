@@ -352,8 +352,8 @@ describe("REPL tool bridge", () => {
 		}
 	});
 
-	for (const bridge of ["llm", "tool"] as const) {
-		it(`discards a late ${bridge} response after timeout instead of sending it to the replacement`, async (ctx) => {
+	for (const [bridge, lateFailure] of [["llm", false], ["llm", true], ["tool", false]] as const) {
+		it(`discards a late ${bridge} ${lateFailure ? "failure" : "response"} after timeout instead of sending it to the replacement`, async (ctx) => {
 			if (!pythonAvailable) return ctx.skip("python3 not on PATH");
 			const repl = new REPL();
 			let release!: () => void;
@@ -371,6 +371,7 @@ describe("REPL tool bridge", () => {
 					started();
 					await blocked; // Simulate a handler that ignores cancellation.
 					finished();
+					if (lateFailure) throw new Error("stale child failure");
 					return "stale";
 				}
 				assert.equal(signal.aborted, false);
@@ -392,9 +393,11 @@ describe("REPL tool bridge", () => {
 				const result = await next;
 				assert.equal(result.error, undefined, result.stderr);
 				assert.equal(result.stdout.trim(), "restored");
+				assert.equal(result.llmError, undefined);
 				const fresh = await repl.execute(code);
 				assert.equal(fresh.error, undefined, fresh.stderr);
 				assert.equal(fresh.stdout.trim(), "fresh");
+				assert.equal(fresh.llmError, undefined);
 				assert.equal(calls, 2);
 			} finally {
 				release();

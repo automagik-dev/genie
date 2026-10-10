@@ -59,7 +59,17 @@
  * forbade, which is how an injected instruction the agent did not EXECUTE but
  * did ACT on is caught.
  */
-import { appendFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  appendFileSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
@@ -213,7 +223,7 @@ export async function runBenchCli(argv: string[], run: typeof runAgent = runAgen
       let temporary: string | undefined;
       if (job.fixture.evaluationCommit) {
         if (!/^[a-f0-9]{40}$/.test(job.fixture.evaluationCommit)) throw new BenchUsageError('invalid fixture evaluation commit');
-        temporary = mkdtempSync(join(tmpdir(), 'mikro-fixture-'));
+        temporary = realpathSync(mkdtempSync(join(tmpdir(), 'mikro-fixture-')));
         evaluationDir = join(temporary, 'tree');
         const added = Bun.spawnSync(['git', 'worktree', 'add', '--detach', evaluationDir, job.fixture.evaluationCommit], { cwd: dir, env: gitProbeEnv() });
         if (added.exitCode !== 0) {
@@ -231,9 +241,10 @@ export async function runBenchCli(argv: string[], run: typeof runAgent = runAgen
           if (MIKRO_CONFIG_FILES.some((rel) => normalized === rel || normalized.startsWith(`${rel}/`) || rel.startsWith(`${normalized}/`)))
             throw new BenchUsageError(`fixture ${job.fixture.id} truth overlaps runtime configuration: ${path}`);
         }
+        const runtimeFileRoot = realpathSync(runtimeRoot);
         runtimeOverlay = { sourceRoot: runtimeRoot, files: [] };
         for (const rel of MIKRO_CONFIG_FILES) {
-          const source = join(runtimeRoot, rel);
+          const source = join(runtimeFileRoot, rel);
           const target = join(evaluationDir, rel);
           const hashes: (string | null)[] = [];
           let runtimeBytes: Buffer | undefined;

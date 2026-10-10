@@ -1,0 +1,22 @@
+{
+  "sourceOnly": true,
+  "beforeReceipt": "PRESERVATION-BEFORE.json",
+  "actualOriginalMikroHead": "62894e49314bad07382492ac074ea96df6776f61",
+  "actualOriginalMikroIndexSha256": "aa74f553e19f8107b24220a146412e7fdc4a9f3514b941be258cc184f0e8435c",
+  "actualNineRecordedWipSha256": {
+    "CHANGELOG.md": "a4ad0fc9ba6a8a3ac79db85a5468b3962e08f102d283d3f8421e4ede42f75ffa",
+    "bin/install-state.mjs": "cc7b8232cac67a688d12789a03b705d26f912837aeda8b6fff9d172d4b590bca",
+    "dist/src/cli.js": "9255ddf790f80ff943a262d231d535863d34441bec3fea113f37ad670ec5601c",
+    "dist/tests/install-coordination.test.js": "79b29a3c6550a0d4de00d94ba18f028d6a76c3bd2216f156b0dcc20849fbddf4",
+    "dist/tests/npm-authority.test.js": "f7657e6a1d0e14a144ebcd2cfbfeffc912659cf70adfbe6532ee9d6fe738b618",
+    "scripts/install.sh": "ad2a999d543ebfae682714098f3c6e30a5203393f2c83d3577bd7bd0d5eb0736",
+    "src/cli.ts": "03af08b963b07d66d7a98de2adf06235a27f265babe016386702facd5427b8d2",
+    "tests/install-coordination.test.ts": "c4e9107debdef921168ddb1706dd57ded88b9b12dc5a0421f6b3aad110821792",
+    "tests/npm-authority.test.ts": "997e66c2f7d59868bd4a89948940b504a48e4829b41404f110e81ce70b678ca8"
+  },
+  "actualOperatorSettingsSha256": "379be5e12e7321362b776390cb9ff36d019e105aebff7b206014f795f777e1e4",
+  "recordedSubsetUnchanged": true,
+  "originalGenieHead": "553eebab32c33a667a7c96634c4b7f488a223fcc",
+  "originalGenieHeadUnchanged": true,
+  "scopeLimit": "No complete broader original Genie before-inventory was captured; full original-checkout/operator/helper preservation remains BLOCKED in correctness5/Q02. Do not extrapolate subset proof; helper not freshly rediscovered. No production install/main/merge/source deletion."
+}
