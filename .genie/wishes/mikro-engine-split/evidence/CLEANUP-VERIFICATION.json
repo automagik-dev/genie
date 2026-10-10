@@ -38,7 +38,7 @@
     "Private paid cohorts and canonical reports",
     "Original checkout HEAD/index"
   ],
-  "currentStage": "Fresh full gates and smokes passed; independent cleanup checkpoint found no archive blocking defects; final independent reviews await normal descendant identity",
+  "currentStage": "Independent cleanup-only SHIP/SHIP; full gates and smokes passed; normal metadata-only receipt descendant then forward-only PR push authorized",
   "limits": {
     "wholeWish": "IN_PROGRESS/BLOCKED",
     "paidComparison": "Incomplete/confounded/unknown; no recommendation",
@@ -138,7 +138,481 @@
       "retainedOutput": "Private out-of-tree archive, not repeated in PR"
     }
   ],
-  "independentCleanupReviews": [],
+  "independentCleanupReviews": [
+    {
+      "stage": "FINAL_REVIEW",
+      "verdict": "SHIP",
+      "verdictScope": "Archive/evidence integrity and documentation provenance of the owner-authorized cleanup only.",
+      "summary": "The inspected cleanup preserves immutable historical artifact access, original review provenance, thirteen frozen consumed inputs, and complete candidate inventory binding. Fresh attributable root/SDK gates and affected consumer/archive smokes passed; the normal cleanup commit is bound to the unchanged reviewed inventory with zero reported correspondence drift. This verdict does not regrade the original implementation, certify future publication, or unblock feature, whole-wish, or paid-comparison acceptance.",
+      "reviewer": {
+        "identity": "ArchiveEvidenceIntegrityReviewer",
+        "role": "Independent read-only cleanup reviewer",
+        "date": "2026-10-10",
+        "independentOfImplementation": true,
+        "mutatedRepositoryGitTaskOrForge": false
+      },
+      "target": {
+        "commit": "5a60b98f331707dd65a01968d5b853f2194ad902",
+        "tree": "2403980a81c9c50755524be1a5ee6a2d772b80d9",
+        "soleParentAndPublicArchiveCommit": "1b58ca73a1b9e322597a41000cc4ebd897e86bdc",
+        "candidateSha256": "a4bb7d8f7417aa832a23e13153b2ff11773148442dffa30eba22124b5098cc60",
+        "recordCount": 2489,
+        "retainedCount": 1366,
+        "deletedCount": 1123,
+        "archivedTrackedFiles": 1119,
+        "previouslyAbsentObsoleteTests": 4,
+        "manifest": ".genie/wishes/mikro-engine-split/evidence/CURRENT-MANIFEST.json",
+        "excludedFutureMetadata": [
+          ".genie/wishes/mikro-engine-split/evidence/CURRENT-MANIFEST.json",
+          ".genie/wishes/mikro-engine-split/evidence/CLEANUP-VERIFICATION.json"
+        ]
+      },
+      "frozenBlindPlan": {
+        "stage": "BLIND_CRITERIA",
+        "criteria": [
+          {
+            "id": "C1",
+            "name": "Immutable archive completeness",
+            "acceptance": "Every tracked artifact removed by cleanup is individually mapped to its original repository-relative path, exact immutable published ancestor commit, real Git object identity and mode. Its complete original contents remain anonymously publicly retrievable through immutable archive links; no removed artifact is represented only by a summary, truncated copy, branch-relative URL, invented object ID, or unavailable local object."
+          },
+          {
+            "id": "C2",
+            "name": "Original review and result provenance",
+            "acceptance": "The complete original correctness40 and quality22 criteria, matrices, and source review records remain verbatim accessible, including failed and superseded results and their attribution. Cleanup documentation distinguishes historical evidence from current cleanup validation and does not relabel, truncate, rescore, or imply approval of the original paid work. Feature, whole-wish, and comparison judgments remain blocked."
+          },
+          {
+            "id": "C3",
+            "name": "Frozen experiment seals",
+            "acceptance": "All thirteen frozen consumed experiment seals are identified by exact paths and immutable original identities; candidate retained or archived copies preserve every byte and their original evidence relationships. No refreeze, substituted seal, altered payload, or changed attribution is presented as the original."
+          },
+          {
+            "id": "C4",
+            "name": "Complete current inventory binding",
+            "acceptance": "The current inventory binds the exact reviewed candidate through a specified deterministic identity method and complete retained file bytes, Git modes, symlink target bytes, gitlink commit identities, and generated runtime artifacts in scope. It explicitly accounts for deletions and distinguishes tracked, untracked, and generated content. Any metadata exclusions are individually named, minimal, and cannot hide implementation, archived evidence, seals, or runtime changes."
+          },
+          {
+            "id": "C5",
+            "name": "Resolvable archive and documentation links",
+            "acceptance": "Archive links and directory links in affected documentation resolve to the intended exact files or directories with correct repository, immutable revision, path encoding, and fragment behavior where applicable. Directory links do not masquerade as raw file downloads, and moved historical material remains discoverable without requiring a local checkout or undocumented private access."
+          },
+          {
+            "id": "C6",
+            "name": "Private-data boundary",
+            "acceptance": "Paid private data remains untouched and is neither added to public publication nor replaced by an assertion of public availability. Documentation explicitly distinguishes publicly archived tracked artifacts from private or otherwise unavailable evidence, without claiming access, preservation, or validation beyond demonstrated evidence."
+          },
+          {
+            "id": "C7",
+            "name": "Forward-only scope and publication authority",
+            "acceptance": "The cleanup is a normal descendant commit retaining the original published HEAD as an ancestor, with no history rewrite or force publication. Changes remain archive/documentation/evidence cleanup rather than source repairs or regrading; original implementation and proof remain preserved. Publication is limited to authorized forward-only cleanup, without main/merge/production install/provider/JEV/refreeze/rescore actions."
+          },
+          {
+            "id": "C8",
+            "name": "Attributable current validation",
+            "acceptance": "Final SHIP requires fresh parent-supplied root and SDK gate results with exit code 0 plus successful affected consumer and archive smokes. Evidence identifies the actual commands, outcomes, exact candidate SHA or complete inventory identity, and validation scope; post-validation changes must not invalidate that binding. This lens evaluates evidence integrity and claims about compatibility, not runtime compatibility itself."
+          }
+        ],
+        "triggers": {
+          "SHIP": "Every C1–C8 criterion is supported for the exact second-stage candidate, all required current gates and affected smokes pass, archive/public-access checks support the availability claims, and no blocking integrity or provenance defect remains. SHIP applies only to this cleanup lens and does not authorize publication or unblock original feature/whole-wish/comparison judgments.",
+          "FIX-FIRST": "An evidence-backed, actionable candidate defect violates any frozen criterion: missing or nonpublic removed tracked artifact; incorrect immutable link, object identity, mode, or directory route; altered/truncated/relabelled historical criteria or results; changed frozen seal; inventory omission or broad exclusion; private-data alteration or false public claim; unauthorized/non-forward cleanup; or an attributable required gate/smoke failure. Identify the smallest concrete repair without expanding into original source regrading.",
+          "BLOCKED": "Missing or unverifiable candidate identity, original published ancestry, complete deletion/inventory/seal mapping, accessible historical records, publication-authority evidence, or attributable fresh validation prevents deciding a required criterion. Unavailable evidence is an assessment blocker, not proof of a code defect. A changed candidate invalidates an earlier artifact-bound assessment until its current identity and evidence are supplied."
+        },
+        "scope": {
+          "included": "Independent second-stage read-only archive/evidence integrity and documentation-provenance review against these frozen criteria, including publication ancestry, artifact accessibility and identities, historical review preservation, seal integrity, inventory completeness, privacy boundaries, and attributable validation evidence.",
+          "excluded": "Original paid-work/source correctness regrade; implementation repairs; runtime-compatibility assessment owned by another lens; repository/Git/task mutation; forge comments; executing builds, tests, linters, or formatters; merge or production/publication actions.",
+          "stage_boundary": "Only assignment scope and generic review/evidence-identity instructions have been read. No source, manifest, receipt, candidate diff, or artifact has been opened. No final verdict is issued; the same reviewer will assess the exact candidate and current parent evidence in stage two.",
+          "later_criteria": "Any criterion added after candidate inspection will be explicitly declared rather than silently changing this frozen plan."
+        },
+        "reviewer": {
+          "identity": "ArchiveEvidenceIntegrityReviewer",
+          "role": "Independent read-only cleanup reviewer",
+          "date": "2026-10-10"
+        }
+      },
+      "criteriaChanges": [],
+      "assessments": [
+        {
+          "criterion": "C1",
+          "status": "PASS",
+          "assessment": "All1119 cleanup removals are explicitly represented by original path and archived Git blob/mode at published1b58. The supplied complete-tree correspondence result establishes their presence at that immutable public ancestor. Anonymous retrieval evidence independently demonstrates no-auth access and exact bytes for the large historical manifest, failed paired report, and historical runner; archive indexes expose the immutable lookup rather than substitutes.",
+          "evidence": [
+            "approved-cleanup-removal-list.json",
+            "github-immutable-archive-tree.json",
+            "actual-git-removal-receipt.json",
+            "CURRENT-MANIFEST.json deletion records",
+            "archive-link-and-public-blob-smoke.json",
+            "anonymous-immutable-public-archive-smoke.json"
+          ],
+          "provenance": "Read supplied mappings, parent correspondence results, and actual no-authorization fetch command/results. Did not independently fetch every archived blob."
+        },
+        {
+          "criterion": "C2",
+          "status": "PASS",
+          "assessment": "Both complete original reviews retain their historical7241 candidate and original criteria identities. Current inventory/correspondence preserves the correctness review at ea900296f52b5b5d9678326b3e2d06392b4a8d3350c54de85ce68e88e71949e5 and quality review at6c8bbeaa1dbb2f286f9a25b4c241dd79504f4ecdef3fe68c1122a45d1a8962c0. Failed, conditional, superseded, and paid-incomplete records remain reachable through the immutable archive. New documentation explicitly distinguishes historical SOURCE SHIP from current cleanup validation and retains whole-wish/comparison blockage.",
+          "evidence": [
+            "retained original40/22 reviews and their originalCriteriaSha256/criteriaVerbatim/assessment fields",
+            "cleanup-byte-mode-correspondence.json",
+            "CURRENT-MANIFEST.json retained review records",
+            "local://mikro-evidence-cleanup-retained-document.patch",
+            ".genie/wishes/mikro-engine-split/evidence/INDEX.md"
+          ],
+          "provenance": "Read review provenance, inventory records, documentary patch, and index; reused complete retained-byte correspondence. Original review outcomes were not reassessed."
+        },
+        {
+          "criterion": "C3",
+          "status": "PASS",
+          "assessment": "All thirteen consumed seal inputs remain retained and individually byte-bound. The actual offline harness constructs seals from the precleanup file hashes and invokes the unchanged verifySeals consumer; the successful positive run and rejected wrong-digest/empty-list controls support byteexact preservation without refreezing. Current correspondence reports no drift in those inputs.",
+          "evidence": [
+            "local://mikro-evidence-cleanup-review-contract.json retainedRootInputs",
+            "CURRENT-MANIFEST.json thirteen retained input records",
+            "offline-consumer-smoke.mjs",
+            "actual-offline-consumer-smoke-receipts.json",
+            "scripts/mikro/engine-experiment-runtime.mjs verifySeals dispatch references",
+            "cleanup-byte-mode-correspondence.json"
+          ],
+          "provenance": "Read input identities, actual smoke harness, and consuming references; reused attributable parent execution results."
+        },
+        {
+          "criterion": "C4",
+          "status": "PASS",
+          "assessment": "The deterministic sorted-record inventory covers retained bytes, Git and physical modes, symlink target text, exact gitlink commit, generated Mikro distribution, and ignored executed root bundle. Explicit deletion records distinguish1119 newly archived removals from four prior absent tests. Only the manifest itself and verification receipt are excluded future metadata. Final committed correspondence accounts for every committed path and reports no byte/Git-mode/physical-mode/symlink/gitlink/deletion drift at5a60/a4bb; post-validation continuity is also unchanged.",
+          "evidence": [
+            "CURRENT-MANIFEST.json:1-19 and file/deleted/gitlink/symlink/generated-ignored records",
+            "cleanup-byte-mode-correspondence.json",
+            "cleanup-committed-candidate-correspondence.json",
+            "CLEANUP-VERIFICATION.json postValidationContinuity"
+          ],
+          "provenance": "Read identity schema, representative boundary records, and attributable complete correspondence results; did not recompute inventory hashes."
+        },
+        {
+          "criterion": "C5",
+          "status": "PASS",
+          "assessment": "Affected documentation consistently routes removed historical evidence to immutable1b58 and retained inputs to current local paths. The historical runs directory uses GitHub tree routing, not blob routing. Candidate-bound link evidence checks147 archive links/136 unique archive targets and35 local links across six affected Markdown files with no missing local targets. Historical reproduction guidance requires the complete archived tool/input snapshot and does not invent absent original-import files.",
+          "evidence": [
+            "local://mikro-evidence-cleanup-retained-document.patch",
+            ".genie/wishes/mikro-engine-split/evidence/INDEX.md",
+            "archive-link-and-public-blob-smoke.json"
+          ],
+          "provenance": "Read documentation and corrected directory destination; reused parent link/archive smoke results."
+        },
+        {
+          "criterion": "C6",
+          "status": "PASS",
+          "assessment": "The patch confines changes to historical tracked artifact removal and documentation/metadata; it introduces no private paid-run payload. The index expressly states that public links preserve tracked receipts, not every private paid-run byte, and retains incomplete/confounded accounting limits. Original checkout HEAD/index before/after fingerprints match; no broader historical preservation claim is reconstructed from missing original evidence.",
+          "evidence": [
+            ".genie/wishes/mikro-engine-split/evidence/INDEX.md Paid observations and limits",
+            "local://mikro-evidence-cleanup-retained-document.patch",
+            "read-only cleanup diff path scope",
+            "cleanup-original-head-index-before.json",
+            "CLEANUP-VERIFICATION.json originalCheckoutIsolation/unchangedScope"
+          ],
+          "provenance": "Read diff/documentation scope and parent preservation receipts. Private paid cohorts were not opened or independently rehashed."
+        },
+        {
+          "criterion": "C7",
+          "status": "PASS",
+          "assessment": "Normal git commit exited0 with cleanup checkpoint5a60, tree2403980, and published archive1b58 as its sole parent. Original Mikro628 ancestry is retained. The actual diff scope is1119 historical deletions, six documentation modifications, and three metadata additions; no implementation repair/regrade is included. Publication has not occurred yet; the authorized next operation is normal forward-only publication to the existing own PR branch, not force or protected-reference publication.",
+          "evidence": [
+            "normal-cleanup-checkpoint-commit.json",
+            "cleanup-checkpoint-identity.json",
+            "cleanup-committed-candidate-correspondence.json",
+            "pr-before-cleanup.json",
+            "read-only git diff --name-status1b58",
+            "read-only git show --no-patch --format=fuller5a60"
+          ],
+          "provenance": "Read normal commit execution result, ancestry/correspondence receipts, existing PR target, and directly observed immutable commit header. No future push or remote-head correspondence is claimed."
+        },
+        {
+          "criterion": "C8",
+          "status": "PASS",
+          "assessment": "Fresh parent full aggregate outputs show root3294pass/2skip/0fail and SDK1244pass/0fail with explicit completed&&-chain exit0 markers. Actual installed dirty-refusal/forced-update smoke completed, and affected offline consumers, compiled version/wish-lint checks, archive links, and anonymous public fetches passed. Current continuity and committed correspondence retain the same reviewed record digest. The historical directory-link correction during gate execution affected only a gate-excluded Markdown path and was covered by fresh direct link evidence.",
+          "evidence": [
+            "artifact://1325 root aggregate invocation/footer and CLEANUP_ROOT_COMPLETE_EXIT_0",
+            "artifact://1326 SDK invocation/footer/install-update and CLEANUP_SDK_COMPLETE_EXIT_0",
+            "CLEANUP-VERIFICATION.json currentGates/gateAttribution/postValidationContinuity",
+            "actual-offline-consumer-smoke-receipts.json",
+            "archive-link-and-public-blob-smoke.json",
+            "anonymous-immutable-public-archive-smoke.json",
+            "cleanup-committed-candidate-correspondence.json"
+          ],
+          "provenance": "Inspected actual root/SDK invocation and completed output footers, installed smoke output, parent command/results, and final correspondence receipts. Reused full parent-consumed gate results; did not execute validation."
+        }
+      ],
+      "findings": [],
+      "unresolvedHypotheses": [],
+      "validation": {
+        "reusedParentResults": [
+          {
+            "command": "bun install --frozen-lockfile under existing host lock",
+            "exitCode": 0
+          },
+          {
+            "command": "npm run deps:ci in mikro under existing host lock",
+            "exitCode": 0
+          },
+          {
+            "command": "bun run build",
+            "exitCode": 0
+          },
+          {
+            "command": "Complete bun run check under existing host lock and isolated cleanup environment",
+            "exitCode": 0,
+            "artifact": "artifact://1325",
+            "counts": {
+              "pass": 3294,
+              "skip": 2,
+              "fail": 0,
+              "assertions": 19667,
+              "tests": 3296,
+              "files": 158
+            },
+            "successMarker": "CLEANUP_ROOT_COMPLETE_EXIT_0",
+            "testSeconds": 510.83,
+            "wallSecondsIncludingLockWait": 801.17
+          },
+          {
+            "command": "Mikro TypeScript check, full compiled Node test suite, and actual isolated smoke-install-update",
+            "exitCode": 0,
+            "artifact": "artifact://1326",
+            "counts": {
+              "pass": 1244,
+              "fail": 0,
+              "suites": 218,
+              "cancelled": 0,
+              "skipped": 0,
+              "todo": 0
+            },
+            "successMarker": "CLEANUP_SDK_COMPLETE_EXIT_0",
+            "actualInstalledDirtyRefusal": true,
+            "actualInstalledForcedUpdate": true
+          },
+          {
+            "command": "Original offline routing pin/seal consumer harness",
+            "positiveExitCode": 0,
+            "missingTaskNegativeControlExitCode": 2,
+            "wrongDigestAndEmptySealsRejected": true,
+            "providerAndPaidCalls": 0
+          },
+          {
+            "command": "node scripts/benchmark-runtimes-v2.mjs manifest",
+            "exitCode": 0
+          },
+          {
+            "command": "Built Genie/Mikro version CLIs and actual Genie wish lint",
+            "exitCode": 0
+          },
+          {
+            "command": "Affected documentation archive/local-link checks",
+            "archiveLinks": 147,
+            "localLinks": 35,
+            "missingLocalTargets": []
+          },
+          {
+            "command": "Anonymous immutable raw archive fetches without credentials/authorization headers",
+            "exitCode": 0,
+            "statusCodes": [
+              200,
+              200,
+              200
+            ],
+            "allObservedSha256Matched": true
+          },
+          {
+            "command": "git commit -m chore(mikro): archive historical review artifacts with normal hooks",
+            "exitCode": 0
+          }
+        ],
+        "reviewerReadOnlyCommands": [
+          {
+            "command": "git diff --name-status1b58ca73a1b9e322597a41000cc4ebd897e86bdc",
+            "exitCode": 0,
+            "observedChangedPaths": 1128
+          },
+          {
+            "command": "git show --no-patch --format=fuller5a60b98f331707dd65a01968d5b853f2194ad902",
+            "exitCode": 0
+          }
+        ],
+        "retainedWarningsAndSkips": [
+          "Existing doctor cognitive complexity26/max25 warning",
+          "Three existing Knip hints",
+          "Two live facts-boundary tests skipped without bwrap plus Mikro runtime",
+          "Inherited npm audit5 vulnerabilities:3 moderate/2 high",
+          "Five allow-scripts warnings and inherited deprecations"
+        ],
+        "artifactAttribution": "Full gates and consumer checks cover unchanged gate-relevant inputs. The earlier4521 offline smoke identity is retained as historical to the pre-directory-link/schema inventory; current byte/mode correspondence establishes unchanged exercised inputs. No paid routing main, provider/JEV execution, or new runtime-compatibility proof is inferred."
+      },
+      "coverageAndLimits": {
+        "covered": "All eight frozen criteria for this cleanup lens, using direct documentation/evidence reads and attributable current parent results. No criteria were added or changed after artifact inspection.",
+        "notClaimed": [
+          "Original runtime implementation correctness regrade",
+          "Runtime compatibility assessment owned by the other lens",
+          "Complete original feature/whole-wish/paid-comparison acceptance",
+          "Fresh model/provider/JEV calls, paid reruns, refreeze or rescoring",
+          "Independent exhaustive public retrieval of all1119 blobs",
+          "Independent manifest/hash recomputation or private-cohort rehash",
+          "Future pushed head, current remote checks for that future head, merge readiness, merge, main promotion, or production installation"
+        ],
+        "publicationLimit": "This verdict binds exact5a60/a4bb. The parent may record the verdict through the two already-declared metadata outputs without changing reviewed records; an unreviewed content/mode/path/deletion change requires renewed identity and assessment. A later metadata-only descendant and normal forward push still require parent-owned correspondence/readback; this report does not certify those future actions.",
+        "historicalLimitsPreserved": "Original source40/quality22 review bytes, failure/supersession history, unresolved pricing thread, incomplete/confounded paid histories, and blocked feature/whole-wish/comparison judgments remain unchanged."
+      },
+      "confidence": 0.91
+    },
+    {
+      "stage": "FINAL_CLEANUP_REVIEW",
+      "reviewer": "Independent runtime/test/package/fixture cleanup reviewer",
+      "verdict": "SHIP",
+      "approvalScope": "Historical cleanup only; no approval or regrade of original implementation, feature, whole-wish, or paid comparison.",
+      "candidate": {
+        "commit": "5a60b98f331707dd65a01968d5b853f2194ad902",
+        "tree": "2403980a81c9c50755524be1a5ee6a2d772b80d9",
+        "candidateSha256": "a4bb7d8f7417aa832a23e13153b2ff11773148442dffa30eba22124b5098cc60",
+        "soleParentAndArchiveCommit": "1b58ca73a1b9e322597a41000cc4ebd897e86bdc",
+        "excludedFutureMetadata": [
+          ".genie/wishes/mikro-engine-split/evidence/CURRENT-MANIFEST.json",
+          ".genie/wishes/mikro-engine-split/evidence/CLEANUP-VERIFICATION.json"
+        ],
+        "binding": "Verdict binds this normal cleanup checkpoint and its reviewed manifest records. A future metadata-only descendant is not claimed to have been inspected; correspondence must remain unchanged outside the two predeclared receipt outputs."
+      },
+      "criteriaChanges": [],
+      "frozenBlindPlan": {
+        "stage": "BLIND_CRITERIA",
+        "criteria": [
+          {
+            "id": "C1",
+            "criterion": "Bind the cleanup to an exact candidate commit and the original published HEAD; the original HEAD must remain an ancestor through an ordinary cleanup commit, with an intact, explicitly addressable historical snapshot.",
+            "required_evidence": "Parent-supplied exact commit identities, attributable ancestry evidence, and historical snapshot identity. No force push or history rewrite."
+          },
+          {
+            "id": "C2",
+            "criterion": "Every removal must be attributable to audited historical data or a coherent historical benchmark suite. Runtime, API, active tests, configuration, lockfiles, build/CI wiring, and generated SDK must remain unchanged; historical-suite removal must not remove active coverage or leave a partially functional suite.",
+            "required_evidence": "Complete cleanup diff and deletion inventory, with removed suites traced to their actual purpose, execution wiring, dependencies, and retained active coverage."
+          },
+          {
+            "id": "C3",
+            "criterion": "Trace actual runtime, test, package, fixture, script-default, and benchmark consumers of removed paths and values. Every live consumer must retain a valid input and processing path; no missing default input, orphan reference, silent drop, or weakened assertion may result.",
+            "required_evidence": "Consumer-side code and dispatch inspection at the candidate, including indirect path construction and default arguments where relevant. Filenames, reference-count claims, and no-op tests are insufficient."
+          },
+          {
+            "id": "C4",
+            "criterion": "Necessary active selection, task, and real-failure fixture inputs must remain byte-identical to the pre-cleanup snapshot. Signed design, frozen criteria, paid data, and original source40/22 review records must remain untouched and the original reviews preserved verbatim.",
+            "required_evidence": "Snapshot comparisons or attributable byte/hash comparisons identifying the exact protected inputs and records; evidence distinguishing active inputs from historical copies."
+          },
+          {
+            "id": "C5",
+            "criterion": "Historical reproduction instructions must explicitly direct users to the intact old snapshot and identify the commands' required historical inputs. The current checkout must neither advertise broken historical commands as runnable nor depend on archived historical inputs for active/default operation.",
+            "required_evidence": "Actual reproduction instructions, referenced snapshot and input identities, and inspection of relevant command entrypoints/defaults. Historical-only tools must have a coherent retained or removed lifecycle."
+          },
+          {
+            "id": "C6",
+            "criterion": "Current evidence must exercise the actual built CLI, active benchmark manifest, offline routing pins, and frozen seals through their real consuming boundaries. Meaningful negative controls must reach the relevant guard and fail for the intended violation, rather than an unrelated error, mocked behavior, source-string match, or vacuous assertion.",
+            "required_evidence": "Attributable parent-provided commands, artifact identities, outputs, exit statuses, exercised inputs, and negative-control failure reasons covering the exact candidate."
+          },
+          {
+            "id": "C7",
+            "criterion": "Both the whole-root/SDK gate and the isolated installed-update gate must pass against the candidate. The installed-update evidence must exercise the isolated installed artifact/update path, not merely source execution or an existing development installation.",
+            "required_evidence": "Current attributable parent results identifying the candidate and built/installed artifacts, gate commands, isolation setup, exit statuses, and outcomes; no production installation."
+          },
+          {
+            "id": "C8",
+            "criterion": "Cleanup evidence must retain warnings, skipped coverage, environmental limitations, and prior blocked dispositions without converting cleanup approval into feature, whole-wish, or comparison approval. Review and cleanup must remain within the authorized historical-archive scope.",
+            "required_evidence": "Candidate evidence and reporting that preserve limitations and the feature/whole-wish/comparison blocked status; no main/merge, production install, provider/JEV operation, refreeze, rescore, or regrading of original paid work."
+          }
+        ],
+        "triggers": {
+          "SHIP": "Only at stage two: the exact candidate satisfies C1–C8, all required attributable validation passes, consumer tracing establishes no live breakage, and there are no blocking cleanup defects. This disposition approves cleanup only and does not lift existing feature/whole-wish/comparison blocks.",
+          "FIX-FIRST": "A demonstrated candidate-introduced violation of C1–C8 that has a discrete repair, including out-of-scope or protected-byte changes, an orphan consumer or broken default input, partial suite removal, incorrect historical reproduction instructions, weakened/vacuous proof, a negative control failing for the wrong reason, a failed required gate, or erased warnings/limitations. Findings must identify the affected path or command, trigger, impact, and evidence.",
+          "BLOCKED": "The exact candidate/baseline identity, required ancestry or preservation evidence, relevant consumer context, intact historical snapshot, or attributable current gate/negative-control results is unavailable, contradictory, or cannot establish the required contract. Also blocked if resolving the cleanup requires a forbidden operation or changing signed/frozen scope. Missing evidence is not treated as a passing result."
+        },
+        "scope": {
+          "included": "Independent read-only review of historical cleanup scope and runtime/test/package/fixture consumer compatibility, including historical reproduction guidance and current validation evidence.",
+          "excluded": "Review or regrade of original paid implementation, source repair, repository/Git/task mutation, forge comments, builds/lint/tests/formatters executed by this reviewer, external inference, production install, history rewrite, main/merge actions, provider/JEV operations, refreeze, and rescore.",
+          "stage_boundary": "Criteria frozen before opening any candidate source, manifest, receipt, or diff. Stage two will inspect only the parent-supplied exact candidate and current evidence against these criteria; any added criterion will be declared explicitly."
+        },
+        "reviewer": {
+          "identity": "Independent runtime/test/package/fixture cleanup reviewer",
+          "mode": "Read-only, two-stage blind review",
+          "artifact_inspected": false,
+          "final_verdict_issued": false
+        }
+      },
+      "blindPlanPreservation": "Verbatim first-stage data recovered from ~/.omp/agent/sessions/-workspace-repos-genie/2026-10-05T14-02-09-036Z_01a10c5f-370c-7000-b1a1-e7fa3d0156ea/CleanupConsumerReview.jsonl, original yield message id 9a1063d0, timestamp 2026-10-10T10:39:50.857Z. The initial reviewer flags above describe stage one, not this final stage.",
+      "assessments": [
+        {
+          "id": "C1",
+          "status": "PASS",
+          "evidence": "Read exact Git commit object with git show --no-patch --format=raw: cleanup 5a60b98f331707dd65a01968d5b853f2194ad902, tree 2403980a81c9c50755524be1a5ee6a2d772b80d9, sole parent published 1b58ca73a1b9e322597a41000cc4ebd897e86bdc. Inspected normal commit receipt exit0, hook stderr, checkpoint identity, and committed correspondence naming a4bb digest, all 2489 records, exact path inventory and empty retained-byte/Git-mode/physical-mode/symlink/gitlink/deletion drift. Original source ancestry and immutable archive/public-blob correspondence are retained in receipts."
+        },
+        {
+          "id": "C2",
+          "status": "PASS",
+          "evidence": "Inspected complete removal inventory and staged change scope: removals are historical root receipts/manifests and imported Mikro historical planning, mailbox and coherent parity/optimizer/gate-agents suites. Removed reporter and runner dependencies were traced, including archived summarize.mjs and union-report.mjs. Six retained documentation changes were inspected in full; no production runtime/API, active tests, configuration, dependency/lock, build/CI or generated Mikro distribution drift appears in correspondence."
+        },
+        {
+          "id": "C3",
+          "status": "PASS",
+          "evidence": "Read consuming guards and defaults in eval-routing.mjs, benchmark-runtimes-v2.mjs, benchmark-prime-runtimes.mjs, model SDK benchmark entrypoints, author-explore-tasks.mjs, mine-explore-tasks.mjs, engine-experiment runtime verifySeals and caller dispatch, package manifests, compile/test wiring and isolated install/update script. Selection lock, numeric task suites and real failure record remain valid inputs. Mining output paths and benchmark output directories are outputs rather than removed mandatory defaults; numeric task scanning excludes README archive prose. Root/Mikro execution-reference searches found no new live dependency on deleted historical bundles. No new runtime cross-boundary message, event, variant or value is introduced by this cleanup."
+        },
+        {
+          "id": "C4",
+          "status": "PASS",
+          "evidence": "Pre-cleanup inventory/current manifest and byte-mode proof preserve thirteen root frozen inputs, fourteen numeric task definitions, authored specification and policy, active selection lock, real gen-4/rep-2/task-5 failure, signed design and original reviews. Original correctness review SHA256 ea900296f52b5b5d9678326b3e2d06392b4a8d3350c54de85ce68e88e71949e5 and quality review SHA256 6c8bbeaa1dbb2f286f9a25b4c241dd79504f4ecdef3fe68c1122a45d1a8962c0 match baseline/current entries. Original 40/22 rows and frozen criteria are preserved, not regraded. Private paid evidence and original checkout HEAD/index remain unchanged according to inspected isolation proof."
+        },
+        {
+          "id": "C5",
+          "status": "PASS",
+          "evidence": "Historical archive notices and immutable links were inspected in WISH, root evidence index, Mikro index, parity/worker docs and training README. Reproduction explicitly requires the intact old full Mikro snapshot at 1b58ca73a1b9e322597a41000cc4ebd897e86bdc, not the cleaned current checkout, with dependency/operator prerequisites not falsely certified. Historical-only reporters/runners are archived with their corresponding input/result families. Current archive-link proof names a4bb digest and reports no missing links across six checked documentation paths."
+        },
+        {
+          "id": "C6",
+          "status": "PASS",
+          "evidence": "Inspected original offline harness and actual receipts. Actual built Genie and Mikro versions and compiled wish lint exit0; benchmark manifest exits0 with unchanged selection lock and compiled adapter hashes. Original verifyPins function checks five actual pinned tasks and matching recorded failure; missing-task control reaches its precise exit2 guard. Actual verifySeals accepts thirteen baseline-hashed inputs; wrong digest reaches 'frozen bytes changed' and empty seals reaches missing-seals refusal. Harness substitution only suppresses the paid main invocation or simulates precise missing-file access; relevant production guards remain exercised. Offline receipt names predecessor 4521d4672c62944d22f696cb39cc08539881a516229f368ee40aeb1f4b53169f, not a4bb: its manifest and unchanged consumer/input/built-artifact correspondence justify reuse after the documentation-directory-link correction and enriched identity metadata."
+        },
+        {
+          "id": "C7",
+          "status": "PASS",
+          "evidence": "New root evidence artifact://1325 includes the whole aggregate && stage chain, root/both DSH typechecks, Biome, Knip, skills/wishes, complexity budget and full Bun suite; 3294pass/2skip/0fail, 19667 assertions, 3296 tests across158 files, followed by CLEANUP_ROOT_COMPLETE_EXIT_0. Inspected receipt records observed completed process exit0 and 801.17s wall including lock. Artifact://1326 establishes full compiled SDK suite1244pass/0fail/0skip across218 suites and actual isolated installed-update dirty refusal/forced update with installed artifact versions/SHAs and CLEANUP_SDK_COMPLETE_EXIT_0. Postvalidation and committed correspondence name unchanged a4bb/2489 records with only two declared future receipt outputs excluded."
+        },
+        {
+          "id": "C8",
+          "status": "PASS",
+          "evidence": "Current verification and observed output retain doctor complexity26/max25, three Knip hints, two existing bwrap/Mikro-dependent live facts skips, five npm audit findings(3moderate/2high), five allow-scripts warnings, inherited deprecations and VM warning. Feature/whole-wish/comparison remain blocked or unresolved; private cohorts and pricing thread limitations remain. No production install/provider/JEV/refreeze/rescore/main/merge/history rewrite or source/paid regrade performed by reviewer. Full outputs are retained outside PR rather than repeated inside it."
+        }
+      ],
+      "findings": [],
+      "coverage": {
+        "inventory": "Complete cleanup path-status inventory and retained documentation patch inspected; protected-byte/mode and committed candidate correspondence inspected.",
+        "consumers": "Actual active runtime/test/package/fixture/script-default/benchmark boundaries and historical reporter dependencies inspected, not merely producer names or reference counts.",
+        "proof": "Attributable current root/SDK/isolated-install results and actual consumer-positive/negative receipt outputs reused; reviewer executed no builds, lint, tests or formatters."
+      },
+      "reusedCommands": [
+        {
+          "command": "Isolated env + flock /var/tmp/genie-full-check.lock bun run check && printf CLEANUP_ROOT_COMPLETE_EXIT_0",
+          "exitCode": 0,
+          "evidence": "artifact://1325; current CLEANUP-VERIFICATION currentGates and postValidationContinuity; committed-candidate-correspondence"
+        },
+        {
+          "command": "Whole Mikro TypeScript check, full compiled Node test suite and actual isolated smoke-install-update.sh && CLEANUP_SDK_COMPLETE_EXIT_0",
+          "exitCode": 0,
+          "evidence": "artifact://1326; installed initial685330af04e543c109f179ba429d19a0eb2dbe4c to target75ad46761521dcd5d34ee3ce3817d8fef1dd071e, dirty refusal and forced update, version1.260907.1"
+        },
+        {
+          "command": "bun dist/genie.js --version; node dist/src/cli.js --version; compiled Genie wish lint; actual benchmark manifest; offline harness invoking original verifyPins and verifySeals",
+          "exitCode": 0,
+          "evidence": "actual-offline-consumer-smoke-receipts.json and offline-consumer-smoke.mjs; meaningful negative controls inspected separately"
+        }
+      ],
+      "limits": [
+        "SHIP is cleanup-only at the named commit/content identity; no original source40/22 or paid-work regrade.",
+        "Whole-wish remains IN_PROGRESS/BLOCKED; paid comparison incomplete/confounded/unknown and provides no recommendation; pricing unresolved.",
+        "Two live facts boundary tests remain skipped; this review does not claim their live sandbox behavior was exercised.",
+        "Offline routing validation exercises original pin function without paid main; no full historical model evaluation or provider/JEV run.",
+        "SDK job handle expired before separate lookup; exit0 proof is the actual successful && chain marker, not a fabricated handle observation.",
+        "Historical snapshot retains external/dependency/operator prerequisites; source-comment specs already absent in original snapshot may require earlier history.",
+        "Git history and clone size are not reduced; normal ancestry deliberately keeps old evidence reachable.",
+        "No remote push/check or mergeability approval is claimed, and no future final metadata-only commit is claimed inspected."
+      ]
+    }
+  ],
   "retainedWarnings": [
     "npm audit reports 5 vulnerabilities (3 moderate, 2 high); no audit fix or lock upgrade",
     "Five allow-scripts warnings and inherited deprecations remain visible"
@@ -267,5 +741,45 @@
       ".genie/wishes/mikro-engine-split/evidence/CLEANUP-VERIFICATION.json"
     ],
     "rootWarningsAndSkipsPreserved": true
+  },
+  "normalCleanupCheckpoint": {
+    "head": "5a60b98f331707dd65a01968d5b853f2194ad902",
+    "tree": "2403980a81c9c50755524be1a5ee6a2d772b80d9",
+    "parent": "1b58ca73a1b9e322597a41000cc4ebd897e86bdc",
+    "normalCommitExitCode": 0,
+    "candidateSha256": "a4bb7d8f7417aa832a23e13153b2ff11773148442dffa30eba22124b5098cc60",
+    "normalHooks": "Precommit and commit-message hooks ran; no bypass/CI/HUSKY flags",
+    "originalMikroSourceAncestor": true,
+    "publishedArchiveAncestor": true
+  },
+  "committedCandidateCorrespondence": {
+    "commit": "5a60b98f331707dd65a01968d5b853f2194ad902",
+    "tree": "2403980a81c9c50755524be1a5ee6a2d772b80d9",
+    "candidateSha256": "a4bb7d8f7417aa832a23e13153b2ff11773148442dffa30eba22124b5098cc60",
+    "recordCount": 2489,
+    "retainedBytesGitModesPhysicalModesSymlinksGitlinkDeletionDrift": [],
+    "committedPathInventoryExact": true,
+    "excludedFutureMetadata": [
+      ".genie/wishes/mikro-engine-split/evidence/CURRENT-MANIFEST.json",
+      ".genie/wishes/mikro-engine-split/evidence/CLEANUP-VERIFICATION.json"
+    ],
+    "normalForwardParent": "1b58ca73a1b9e322597a41000cc4ebd897e86bdc"
+  },
+  "publicationPlan": {
+    "method": "Normal git push origin HEAD:refs/heads/automagik-genie/mikro-engine-split",
+    "force": false,
+    "existingPublishedParent": "1b58ca73a1b9e322597a41000cc4ebd897e86bdc",
+    "pr": 3139,
+    "base": "dev",
+    "allowedFinalMetadataChange": "Exactly CLEANUP-VERIFICATION.json; currentmanifest source records/digest unchanged",
+    "newHeadRemoteChecks": "Not run before publication; not implied green"
+  },
+  "nativeReviewPointer": {
+    "task": "t_muywbtbs77e69d64",
+    "worker": "orchestrator",
+    "storedExactReadback": true,
+    "taskStatusStill": "done",
+    "claimantReportAdded": false,
+    "originalG8G9StatusesChanged": false
   }
 }
