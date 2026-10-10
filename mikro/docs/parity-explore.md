@@ -15,6 +15,11 @@ below and it is enormous. Quality is the discriminator (design M2, decision 7).
 (*Round 2 — the frozen-suite shot*, at the bottom). They agree, and round 1's
 line is unchanged by round 2.
 
+**Historical reproduction:** the benchmark tools, recipe snapshots and recorded
+runs used below are archived together. See the [archive index](../.genie/INDEX.md)
+for the immutable snapshot; run those historical commands from that full snapshot,
+not this cleaned checkout. No results, scores or model recommendations are changed.
+
 ---
 
 ## The suite
@@ -47,7 +52,7 @@ Every run goes through the real MCP path, the pattern `scripts/smoke-explore.mjs
 established: an MCP SDK client over `node dist/src/cli.js mcp --dir <task
 root>`, one `tools/call` of `mikro_explore` carrying the task's verbatim
 question as `prompt`. Harness:
-[`parity/run-task.mjs`](../.genie/wishes/rlmx-explore-offload/parity/run-task.mjs).
+[`parity/run-task.mjs`](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/mikro/.genie/wishes/rlmx-explore-offload/parity/run-task.mjs).
 
 The recipe is installed into a **scratch `HOME`'s `~/.mikro/agents/explore/`** —
 discovery root #1 (`src/mcp/agents.ts:56-68`) — with only its `model:` line
@@ -91,7 +96,7 @@ harder for mikro and cannot manufacture a false pass.
 
 The ground truth was re-verified against the trees as they stand rather than
 assumed —
-[`parity/verify-native.mjs`](../.genie/wishes/rlmx-explore-offload/parity/verify-native.mjs)
+[`parity/verify-native.mjs`](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/mikro/.genie/wishes/rlmx-explore-offload/parity/verify-native.mjs)
 reopens every checklist anchor and checks the recorded line text is still there:
 
 ```text
@@ -165,7 +170,7 @@ Pass = all three.
 ### Scoring conventions
 
 Criteria 2 and 3 are decided mechanically by
-[`parity/score-task.mjs`](../.genie/wishes/rlmx-explore-offload/parity/score-task.mjs),
+[`parity/score-task.mjs`](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/mikro/.genie/wishes/rlmx-explore-offload/parity/score-task.mjs),
 which opens the files. The conventions below are stated once and applied to
 both arms:
 
@@ -201,7 +206,7 @@ both arms:
   computed. The mechanical pass reports two proxies per fact — whether the
   answer names the anchor file at all, and whether it carries the term the fact
   was anchored on — and the judgement is recorded fact-by-fact in
-  [evidence-group-4.md](../.genie/wishes/rlmx-explore-offload/evidence-group-4.md).
+  [evidence-group-4.md](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/mikro/.genie/wishes/rlmx-explore-offload/evidence-group-4.md).
   Both a strict reading (the claim's named subject must appear) and a generous
   one (claim substance only, added detail not required) were scored. **No task
   verdict in this report differs between the two readings.**
@@ -232,7 +237,7 @@ both arms:
   column. Under the
   basename column 8 recorded runs do (5 on task 2, 2 on task 5, 1 on the post-gate re-check),
   and all 8 judgements are published in
-  [evidence-group-4.md §4](../.genie/wishes/rlmx-explore-offload/evidence-group-4.md).
+  [evidence-group-4.md §4](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/mikro/.genie/wishes/rlmx-explore-offload/evidence-group-4.md).
   Every one of them fails, under both readings.
 - **The answer is what the tool returned.** When a run ends on mikro's
   forced-final path (`src/rlm.ts:857`), the returned text can contain REPL
@@ -248,7 +253,7 @@ Two harness defects were found and fixed mid-run. Neither is a prompt or budget
 change, and both are recorded here because they changed results:
 
 1. **Concurrency capped** (
-   [`parity/run-round.sh`](../.genie/wishes/rlmx-explore-offload/parity/run-round.sh)).
+   [`parity/run-round.sh`](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/mikro/.genie/wishes/rlmx-explore-offload/parity/run-round.sh)).
    Six concurrent explore agents against one khal key produced first-call
    timeouts — `0 in / 0 out` after ~300s — which had nothing to do with the
    model's answer and would have been scored as task failures. It affected
@@ -286,10 +291,10 @@ overwritten re-runs), kimi $1.55, haiku $6.89.
 > into the commit, and silently excluded from the matrix by a hard-coded filter;
 > and seven runs had been re-run after scoring, overwriting the run JSON while
 > the score JSON beside it kept describing the earlier run. Both are logged
-> below and in [evidence-group-4.md §11](../.genie/wishes/rlmx-explore-offload/evidence-group-4.md).
+> below and in [evidence-group-4.md §11](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/mikro/.genie/wishes/rlmx-explore-offload/evidence-group-4.md).
 
 Per-round, per-task mechanical results are in
-[evidence-group-4.md](../.genie/wishes/rlmx-explore-offload/evidence-group-4.md);
+[evidence-group-4.md](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/mikro/.genie/wishes/rlmx-explore-offload/evidence-group-4.md);
 the summaries below name what changed, why, and what it did.
 
 ### Tier 1 — `khal/deepseek-v4-flash` (the shipped default)
@@ -449,7 +454,7 @@ Four of the six are below threshold on both columns. Tasks 2 and 5 reach it on
 the basename column, so neither is settled mechanically and **both were judged
 fact by fact** — task 2 at 6 strict / 8 generous against a threshold of 9, task 5
 at 2 strict / 3 generous against a threshold of 5. The judgements are in
-[evidence-group-4.md §4](../.genie/wishes/rlmx-explore-offload/evidence-group-4.md).
+[evidence-group-4.md §4](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/mikro/.genie/wishes/rlmx-explore-offload/evidence-group-4.md).
 
 ---
 
@@ -498,7 +503,7 @@ mentions the file it is about). Tasks 2 and 5
 reach their thresholds on the basename column and were judged fact by fact, as
 were the four other task-2 runs that do the same (`r1`, `r2`, `r3`, `r14`) and
 the post-gate re-check. Every one fails, under both readings; the judgements are
-in [evidence-group-4.md §4](../.genie/wishes/rlmx-explore-offload/evidence-group-4.md).
+in [evidence-group-4.md §4](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/mikro/.genie/wishes/rlmx-explore-offload/evidence-group-4.md).
 
 > **Correction.** The first publication named `r8-mimo-tune3` as task 2's best
 > clean run and reported "7 of 10 judged". That judgement was made against an
@@ -586,7 +591,7 @@ round, judged every run reaching its threshold under either reading of the
 anchor bound, and withdrew two published numbers whose evidence had been
 overwritten. Nothing it found moved a task from FAIL to PASS; what it changed is
 recorded in
-[evidence-group-4.md §11](../.genie/wishes/rlmx-explore-offload/evidence-group-4.md).
+[evidence-group-4.md §11](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/mikro/.genie/wishes/rlmx-explore-offload/evidence-group-4.md).
 
 Per decision 5, the "parity model" is whichever tier passed the gate. **No tier
 passed, so there is no parity model**, and Wish B's shootout has no
@@ -762,7 +767,7 @@ longer existed (§11).
 
 | | |
 |---|---|
-| Round label | `r2-shot-gen1-flash` — records under [`parity/runs/r2-shot-gen1-flash/`](../.genie/wishes/rlmx-explore-offload/parity/runs/r2-shot-gen1-flash/) |
+| Round label | `r2-shot-gen1-flash` — records under [`parity/runs/r2-shot-gen1-flash/`](https://github.com/automagik-dev/genie/tree/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/mikro/.genie/wishes/rlmx-explore-offload/parity/runs/r2-shot-gen1-flash/) |
 | Recipe | `parity/round2/optimizer/gens/gen-1/recipe`, installed verbatim |
 | `sha256 SYSTEM.md` | `02184f35…` (27,840 chars) — snapshot at `parity/prompts/02184f35….md` |
 | `sha256 agent.yaml` (installed) | `20f8e018…` — identical to the recipe's, because the recipe already declares `khal/deepseek-v4-flash` and the runner's model rewrite was a no-op |
@@ -774,7 +779,7 @@ longer existed (§11).
 | mikro HEAD | `6ec4822` |
 | Task-root HEADs | `/home/namastex/prod/brain` `040bb83`; `/home/namastex/workspace/repos/genie` `71dd019` |
 | Window | 2026-07-27 13:35:02Z → 14:16:22Z, 41 min, **$0.22** of khal spend |
-| Runner | [`parity/runs/r2-shot-gen1-flash/shot.sh`](../.genie/wishes/rlmx-explore-offload/parity/runs/r2-shot-gen1-flash/shot.sh) — a serial specialization of `run-round.sh`; the frozen gate's own runner was not edited |
+| Runner | [`parity/runs/r2-shot-gen1-flash/shot.sh`](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/mikro/.genie/wishes/rlmx-explore-offload/parity/runs/r2-shot-gen1-flash/shot.sh) — a serial specialization of `run-round.sh`; the frozen gate's own runner was not edited |
 
 `PARITY_CALL_TIMEOUT_MS=600000` deserves naming rather than burying: it raises
 the MCP client's *go-silent* tolerance from the frozen gate's 300 s. A recursive

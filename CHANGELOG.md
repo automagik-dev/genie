@@ -64,6 +64,10 @@ Wish: `wish/tui-native-selection`.
   proof refuses collection. Source refs cannot attest themselves or erase
   independent Genie history. Prefixed files stay excluded and recorded proof
   remains additive.
+- Historical Mikro planning/runs and superseded engine-split evidence are archived
+  at immutable commit `1b58ca73a1b9e322597a41000cc4ebd897e86bdc`, rather than repeated
+  in the current source tree. Frozen consumer inputs and both original reviews
+  remain; archive indexes preserve access to failures and incomplete paid results.
 
 
 ### `genie update` repaired for hosts on 5.260831.x

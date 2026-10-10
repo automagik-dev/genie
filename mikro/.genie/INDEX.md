@@ -1,48 +1,47 @@
-# Mikro lifecycle index
+# Mikro historical artifacts
 
-Reconciled on 2026-08-31 after planning review split the over-broad recovery umbrella into independently payable designs. Git-backed plans are durable; no execution authority is inferred from a design, an old wish, or an empty local board.
+The imported planning journal, historical benchmark tools, recipe variants,
+mailbox and recorded runs are archived together at immutable Genie commit
+`1b58ca73a1b9e322597a41000cc4ebd897e86bdc`. They remain in Git history, not the final code-review diff.
 
-## Program
+- [Full historical Mikro artifact tree](https://github.com/automagik-dev/genie/tree/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/mikro/.genie)
+- [Original Mikro index](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/mikro/.genie/INDEX.md)
+- [Full historical package](https://github.com/automagik-dev/genie/tree/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/mikro)
+- [Source-only cleanup evidence](../../.genie/wishes/mikro-engine-split/evidence/INDEX.md)
 
-- [Mikro evidence-led recovery portfolio charter](brainstorms/mikro-nine-wish-triage/DESIGN.md) — **NON-EXECUTABLE; prior umbrella review FIX-FIRST; no SHIP stamp.** Coordinates seven children, waves, clean B0/P0 bootstrap, exclusive `dev` integration, and final identity/rollback rules. Never pass this charter to singular `wish`.
-- `PROGRAM.md` — superseded historical umbrella retained only in the local recovery workspace; it is not part of this reviewed candidate and grants no execution authority.
+## Retained inputs
 
-## Ready — reviewed SHIP
+Production source, tests, npm/build/CI contracts and generated `dist/` stay intact.
+These historical files remain **byte-for-byte** because current scripts read them:
 
-Each entry below is one single-wish child at WRS 100/100 with independently verified SHIP evidence. This index records readiness only; execution still requires its own `wish` handoff and approval.
+- `evidence/prime-runtime-benchmark/model-benchmark-sdk-v2-selection-lock.json`
+  — `scripts/benchmark-runtimes-v2.mjs` reads/hashes this selection input.
+- `wishes/rlmx-explore-offload/parity/round2/train-tasks/{3,4,5,6,7}.md`
+  — `scripts/eval-routing.mjs` checks the exact pre-registered question hashes.
+- `wishes/rlmx-explore-offload/parity/round2/optimizer/gens/gen-4/rep-2/runs/task-5.json`
+  — that same script verifies the real recorded failed answer, not a synthetic copy.
 
-- [npm-only reproducible toolchain](brainstorms/mikro-npm-only-toolchain/DESIGN.md) — one npm/package-lock authority, pre-install hard guard, no dependency upgrades.
-- [Cache contract truth](brainstorms/mikro-cache-contract-truth/DESIGN.md) — obsolete TTL/expire-time keys hard-fail and require a manual choice of `cache.retention: short` or `cache.retention: long`; no semantic auto-migration.
-- [Prime 0.8.1 reconciliation](brainstorms/mikro-prime-081-reconciliation/DESIGN.md) — evidence-first eligibility gate with truthful CAP-09 gap; Mikro remains default unless every later gate and owner decision passes.
-- [Orchestration CLI truth](brainstorms/mikro-orchestration-cli-truth/DESIGN.md) — removed `--parallel` hard failure and complete query-only JSONL with terminal failure and awaited flush.
-- [ACP correctness and opt-in direct mode](brainstorms/mikro-acp-correctness-direct-mode/DESIGN.md) — loop-default selector, serialized hierarchical leases, bounded direct completion, and transactional successful-turn storage.
-- [Repeated CLI context roots](brainstorms/mikro-repeated-cli-context-roots/DESIGN.md) — schema-visible repeatability, ordered canonical-root dedupe, singleton byte parity, deterministic collision identities for query/cache/batch.
-- [Dev and release promotion](brainstorms/mikro-dev-release-promotion/DESIGN.md) — clean B0/P0 lane, exclusive compare-and-fast-forward `dev`, exact-SHA journeys, one rolling PR, identity-bound merge/release and revert-only rollback.
+The complete numeric gate/training task suites, authored specification, selection
+policy and their explanatory README are retained together as fixture definitions.
+Their original historical reproduction commands require the archived tool suite.
 
-## Delivered to dev — awaiting promotion
+## Historical reproduction
 
-- [Declared tools truth](brainstorms/mikro-declared-tools-truth/DESIGN.md) → [WISH.md](wishes/mikro-declared-tools-truth/WISH.md) — M1+M2 of the brain handoff: default backend loads declared `tools:` through a REPL `tool_request` bridge, sidecar `<tool>.schema.json`, `rlmDriver` throws `NoExposableToolsError` instead of silent one-shot, unresolved/reserved/colliding tools advertised `UNAVAILABLE`. Design review SHIP (three rounds) and plan review SHIP (two rounds) on 2026-09-03; six groups in three waves merged to `dev` at `b3d4a31` via [PR #149](https://github.com/automagik-dev/mikro/pull/149). Acceptance evidence is isolated in [PR #150](https://github.com/automagik-dev/mikro/pull/150), whose merge is a separate Felipe decision. A `juice/GLM-5.3` canary answered and stored `thinkingLevel: max`, but `session_status` rendered `think high`; effective max remains unproven, so the exact default final gate is `UNAVAILABLE` and no reviewer was started. No `dev → main` PR or promotion is authorized.
+The reporting tools and all their recorded inputs were archived coherently. Do
+not run old commands against an incomplete cleaned tree or silently treat missing
+records as zero/success. Inspect an isolated full historical snapshot instead:
 
-## Superseded wish records
+```sh
+archive_dir="$(mktemp -d)"
+git archive 1b58ca73a1b9e322597a41000cc4ebd897e86bdc mikro/ | tar -x -C "$archive_dir"
+```
 
-These local-only wish paths are historical planning inputs, not links in this reviewed candidate. They are not the executable handoff for the corrected portfolio and were not modified by this correction.
+Original documented dependencies, external checkouts and operator prerequisites
+still apply; their availability is not certified here. No benchmark rerun,
+rescore or provider call is part of cleanup. All historical failures and scores
+remain unchanged.
 
-- `wishes/mikro-sanitize-recovered-data/WISH.md` — retired/out of the corrected product program.
-- `wishes/mikro-reproducible-toolchain/WISH.md` — superseded by the npm-only child design above.
-- `wishes/mikro-cache-ttl-enforcement/WISH.md` — superseded by cache contract truth; arbitrary TTL remains out.
-- `wishes/mikro-prime-backend-reconciliation/WISH.md` — superseded by the deterministic Prime 0.8.1 child design above.
-- `wishes/mikro-orchestration-quality-repro/WISH.md` — broad reproduction retired; narrow CLI truth moved to its child.
-- `wishes/mikro-acp-direct-recovery/WISH.md` — superseded by the ordered ACP child design above.
-- `wishes/mikro-context-targeting/WISH.md` — superseded by the repeated CLI roots child design above.
-- `wishes/mikro-release-truth/WISH.md` — superseded by the dev/release promotion child design above.
-- `wishes/mikro-remote-ref-retirement/WISH.md` — retired/out; no remote branch deletion in this program.
-
-## Delivery admission
-
-No child is admitted by this index alone. The delivery child must first freeze fresh `origin/main` B0, replay the reviewed Prime patch/manifest into a clean worktree as P0, create remote `dev` from B0 under an exclusive integrator, and establish the canonical draft rolling PR. Every child then requires independent review, its own approved wish, exact path ownership/base, aggregate wave gates, and expected-SHA remote/CI/install read-back.
-
-## Historical sources
-
-- `wishes/_archive/INDEX.md` — local archive of delivered, settled, and superseded legacy plans; not included in this candidate.
-- `brainstorms/_archive/INDEX.md` — local archive of completed historical design records; not included in this candidate.
-- `TRIAGE.md` — local recovery and triage ledger; not included in this candidate.
+For any old `.genie/<path>` reference in a selection lock, source comment or report,
+use `https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/mikro/.genie/<path>`.
+This lookup does not promise a file absent from the original import exists; older
+specifications may require earlier source history. No source ancestry is rewritten.

@@ -11,6 +11,14 @@
 | **Repos touched** | Genie; clean committed Mikro history imported under `mikro/`; isolated brain fixture snapshots only |
 | **Design** | [DESIGN.md](../../brainstorms/mikro-engine-split/DESIGN.md) |
 
+Historical review/evidence links below now resolve to immutable commit
+`1b58ca73a1b9e322597a41000cc4ebd897e86bdc`; see the [evidence index](evidence/INDEX.md).
+The journal's original identities, approvals, failures and pending whole-wish criteria
+are historical statements, not reassessments of the cleaned tree. The exact original
+[publication WISH](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/.genie/wishes/mikro-engine-split/WISH.md)
+remains accessible. Only archival link destinations and this cleanup documentation change;
+the signed design, criteria and paid data are not rewritten.
+
 ## Summary
 
 Deliver explicit RLM and protocol-free Pi engines, bounded RLM reliability repairs, Genie proposal-only NEW verification and workflow engine selection. Preserve Mikro history as an independently gated Genie subtree, add explicitly configured Juice project keys/usage and manual Keeper/JEV extraction, and compare actual success/cost/latency on frozen parent-tree cases and real wish variants. No automatic routing or main promotion; no Pro or Claude model calls.
@@ -423,7 +431,7 @@ Execution ruling G1: the initial 1,501-file import tree is byte-identical to the
 
 Execution ruling G1 repair 1/B=2, quality loop 1: independent PackageBoundaryReview and PackageBoundaryQuality assessed committed candidate `7c0eedc01f284bdec1e647f257b83dafa84599db` and returned FIX-FIRST. Actual root Knip crossed into Mikro tests; an explicit ignored child workspace retains the previous root Knip entries/project/options and has passed `bun run dead-code`. Imported source ancestry plus `mikro/` paths polluted the full-history Genie retirement catalog. The shared updater accepted an enclosing Git worktree and could reset Genie. Existing package-boundary obligations own `scripts/legacy-skills-catalog.ts` and its owning tests, plus `mikro/bin/install-state.mjs` and its owning install-coordination tests. Dedicated native cards `t_muukqrbs0fcc1b98` and `t_muukqrpx618bac1f` were claimed before those edits; no engine/provider/API, original WIP, root generated catalog or frozen metrics consumer ownership widened. Workers deferred verification. Coordinator compilation passed; regression-before/after, full gates and fresh independent verdicts remain pending. This is a bounded implementation ruling, not a SHIP or promotion receipt.
 
-G1 verification after repair: isolated pre-repair updater regression failed on byte-identical parent-index preservation; the repaired launcher/direct compiled CLI/direct worker regression passed, and a standalone linked-worktree update passed. Isolated pre-repair catalog runs leaked all three foreign identities for both unrelated and shared ancestry; all 26 owning/catalog tests now pass, and full-history `--check` retains 40 retired Genie names/95 descriptions. Mikro build/check/full suite passed 1,127 tests with no failures, then actual isolated install/dirty-refusal/forced-update smoke passed. Serialized root aggregate passed all stages and 3,201 tests (2 skips, 0 failures) across the original 156 test files. Existing doctor complexity warning and four Knip hints remain visible, not suppressed. Actual Linux release builder passed source/staging/extracted payload/version checks, emitted a 35 MB archive, and its compiled binary returned `6.261005.1` plus the existing `mikro --help` surface. Fresh original Mikro HEAD/index/nine WIP/settings hashes still match the frozen record. Retained proof: [G1 repair verification](evidence/G1-REPAIR-VERIFICATION.json). G1 remains in progress pending fresh reviews of the committed repair; no production installation, release promotion or merge occurred.
+G1 verification after repair: isolated pre-repair updater regression failed on byte-identical parent-index preservation; the repaired launcher/direct compiled CLI/direct worker regression passed, and a standalone linked-worktree update passed. Isolated pre-repair catalog runs leaked all three foreign identities for both unrelated and shared ancestry; all 26 owning/catalog tests now pass, and full-history `--check` retains 40 retired Genie names/95 descriptions. Mikro build/check/full suite passed 1,127 tests with no failures, then actual isolated install/dirty-refusal/forced-update smoke passed. Serialized root aggregate passed all stages and 3,201 tests (2 skips, 0 failures) across the original 156 test files. Existing doctor complexity warning and four Knip hints remain visible, not suppressed. Actual Linux release builder passed source/staging/extracted payload/version checks, emitted a 35 MB archive, and its compiled binary returned `6.261005.1` plus the existing `mikro --help` surface. Fresh original Mikro HEAD/index/nine WIP/settings hashes still match the frozen record. Retained proof: [G1 repair verification](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/.genie/wishes/mikro-engine-split/evidence/G1-REPAIR-VERIFICATION.json). G1 remains in progress pending fresh reviews of the committed repair; no production installation, release promotion or merge occurred.
 
 Artifact persistence ruling: root `.gitignore` keeps brainstorm working notes machine-local, so no force-add of DRAFT/HANDOFF/brainstorm evidence. The tracked owner handoff is a sanitized publication copy with its original SHA256; the complete original remains private. Byte-identical baseline inputs and frozen fixture/diagnostic/import/repair receipts are persisted under this wish's `inputs/` and `evidence/`, following documents-in-git ownership. The signed DESIGN remains unchanged; its historical source citations retain their original identities. Subsequent execution uses the tracked wish copies.
 
@@ -434,9 +442,9 @@ G1 final exact-SHA reviews: **SHIP / SHIP**, G1BoundaryRereview and independent 
 Wave2 fresh-session resume: parked G2/G5/G7 claims were explicitly reclaimed after the
 owner requested normal resumption. The original machine-local handoff and signed design
 remain unchanged. Current source identities are sealed in
-[`RESUME-WAVE2-REVIEW-SNAPSHOT.json`](evidence/RESUME-WAVE2-REVIEW-SNAPSHOT.json);
+[`RESUME-WAVE2-REVIEW-SNAPSHOT.json`](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/.genie/wishes/mikro-engine-split/evidence/RESUME-WAVE2-REVIEW-SNAPSHOT.json);
 observed checks and sanitized receipts are in
-[`RESUME-WAVE2-VERIFICATION.json`](evidence/RESUME-WAVE2-VERIFICATION.json).
+[`RESUME-WAVE2-VERIFICATION.json`](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/.genie/wishes/mikro-engine-split/evidence/RESUME-WAVE2-VERIFICATION.json).
 
 G2 final repair 3/cap 3 verification: current child `npm run build && npm run check &&
 npm test` exited 0 with 1,172 passing tests across 207 suites, zero failures/cancellations/
@@ -492,7 +500,7 @@ built-in Flash again returned `READY`, input 11/output 2/one call/cost $0.000005
 
 G2 final independent re-reviews: **SHIP / SHIP**, G2CorrectnessReview and G2QualityReview,
 no findings on the exact bytes in
-[`G2-REPAIR4-REVIEW-SNAPSHOT.json`](evidence/G2-REPAIR4-REVIEW-SNAPSHOT.json).
+[`G2-REPAIR4-REVIEW-SNAPSHOT.json`](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/.genie/wishes/mikro-engine-split/evidence/G2-REPAIR4-REVIEW-SNAPSHOT.json).
 Current `llm.ts` SHA256:
 `c2af1fe8c3aa55dc8140ed32b5a2fcaa156e1453164cd08c1ff60c08bf709b60`.
 Correctness 4/cap 4, quality 2/cap 2, effort escalations 0. G2 is complete, unlocking
@@ -515,14 +523,14 @@ remain unchanged; no model, effort, or scope expansion. Repair and re-review pen
 
 G5 repair 2/B=2, quality loop 2/cap 2: **SHIP / SHIP** for the bounded code slice,
 G5CorrectnessResume and G5QualityResumeReview, no findings on
-[`G5-REPAIR2-REVIEW-SNAPSHOT.json`](evidence/G5-REPAIR2-REVIEW-SNAPSHOT.json).
+[`G5-REPAIR2-REVIEW-SNAPSHOT.json`](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/.genie/wishes/mikro-engine-split/evidence/G5-REPAIR2-REVIEW-SNAPSHOT.json).
 Separate NEW recall now controls benchmark acceptance, nullable NEW metrics appear
 in summaries, and disabled offloads retain render labels without executed receipts.
 Three owning regressions failed before repair; focused validation passed 226 tests
 across eight files with zero failures. Local acceptance and actual report-CLI smokes
 used test receipts, not genuine native workflow or scored experiment credit.
 The normalized root aggregate completion reports 3,203 pass, two skips, zero failures
-across 155 files ([output](evidence/G5-REPAIR2-VERIFICATION.json)); its completed
+across 155 files ([output](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/.genie/wishes/mikro-engine-split/evidence/G5-REPAIR2-VERIFICATION.json)); its completed
 process handle expired before a separate exit-code lookup. Final integrated gates
 will capture exit codes directly. Group 5 remains in progress for dependency-ready
 compiled MCP/generic Flash caller and genuine saved-workflow/accounting proofs.
@@ -548,7 +556,7 @@ complete viewer-secret redaction, decoded JEV input rejection and `-h`.
 Shared ownership is explicit: G3 alone edits `llm.ts`; G4 alone edits custom
 provider pricing; G6 edits only its CLI/viewer/test slice. Actual operational
 proofs and experiments remain pending. Sanitized checkpoint:
-[WAVE3-INITIAL-REVIEW-VERIFICATION.json](evidence/WAVE3-INITIAL-REVIEW-VERIFICATION.json).
+[WAVE3-INITIAL-REVIEW-VERIFICATION.json](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/.genie/wishes/mikro-engine-split/evidence/WAVE3-INITIAL-REVIEW-VERIFICATION.json).
 
 Repair1 verification passed build/typecheck, **361 focused tests** (`artifact://204`,
 `WAVE3_REPAIR1_FOCUSED_EXIT=0`) and **1219 full child tests, 0 failures, 218 suites**
@@ -621,7 +629,7 @@ bills or genuine workflows. Bounded-final smoke runs exactly two SDK model turns
 and enforces both output schemas without an extra final call.
 
 Durable proofs:
-[WAVE3-REPAIR2-REVIEW-SNAPSHOT.json](evidence/WAVE3-REPAIR2-REVIEW-SNAPSHOT.json),
+[WAVE3-REPAIR2-REVIEW-SNAPSHOT.json](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/.genie/wishes/mikro-engine-split/evidence/WAVE3-REPAIR2-REVIEW-SNAPSHOT.json),
 [WAVE3-LIVE-VERIFICATION.json](evidence/WAVE3-LIVE-VERIFICATION.json),
 [WAVE3-AFTER-VERIFICATION.json](evidence/WAVE3-AFTER-VERIFICATION.json),
 [JUICE-CONFIGURED-LIVE-VERIFICATION.json](evidence/JUICE-CONFIGURED-LIVE-VERIFICATION.json).
@@ -672,11 +680,11 @@ lifecycle; the frozen Mikro turn timeout remains 600,000 ms and all model,
 iteration, cost, depth and retry controls remain unchanged.
 
 Durable current evidence:
-[G8-REPAIR2-SOURCE-SNAPSHOT.json](evidence/G8-REPAIR2-SOURCE-SNAPSHOT.json),
-[G8-SOURCE-SHIP.json](evidence/G8-SOURCE-SHIP.json),
-[G8-CWD-DEPTH-PROOF.json](evidence/G8-CWD-DEPTH-PROOF.json),
-[G8-ACCOUNTING-CONSUMER-PROOF.json](evidence/G8-ACCOUNTING-CONSUMER-PROOF.json),
-[G8-REMOTE-POLICY-PROOF.json](evidence/G8-REMOTE-POLICY-PROOF.json),
+[G8-REPAIR2-SOURCE-SNAPSHOT.json](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/.genie/wishes/mikro-engine-split/evidence/G8-REPAIR2-SOURCE-SNAPSHOT.json),
+[G8-SOURCE-SHIP.json](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/.genie/wishes/mikro-engine-split/evidence/G8-SOURCE-SHIP.json),
+[G8-CWD-DEPTH-PROOF.json](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/.genie/wishes/mikro-engine-split/evidence/G8-CWD-DEPTH-PROOF.json),
+[G8-ACCOUNTING-CONSUMER-PROOF.json](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/.genie/wishes/mikro-engine-split/evidence/G8-ACCOUNTING-CONSUMER-PROOF.json),
+[G8-REMOTE-POLICY-PROOF.json](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/.genie/wishes/mikro-engine-split/evidence/G8-REMOTE-POLICY-PROOF.json),
 [OWNER-AUTHORIZATION.json](experiments/forge/OWNER-AUTHORIZATION.json).
 
 Pre-outcome capability freeze: authenticated current catalogs changed both GLM
@@ -913,72 +921,72 @@ remain distinct from the blocked complete-accounting comparison.
 
 Evidence:
 [G8-CANDIDATE-CAPABILITIES.json](evidence/G8-CANDIDATE-CAPABILITIES.json),
-[G8-MANIFEST-BINDING-OWNER-DECISION.json](evidence/G8-MANIFEST-BINDING-OWNER-DECISION.json),
-[G8-REPAIR3-SOURCE-SHIP.json](evidence/G8-REPAIR3-SOURCE-SHIP.json),
-[G8-FIXTURE-HASH-OWNER-DECISION.json](evidence/G8-FIXTURE-HASH-OWNER-DECISION.json),
-[G8-REPAIR4-SOURCE-SNAPSHOT.json](evidence/G8-REPAIR4-SOURCE-SNAPSHOT.json),
-[G8-REPAIR4-SOURCE-SHIP.json](evidence/G8-REPAIR4-SOURCE-SHIP.json),
-[G8-PHYSICAL-FIXTURE-HASH-PROOF.json](evidence/G8-PHYSICAL-FIXTURE-HASH-PROOF.json),
-[G8-FINAL-PROFILE-CHECKS.json](evidence/G8-FINAL-PROFILE-CHECKS.json),
-[G8-NATIVE-SANDBOX-FAILURE.json](evidence/G8-NATIVE-SANDBOX-FAILURE.json),
-[G8-NATIVE-REPAIR5-OWNER-DECISION.json](evidence/G8-NATIVE-REPAIR5-OWNER-DECISION.json),
-[G8-REPAIR5-SOURCE-SNAPSHOT.json](evidence/G8-REPAIR5-SOURCE-SNAPSHOT.json),
-[G8-REPAIR5-SOURCE-SHIP.json](evidence/G8-REPAIR5-SOURCE-SHIP.json),
-[G8-NATIVE-ROOT-DEPTH-PROOF.json](evidence/G8-NATIVE-ROOT-DEPTH-PROOF.json),
-[G8-NATIVE-ROOT-DEPTH-PROBE.json](evidence/G8-NATIVE-ROOT-DEPTH-PROBE.json),
-[G8-CONTAINED-NATIVE-CLONE-PROOF.json](evidence/G8-CONTAINED-NATIVE-CLONE-PROOF.json),
-[G8-CONTAINED-NATIVE-PROFILE-CHECKS.json](evidence/G8-CONTAINED-NATIVE-PROFILE-CHECKS.json),
-[G8-CONTAINED-NATIVE-SDK-PROOF.json](evidence/G8-CONTAINED-NATIVE-SDK-PROOF.json),
-[G8-CONTAINED-NATIVE-PARENT-PREREQUISITE.json](evidence/G8-CONTAINED-NATIVE-PARENT-PREREQUISITE.json),
-[G8-CONTAINED-NATIVE-FACTS-FAILURE.json](evidence/G8-CONTAINED-NATIVE-FACTS-FAILURE.json),
-[G8-CONTAINED-FACTS-CLONE-PROOF.json](evidence/G8-CONTAINED-FACTS-CLONE-PROOF.json),
-[G8-CONTAINED-FACTS-PROFILE-CHECKS.json](evidence/G8-CONTAINED-FACTS-PROFILE-CHECKS.json),
-[G8-CONTAINED-FACTS-MCP-GUARD-PROOF.json](evidence/G8-CONTAINED-FACTS-MCP-GUARD-PROOF.json),
-[G8-CONTAINED-FACTS-INPUT-FREEZE.json](evidence/G8-CONTAINED-FACTS-INPUT-FREEZE.json),
+[G8-MANIFEST-BINDING-OWNER-DECISION.json](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/.genie/wishes/mikro-engine-split/evidence/G8-MANIFEST-BINDING-OWNER-DECISION.json),
+[G8-REPAIR3-SOURCE-SHIP.json](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/.genie/wishes/mikro-engine-split/evidence/G8-REPAIR3-SOURCE-SHIP.json),
+[G8-FIXTURE-HASH-OWNER-DECISION.json](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/.genie/wishes/mikro-engine-split/evidence/G8-FIXTURE-HASH-OWNER-DECISION.json),
+[G8-REPAIR4-SOURCE-SNAPSHOT.json](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/.genie/wishes/mikro-engine-split/evidence/G8-REPAIR4-SOURCE-SNAPSHOT.json),
+[G8-REPAIR4-SOURCE-SHIP.json](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/.genie/wishes/mikro-engine-split/evidence/G8-REPAIR4-SOURCE-SHIP.json),
+[G8-PHYSICAL-FIXTURE-HASH-PROOF.json](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/.genie/wishes/mikro-engine-split/evidence/G8-PHYSICAL-FIXTURE-HASH-PROOF.json),
+[G8-FINAL-PROFILE-CHECKS.json](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/.genie/wishes/mikro-engine-split/evidence/G8-FINAL-PROFILE-CHECKS.json),
+[G8-NATIVE-SANDBOX-FAILURE.json](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/.genie/wishes/mikro-engine-split/evidence/G8-NATIVE-SANDBOX-FAILURE.json),
+[G8-NATIVE-REPAIR5-OWNER-DECISION.json](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/.genie/wishes/mikro-engine-split/evidence/G8-NATIVE-REPAIR5-OWNER-DECISION.json),
+[G8-REPAIR5-SOURCE-SNAPSHOT.json](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/.genie/wishes/mikro-engine-split/evidence/G8-REPAIR5-SOURCE-SNAPSHOT.json),
+[G8-REPAIR5-SOURCE-SHIP.json](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/.genie/wishes/mikro-engine-split/evidence/G8-REPAIR5-SOURCE-SHIP.json),
+[G8-NATIVE-ROOT-DEPTH-PROOF.json](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/.genie/wishes/mikro-engine-split/evidence/G8-NATIVE-ROOT-DEPTH-PROOF.json),
+[G8-NATIVE-ROOT-DEPTH-PROBE.json](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/.genie/wishes/mikro-engine-split/evidence/G8-NATIVE-ROOT-DEPTH-PROBE.json),
+[G8-CONTAINED-NATIVE-CLONE-PROOF.json](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/.genie/wishes/mikro-engine-split/evidence/G8-CONTAINED-NATIVE-CLONE-PROOF.json),
+[G8-CONTAINED-NATIVE-PROFILE-CHECKS.json](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/.genie/wishes/mikro-engine-split/evidence/G8-CONTAINED-NATIVE-PROFILE-CHECKS.json),
+[G8-CONTAINED-NATIVE-SDK-PROOF.json](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/.genie/wishes/mikro-engine-split/evidence/G8-CONTAINED-NATIVE-SDK-PROOF.json),
+[G8-CONTAINED-NATIVE-PARENT-PREREQUISITE.json](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/.genie/wishes/mikro-engine-split/evidence/G8-CONTAINED-NATIVE-PARENT-PREREQUISITE.json),
+[G8-CONTAINED-NATIVE-FACTS-FAILURE.json](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/.genie/wishes/mikro-engine-split/evidence/G8-CONTAINED-NATIVE-FACTS-FAILURE.json),
+[G8-CONTAINED-FACTS-CLONE-PROOF.json](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/.genie/wishes/mikro-engine-split/evidence/G8-CONTAINED-FACTS-CLONE-PROOF.json),
+[G8-CONTAINED-FACTS-PROFILE-CHECKS.json](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/.genie/wishes/mikro-engine-split/evidence/G8-CONTAINED-FACTS-PROFILE-CHECKS.json),
+[G8-CONTAINED-FACTS-MCP-GUARD-PROOF.json](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/.genie/wishes/mikro-engine-split/evidence/G8-CONTAINED-FACTS-MCP-GUARD-PROOF.json),
+[G8-CONTAINED-FACTS-INPUT-FREEZE.json](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/.genie/wishes/mikro-engine-split/evidence/G8-CONTAINED-FACTS-INPUT-FREEZE.json),
 [G8-CONTAINED-FACTS-NATIVE-SMOKE.json](evidence/G8-CONTAINED-FACTS-NATIVE-SMOKE.json),
-[G8-ENGINE-TIMESTAMP-PREFLIGHT.json](evidence/G8-ENGINE-TIMESTAMP-PREFLIGHT.json),
-[G8-ENGINE-INPUT-FREEZE.json](evidence/G8-ENGINE-INPUT-FREEZE.json),
-[G9-INTEGRATED-SOURCE-CORRECTNESS.json](evidence/G9-INTEGRATED-SOURCE-CORRECTNESS.json),
-[G9-INTEGRATED-SOURCE-QUALITY.json](evidence/G9-INTEGRATED-SOURCE-QUALITY.json),
-[G3-CAP-RECEIPT-OWNER-DECISION.json](evidence/G3-CAP-RECEIPT-OWNER-DECISION.json),
-[G3-CAP-RECEIPT-BEFORE-PROOF.json](evidence/G3-CAP-RECEIPT-BEFORE-PROOF.json),
+[G8-ENGINE-TIMESTAMP-PREFLIGHT.json](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/.genie/wishes/mikro-engine-split/evidence/G8-ENGINE-TIMESTAMP-PREFLIGHT.json),
+[G8-ENGINE-INPUT-FREEZE.json](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/.genie/wishes/mikro-engine-split/evidence/G8-ENGINE-INPUT-FREEZE.json),
+[G9-INTEGRATED-SOURCE-CORRECTNESS.json](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/.genie/wishes/mikro-engine-split/evidence/G9-INTEGRATED-SOURCE-CORRECTNESS.json),
+[G9-INTEGRATED-SOURCE-QUALITY.json](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/.genie/wishes/mikro-engine-split/evidence/G9-INTEGRATED-SOURCE-QUALITY.json),
+[G3-CAP-RECEIPT-OWNER-DECISION.json](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/.genie/wishes/mikro-engine-split/evidence/G3-CAP-RECEIPT-OWNER-DECISION.json),
+[G3-CAP-RECEIPT-BEFORE-PROOF.json](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/.genie/wishes/mikro-engine-split/evidence/G3-CAP-RECEIPT-BEFORE-PROOF.json),
 [G3-CAP-RECEIPT-AFTER-PROOF.json](evidence/G3-CAP-RECEIPT-AFTER-PROOF.json),
 [G3-CAP-RECEIPT-REPAIR3-SNAPSHOT.json](evidence/G3-CAP-RECEIPT-REPAIR3-SNAPSHOT.json),
 [G3-CAP-RECEIPT-REPAIR3-CORRECTNESS.json](evidence/G3-CAP-RECEIPT-REPAIR3-CORRECTNESS.json),
 [G3-CAP-RECEIPT-REPAIR3-QUALITY.json](evidence/G3-CAP-RECEIPT-REPAIR3-QUALITY.json),
-[G8-PRE-REPAIR-COHORT-PRESERVATION.json](evidence/G8-PRE-REPAIR-COHORT-PRESERVATION.json),
-[G8-RECEIPT3-NATIVE-CLONE-PROOF.json](evidence/G8-RECEIPT3-NATIVE-CLONE-PROOF.json),
-[G8-RECEIPT3-CAP-FINAL-SMOKE.json](evidence/G8-RECEIPT3-CAP-FINAL-SMOKE.json),
-[G9-RECEIPT3-ROOT-FULL-GATE.json](evidence/G9-RECEIPT3-ROOT-FULL-GATE.json),
-[G9-MIKRO-RECEIPT3-INSTALL-SMOKE.json](evidence/G9-MIKRO-RECEIPT3-INSTALL-SMOKE.json),
-[G9-RECEIPT3-ALL-FOUR-RELEASE-PAYLOADS.json](evidence/G9-RECEIPT3-ALL-FOUR-RELEASE-PAYLOADS.json),
-[G9-RECEIPT3-RELEASE-SURFACE.json](evidence/G9-RECEIPT3-RELEASE-SURFACE.json),
-[G9-RECEIPT3-MUSL-RUNTIME-PROOF.json](evidence/G9-RECEIPT3-MUSL-RUNTIME-PROOF.json),
-[G8-RECEIPT3-ENGINE-PROFILES.json](evidence/G8-RECEIPT3-ENGINE-PROFILES.json),
-[G8-RECEIPT3-NATIVE-INPUT-FREEZE.json](evidence/G8-RECEIPT3-NATIVE-INPUT-FREEZE.json),
-[G8-RECEIPT3-MCP-GUARD-PROOF.json](evidence/G8-RECEIPT3-MCP-GUARD-PROOF.json),
-[G8-RECEIPT3-NATIVE-PROFILE-CHECKS.json](evidence/G8-RECEIPT3-NATIVE-PROFILE-CHECKS.json),
+[G8-PRE-REPAIR-COHORT-PRESERVATION.json](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/.genie/wishes/mikro-engine-split/evidence/G8-PRE-REPAIR-COHORT-PRESERVATION.json),
+[G8-RECEIPT3-NATIVE-CLONE-PROOF.json](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/.genie/wishes/mikro-engine-split/evidence/G8-RECEIPT3-NATIVE-CLONE-PROOF.json),
+[G8-RECEIPT3-CAP-FINAL-SMOKE.json](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/.genie/wishes/mikro-engine-split/evidence/G8-RECEIPT3-CAP-FINAL-SMOKE.json),
+[G9-RECEIPT3-ROOT-FULL-GATE.json](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/.genie/wishes/mikro-engine-split/evidence/G9-RECEIPT3-ROOT-FULL-GATE.json),
+[G9-MIKRO-RECEIPT3-INSTALL-SMOKE.json](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/.genie/wishes/mikro-engine-split/evidence/G9-MIKRO-RECEIPT3-INSTALL-SMOKE.json),
+[G9-RECEIPT3-ALL-FOUR-RELEASE-PAYLOADS.json](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/.genie/wishes/mikro-engine-split/evidence/G9-RECEIPT3-ALL-FOUR-RELEASE-PAYLOADS.json),
+[G9-RECEIPT3-RELEASE-SURFACE.json](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/.genie/wishes/mikro-engine-split/evidence/G9-RECEIPT3-RELEASE-SURFACE.json),
+[G9-RECEIPT3-MUSL-RUNTIME-PROOF.json](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/.genie/wishes/mikro-engine-split/evidence/G9-RECEIPT3-MUSL-RUNTIME-PROOF.json),
+[G8-RECEIPT3-ENGINE-PROFILES.json](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/.genie/wishes/mikro-engine-split/evidence/G8-RECEIPT3-ENGINE-PROFILES.json),
+[G8-RECEIPT3-NATIVE-INPUT-FREEZE.json](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/.genie/wishes/mikro-engine-split/evidence/G8-RECEIPT3-NATIVE-INPUT-FREEZE.json),
+[G8-RECEIPT3-MCP-GUARD-PROOF.json](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/.genie/wishes/mikro-engine-split/evidence/G8-RECEIPT3-MCP-GUARD-PROOF.json),
+[G8-RECEIPT3-NATIVE-PROFILE-CHECKS.json](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/.genie/wishes/mikro-engine-split/evidence/G8-RECEIPT3-NATIVE-PROFILE-CHECKS.json),
 [G8-RECEIPT3-NATIVE-SMOKE.json](evidence/G8-RECEIPT3-NATIVE-SMOKE.json),
-[G8-RECEIPT3-ENGINE-INPUT-FREEZE.json](evidence/G8-RECEIPT3-ENGINE-INPUT-FREEZE.json),
-[G9-RECEIPT3-SMOKE-CLEANUP.json](evidence/G9-RECEIPT3-SMOKE-CLEANUP.json),
-[G8-RECEIPT3-ENGINE-108-COMPLETE.json](evidence/G8-RECEIPT3-ENGINE-108-COMPLETE.json),
-[G8-RECEIPT3-ENGINE-OBSERVATIONS.json](evidence/G8-RECEIPT3-ENGINE-OBSERVATIONS.json),
-[G8-RECEIPT3-SDK-COVERAGE-DIAGNOSIS.json](evidence/G8-RECEIPT3-SDK-COVERAGE-DIAGNOSIS.json),
-[G8-RECEIPT3-ENGINE-CORRECTNESS.json](evidence/G8-RECEIPT3-ENGINE-CORRECTNESS.json),
-[G8-RECEIPT3-ENGINE-QUALITY.json](evidence/G8-RECEIPT3-ENGINE-QUALITY.json),
-[G8-RECEIPT3-ENGINE-QUALITY-CLARIFICATION.json](evidence/G8-RECEIPT3-ENGINE-QUALITY-CLARIFICATION.json),
-[G8-RECEIPT3-ENGINE-CORRECTNESS-CLARIFICATION.json](evidence/G8-RECEIPT3-ENGINE-CORRECTNESS-CLARIFICATION.json),
-[G8-RECEIPT3-NATIVE-18-COMPLETE.json](evidence/G8-RECEIPT3-NATIVE-18-COMPLETE.json),
-[G8-RECEIPT3-FINAL-PAIRED-REPORT.json](evidence/G8-RECEIPT3-FINAL-PAIRED-REPORT.json),
-[G8-RECEIPT3-NATIVE-OBSERVATIONS.json](evidence/G8-RECEIPT3-NATIVE-OBSERVATIONS.json),
-[G8-RECEIPT3-NATIVE-CORRECTNESS.json](evidence/G8-RECEIPT3-NATIVE-CORRECTNESS.json),
-[G8-RECEIPT3-NATIVE-QUALITY.json](evidence/G8-RECEIPT3-NATIVE-QUALITY.json),
-[G9-RECEIPT3-PAID-RUNTIME-PRESERVATION.json](evidence/G9-RECEIPT3-PAID-RUNTIME-PRESERVATION.json),
-[G9-RECEIPT3-READABLE-PAID-RUNTIME.json](evidence/G9-RECEIPT3-READABLE-PAID-RUNTIME.json),
-[G9-RECEIPT3-FINAL-MIKRO-FULL-GATE.json](evidence/G9-RECEIPT3-FINAL-MIKRO-FULL-GATE.json),
-[G9-RECEIPT3-FINAL-INSTALL-SMOKE.json](evidence/G9-RECEIPT3-FINAL-INSTALL-SMOKE.json),
-[G9-RECEIPT3-FINAL-COMPILED-CAP-SMOKE.json](evidence/G9-RECEIPT3-FINAL-COMPILED-CAP-SMOKE.json),
-[G9-RECEIPT3-FINAL-ROOT-FULL-GATE.json](evidence/G9-RECEIPT3-FINAL-ROOT-FULL-GATE.json).
+[G8-RECEIPT3-ENGINE-INPUT-FREEZE.json](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/.genie/wishes/mikro-engine-split/evidence/G8-RECEIPT3-ENGINE-INPUT-FREEZE.json),
+[G9-RECEIPT3-SMOKE-CLEANUP.json](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/.genie/wishes/mikro-engine-split/evidence/G9-RECEIPT3-SMOKE-CLEANUP.json),
+[G8-RECEIPT3-ENGINE-108-COMPLETE.json](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/.genie/wishes/mikro-engine-split/evidence/G8-RECEIPT3-ENGINE-108-COMPLETE.json),
+[G8-RECEIPT3-ENGINE-OBSERVATIONS.json](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/.genie/wishes/mikro-engine-split/evidence/G8-RECEIPT3-ENGINE-OBSERVATIONS.json),
+[G8-RECEIPT3-SDK-COVERAGE-DIAGNOSIS.json](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/.genie/wishes/mikro-engine-split/evidence/G8-RECEIPT3-SDK-COVERAGE-DIAGNOSIS.json),
+[G8-RECEIPT3-ENGINE-CORRECTNESS.json](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/.genie/wishes/mikro-engine-split/evidence/G8-RECEIPT3-ENGINE-CORRECTNESS.json),
+[G8-RECEIPT3-ENGINE-QUALITY.json](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/.genie/wishes/mikro-engine-split/evidence/G8-RECEIPT3-ENGINE-QUALITY.json),
+[G8-RECEIPT3-ENGINE-QUALITY-CLARIFICATION.json](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/.genie/wishes/mikro-engine-split/evidence/G8-RECEIPT3-ENGINE-QUALITY-CLARIFICATION.json),
+[G8-RECEIPT3-ENGINE-CORRECTNESS-CLARIFICATION.json](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/.genie/wishes/mikro-engine-split/evidence/G8-RECEIPT3-ENGINE-CORRECTNESS-CLARIFICATION.json),
+[G8-RECEIPT3-NATIVE-18-COMPLETE.json](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/.genie/wishes/mikro-engine-split/evidence/G8-RECEIPT3-NATIVE-18-COMPLETE.json),
+[G8-RECEIPT3-FINAL-PAIRED-REPORT.json](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/.genie/wishes/mikro-engine-split/evidence/G8-RECEIPT3-FINAL-PAIRED-REPORT.json),
+[G8-RECEIPT3-NATIVE-OBSERVATIONS.json](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/.genie/wishes/mikro-engine-split/evidence/G8-RECEIPT3-NATIVE-OBSERVATIONS.json),
+[G8-RECEIPT3-NATIVE-CORRECTNESS.json](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/.genie/wishes/mikro-engine-split/evidence/G8-RECEIPT3-NATIVE-CORRECTNESS.json),
+[G8-RECEIPT3-NATIVE-QUALITY.json](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/.genie/wishes/mikro-engine-split/evidence/G8-RECEIPT3-NATIVE-QUALITY.json),
+[G9-RECEIPT3-PAID-RUNTIME-PRESERVATION.json](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/.genie/wishes/mikro-engine-split/evidence/G9-RECEIPT3-PAID-RUNTIME-PRESERVATION.json),
+[G9-RECEIPT3-READABLE-PAID-RUNTIME.json](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/.genie/wishes/mikro-engine-split/evidence/G9-RECEIPT3-READABLE-PAID-RUNTIME.json),
+[G9-RECEIPT3-FINAL-MIKRO-FULL-GATE.json](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/.genie/wishes/mikro-engine-split/evidence/G9-RECEIPT3-FINAL-MIKRO-FULL-GATE.json),
+[G9-RECEIPT3-FINAL-INSTALL-SMOKE.json](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/.genie/wishes/mikro-engine-split/evidence/G9-RECEIPT3-FINAL-INSTALL-SMOKE.json),
+[G9-RECEIPT3-FINAL-COMPILED-CAP-SMOKE.json](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/.genie/wishes/mikro-engine-split/evidence/G9-RECEIPT3-FINAL-COMPILED-CAP-SMOKE.json),
+[G9-RECEIPT3-FINAL-ROOT-FULL-GATE.json](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/.genie/wishes/mikro-engine-split/evidence/G9-RECEIPT3-FINAL-ROOT-FULL-GATE.json).
 
 
 ### Final integrated G9 review: FIX-FIRST source, BLOCKED delivery
@@ -1048,18 +1056,18 @@ Genie-dev PR, current remote CI, merge, main promotion or production install.
 All diagnostic throwaway scripts are removed after full source/output proof.
 
 Evidence:
-[candidate identity](evidence/G9-RECEIPT3-FINAL-CANDIDATE-MANIFEST.json),
-[post-document whole root gate](evidence/G9-RECEIPT3-POST-DOC-ROOT-FULL-GATE.json),
-[final four release payloads](evidence/G9-RECEIPT3-FINAL-ALL-FOUR-RELEASE-PAYLOADS.json),
-[source preservation](evidence/G9-RECEIPT3-FINAL-SOURCE-PRESERVATION.json),
-[operator references](evidence/G9-RECEIPT3-FINAL-OPERATOR-REFERENCES.json),
-[original correctness review](evidence/G9-RECEIPT3-FINAL-INTEGRATED-CORRECTNESS.json),
-[original quality FIX-FIRST](evidence/G9-RECEIPT3-FINAL-INTEGRATED-QUALITY.json),
-[actual terminal-accounting red proof](evidence/G9-RECEIPT3-TERMINAL-ACCOUNTING-RED-PROOF.json),
-[correctness reconciliation](evidence/G9-RECEIPT3-CORRECTNESS-RED-PROOF-ADDENDUM.json),
-[quality reproduction addendum](evidence/G9-RECEIPT3-QUALITY-RED-PROOF-ADDENDUM.json),
-[real ordered scoring proof](evidence/G9-RECEIPT3-ORDERED-REAL-SCORING-PROOF.json),
-[independent ordered-scoring PASS](evidence/G9-RECEIPT3-ORDERED-SCORING-REVIEW-ADDENDUM.json).
+[candidate identity](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/.genie/wishes/mikro-engine-split/evidence/G9-RECEIPT3-FINAL-CANDIDATE-MANIFEST.json),
+[post-document whole root gate](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/.genie/wishes/mikro-engine-split/evidence/G9-RECEIPT3-POST-DOC-ROOT-FULL-GATE.json),
+[final four release payloads](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/.genie/wishes/mikro-engine-split/evidence/G9-RECEIPT3-FINAL-ALL-FOUR-RELEASE-PAYLOADS.json),
+[source preservation](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/.genie/wishes/mikro-engine-split/evidence/G9-RECEIPT3-FINAL-SOURCE-PRESERVATION.json),
+[operator references](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/.genie/wishes/mikro-engine-split/evidence/G9-RECEIPT3-FINAL-OPERATOR-REFERENCES.json),
+[original correctness review](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/.genie/wishes/mikro-engine-split/evidence/G9-RECEIPT3-FINAL-INTEGRATED-CORRECTNESS.json),
+[original quality FIX-FIRST](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/.genie/wishes/mikro-engine-split/evidence/G9-RECEIPT3-FINAL-INTEGRATED-QUALITY.json),
+[actual terminal-accounting red proof](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/.genie/wishes/mikro-engine-split/evidence/G9-RECEIPT3-TERMINAL-ACCOUNTING-RED-PROOF.json),
+[correctness reconciliation](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/.genie/wishes/mikro-engine-split/evidence/G9-RECEIPT3-CORRECTNESS-RED-PROOF-ADDENDUM.json),
+[quality reproduction addendum](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/.genie/wishes/mikro-engine-split/evidence/G9-RECEIPT3-QUALITY-RED-PROOF-ADDENDUM.json),
+[real ordered scoring proof](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/.genie/wishes/mikro-engine-split/evidence/G9-RECEIPT3-ORDERED-REAL-SCORING-PROOF.json),
+[independent ordered-scoring PASS](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/.genie/wishes/mikro-engine-split/evidence/G9-RECEIPT3-ORDERED-SCORING-REVIEW-ADDENDUM.json).
 
 ### Owner-authorized G3 repair 4/B4 and source/evidence publication
 
@@ -1095,7 +1103,7 @@ The exact paid runtime is already archived before this source change.
 No repair validation, fresh review SHIP, integration commit, push, primary PR
 or remote CI pass is claimed at dispatch.
 
-Evidence: [exact owner questions and decisions](evidence/G3-TERMINAL-ACCOUNTING-REPAIR4-OWNER-DECISION.json).
+Evidence: [exact owner questions and decisions](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/.genie/wishes/mikro-engine-split/evidence/G3-TERMINAL-ACCOUNTING-REPAIR4-OWNER-DECISION.json).
 
 ### G3 combined repair 4/B4: actual green terminal and receiving boundaries
 
@@ -1138,14 +1146,14 @@ required before exact-path commit and source/evidence-only publication.
 G3 **4/B4**, quality **1/cap1**, G8 **5/B5** and effort **0** remain explicit;
 paid 108+18 results are not repaired-candidate performance evidence.
 
-Evidence: [actual unverified author handoffs](evidence/G3-TERMINAL-ACCOUNTING-REPAIR4-WORKER-HANDOFFS.json),
-[owning gate](evidence/G3-REPAIR4-OWNING-GATE.json),
-[permanent red-before](evidence/G3-REPAIR4-PERMANENT-REGRESSIONS-RED-BEFORE.json),
-[terminal green](evidence/G3-TERMINAL-ACCOUNTING-REPAIR4-GREEN-PROOF.json),
-[cap/IPC green](evidence/G3-CAP-IPC-REPAIR4-GREEN-PROOF.json),
-[actual stdio/Genie client green](evidence/G3-REPAIR4-STDIO-MCP-GENIE-CLIENT-GREEN.json),
-[private cleanup failure](evidence/G3-REPAIR4-STDIO-HARNESS-CLEANUP-FAILURE.json),
-[named-pack fixture diagnosis](evidence/G3-REPAIR4-STDIO-VALIDATE-FIXTURE-FAILURE.json).
+Evidence: [actual unverified author handoffs](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/.genie/wishes/mikro-engine-split/evidence/G3-TERMINAL-ACCOUNTING-REPAIR4-WORKER-HANDOFFS.json),
+[owning gate](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/.genie/wishes/mikro-engine-split/evidence/G3-REPAIR4-OWNING-GATE.json),
+[permanent red-before](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/.genie/wishes/mikro-engine-split/evidence/G3-REPAIR4-PERMANENT-REGRESSIONS-RED-BEFORE.json),
+[terminal green](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/.genie/wishes/mikro-engine-split/evidence/G3-TERMINAL-ACCOUNTING-REPAIR4-GREEN-PROOF.json),
+[cap/IPC green](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/.genie/wishes/mikro-engine-split/evidence/G3-CAP-IPC-REPAIR4-GREEN-PROOF.json),
+[actual stdio/Genie client green](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/.genie/wishes/mikro-engine-split/evidence/G3-REPAIR4-STDIO-MCP-GENIE-CLIENT-GREEN.json),
+[private cleanup failure](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/.genie/wishes/mikro-engine-split/evidence/G3-REPAIR4-STDIO-HARNESS-CLEANUP-FAILURE.json),
+[named-pack fixture diagnosis](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/.genie/wishes/mikro-engine-split/evidence/G3-REPAIR4-STDIO-VALIDATE-FIXTURE-FAILURE.json).
 
 ### Repaired source/evidence candidate: current full gates and independent SHIP
 
@@ -1197,17 +1205,17 @@ Owned private probe scripts/fixtures are removed; full sources/outcomes and
 immutable successful proofs and paid-runtime archives remain preserved.
 
 Evidence:
-[current exact candidate](evidence/G3-REPAIR4-FINAL-CANDIDATE-MANIFEST.json),
-[complete Mikro gate](evidence/G3-REPAIR4-WHOLE-MIKRO-GATE.json),
-[complete Genie gate](evidence/G3-REPAIR4-WHOLE-GENIE-GATE.json),
-[actual standalone install/update](evidence/G3-REPAIR4-INSTALL-UPDATE-SMOKE.json),
-[fresh four release payloads](evidence/G3-REPAIR4-ALL-FOUR-RELEASE-PAYLOADS.json),
-[recorded source/operator preservation](evidence/G3-REPAIR4-SOURCE-OPERATOR-PRESERVATION.json),
-[complete original repaired correctness review](evidence/G3-REPAIR4-FINAL-INTEGRATED-CORRECTNESS.json),
-[explicit limited-source correctness SHIP](evidence/G3-REPAIR4-CORRECTNESS-SOURCE-PUBLICATION-ADDENDUM.json),
-[complete independent quality SHIP](evidence/G3-REPAIR4-FINAL-INTEGRATED-QUALITY.json),
-[original quality-matrix hash binding](evidence/G3-REPAIR4-QUALITY-METADATA-ADDENDUM.json),
-[actual private throwaway cleanup](evidence/G3-REPAIR4-THROWAWAY-CLEANUP.json).
+[current exact candidate](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/.genie/wishes/mikro-engine-split/evidence/G3-REPAIR4-FINAL-CANDIDATE-MANIFEST.json),
+[complete Mikro gate](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/.genie/wishes/mikro-engine-split/evidence/G3-REPAIR4-WHOLE-MIKRO-GATE.json),
+[complete Genie gate](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/.genie/wishes/mikro-engine-split/evidence/G3-REPAIR4-WHOLE-GENIE-GATE.json),
+[actual standalone install/update](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/.genie/wishes/mikro-engine-split/evidence/G3-REPAIR4-INSTALL-UPDATE-SMOKE.json),
+[fresh four release payloads](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/.genie/wishes/mikro-engine-split/evidence/G3-REPAIR4-ALL-FOUR-RELEASE-PAYLOADS.json),
+[recorded source/operator preservation](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/.genie/wishes/mikro-engine-split/evidence/G3-REPAIR4-SOURCE-OPERATOR-PRESERVATION.json),
+[complete original repaired correctness review](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/.genie/wishes/mikro-engine-split/evidence/G3-REPAIR4-FINAL-INTEGRATED-CORRECTNESS.json),
+[explicit limited-source correctness SHIP](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/.genie/wishes/mikro-engine-split/evidence/G3-REPAIR4-CORRECTNESS-SOURCE-PUBLICATION-ADDENDUM.json),
+[complete independent quality SHIP](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/.genie/wishes/mikro-engine-split/evidence/G3-REPAIR4-FINAL-INTEGRATED-QUALITY.json),
+[original quality-matrix hash binding](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/.genie/wishes/mikro-engine-split/evidence/G3-REPAIR4-QUALITY-METADATA-ADDENDUM.json),
+[actual private throwaway cleanup](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/.genie/wishes/mikro-engine-split/evidence/G3-REPAIR4-THROWAWAY-CLEANUP.json).
 
 ### Current-dev discovery reconciliation: final source-only SHIP
 
@@ -1255,15 +1263,15 @@ are not completed by source-only publication. No paid rerun, JEV, resampling,
 regrading, merge/main promotion, production install or adoption claim.
 
 Evidence:
-[observed dev conflict](evidence/G9-SOURCE-ONLY-DEV-CONFIG-RECONCILIATION.json),
-[failed hypotheses and actual corrected smoke](evidence/G9-SOURCE-ONLY-DEV-CONFIG-CORRECTION.json),
-[final exact reconciled candidate](evidence/G9-SOURCE-ONLY-FINAL-RECONCILED-CANDIDATE-MANIFEST.json),
-[current complete root gate](evidence/G9-SOURCE-ONLY-FINAL-WHOLE-GENIE-GATE.json),
-[final independent correctness SHIP](evidence/G9-SOURCE-ONLY-FINAL-RECONCILED-CORRECTNESS.json),
-[final independent quality SHIP](evidence/G9-SOURCE-ONLY-FINAL-RECONCILED-QUALITY.json),
-[preserved conditional correctness](evidence/G9-SOURCE-ONLY-CONFIG-CONDITIONAL-CORRECTNESS.json),
-[preserved conditional quality](evidence/G9-SOURCE-ONLY-CONFIG-CONDITIONAL-QUALITY.json),
-[actual dev checks, not source-head checks](evidence/G9-SOURCE-ONLY-DEV-BASE-CI.json).
+[observed dev conflict](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/.genie/wishes/mikro-engine-split/evidence/G9-SOURCE-ONLY-DEV-CONFIG-RECONCILIATION.json),
+[failed hypotheses and actual corrected smoke](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/.genie/wishes/mikro-engine-split/evidence/G9-SOURCE-ONLY-DEV-CONFIG-CORRECTION.json),
+[final exact reconciled candidate](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/.genie/wishes/mikro-engine-split/evidence/G9-SOURCE-ONLY-FINAL-RECONCILED-CANDIDATE-MANIFEST.json),
+[current complete root gate](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/.genie/wishes/mikro-engine-split/evidence/G9-SOURCE-ONLY-FINAL-WHOLE-GENIE-GATE.json),
+[final independent correctness SHIP](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/.genie/wishes/mikro-engine-split/evidence/G9-SOURCE-ONLY-FINAL-RECONCILED-CORRECTNESS.json),
+[final independent quality SHIP](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/.genie/wishes/mikro-engine-split/evidence/G9-SOURCE-ONLY-FINAL-RECONCILED-QUALITY.json),
+[preserved conditional correctness](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/.genie/wishes/mikro-engine-split/evidence/G9-SOURCE-ONLY-CONFIG-CONDITIONAL-CORRECTNESS.json),
+[preserved conditional quality](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/.genie/wishes/mikro-engine-split/evidence/G9-SOURCE-ONLY-CONFIG-CONDITIONAL-QUALITY.json),
+[actual dev checks, not source-head checks](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/.genie/wishes/mikro-engine-split/evidence/G9-SOURCE-ONLY-DEV-BASE-CI.json).
 
 ### Published-source CI failures: separately authorized bounded repairs
 
@@ -1358,13 +1366,13 @@ The permanent actual-CLI nested/shared regression failed before the repair:
 catalog and strict-CI suites pass **28 / 0**, 104 assertions. The separate real
 catalog smoke now retains the shared Genie retirement description and excludes
 the foreign-only description, **zero external model or JEV calls**. Proof:
-[initial red/green](evidence/G1-CATALOG-SHARED-ANCESTRY-REPAIR3-RED-GREEN.json).
+[initial red/green](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/.genie/wishes/mikro-engine-split/evidence/G1-CATALOG-SHARED-ANCESTRY-REPAIR3-RED-GREEN.json).
 Within this same authorized pass, extending the existing shared case proved
 the intermediate classifier still lost `genie-branch` when an archived Genie
 ref also occurred in source ancestry (**1 pass / 1 fail**). Final graph roots
 restore that independent proof without admitting the declared source ref.
 Both owning suites and the real full-clone catalog/complete strict-CI range
-are green in [final boundary proof](evidence/G1-CATALOG-SHARED-ANCESTRY-REPAIR3-FINAL-BOUNDARY-PROOF.json).
+are green in [final boundary proof](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/.genie/wishes/mikro-engine-split/evidence/G1-CATALOG-SHARED-ANCESTRY-REPAIR3-FINAL-BOUNDARY-PROOF.json).
 The earlier in-flight root gate was cancelled before refinement and is not
 accepted as validation; a fresh final-source root gate replaces it.
 The previous candidate and quality verdict are superseded for source readiness;
@@ -1384,8 +1392,8 @@ matched this snapshot after both gates and diagnostics. The misleading root
 wrapper timeout headline was reported; the complete success footer is retained.
 
 Final independent original-criteria source verdicts are **FIX-FIRST / FIX-FIRST**:
-[correctness](evidence/G9-SOURCE-ONLY-CATALOG-REPAIR3-FINAL-CORRECTNESS.json)
-and [quality](evidence/G9-SOURCE-ONLY-CATALOG-REPAIR3-FINAL-QUALITY.json).
+[correctness](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/.genie/wishes/mikro-engine-split/evidence/G9-SOURCE-ONLY-CATALOG-REPAIR3-FINAL-CORRECTNESS.json)
+and [quality](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/.genie/wishes/mikro-engine-split/evidence/G9-SOURCE-ONLY-CATALOG-REPAIR3-FINAL-QUALITY.json).
 Comparison completeness is **BLOCKED** in both. Whole-wish correctness remains
 **FIX-FIRST**, quality **BLOCKED**; neither is source or delivery clearance.
 
@@ -1411,7 +1419,7 @@ Three blocking source boundaries are now reproduced without external inference:
   **22 input / 14 output once**, not an alleged lost-usage defect.
 
 Complete diagnostic sources, outputs, negative controls and byte-continuity
-proof are [durable](evidence/G9-SOURCE-ONLY-CATALOG-REPAIR3-FINAL-CONTINUITY.json).
+proof are [durable](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/.genie/wishes/mikro-engine-split/evidence/G9-SOURCE-ONLY-CATALOG-REPAIR3-FINAL-CONTINUITY.json).
 Throwaway scripts/fixtures are removed. All three diagnostics made **zero
 external model and zero JEV calls**. Original Mikro HEAD/index, all nine
 recorded unrelated WIP hashes and operator-settings hash still match before.
@@ -1624,4 +1632,15 @@ Publication-only append; every byte of the reviewed 120540-byte WISH prefix rema
 - Owner-authorised G1 C5/B5 Q6/cap6 explicitly replaces all-ref retirement defaults with shipped references plus exact trusted Genie archives; G2 C6/B6 Q5/cap5 only carries existing incomplete usage into empty terminal failure; G4 C3/B3 Q3/cap3 unchanged. Effort0 and other caps unchanged. No unrelated G3 budget/retry/cancellation policy change.
 - Actual recorded original Mikro HEAD/index/nine WIP/settings and separately recorded operator helper match before fingerprints; original Genie HEAD is untouched. Broader original Genie dirty/untracked/index/auth before inventory remains unavailable, not retroactively certified.
 - Original paid108+18 histories remain incomplete/confounded/unknown. No paid rerun, JEV, resampling, cohort refreeze, regrading, canonical partial-report append, routing/adoption recommendation, foreign-history rewrite, main promotion, merge or production installation. Approved next operation is exact-path normal-hook source/evidence publication to the existing dev PR only, after graph/candidate correspondence, using the original553 own-branch force-with-lease. New remote CI and forge readback remain pending, not implied by local source SHIP.
+
+## Review Results — owner-authorized evidence cleanup
+
+The owner requested removal of unnecessary committed artifacts. Historical benchmark
+tools are archived together with their full result bundles, not left in the current
+checkout with missing default inputs. Current script fixtures, thirteen frozen
+experiment seal inputs and both complete original 40/22 source reviews remain verbatim.
+Runtime/package/test/CI source and generated SDK distribution are unchanged.
+The [cleanup verification receipt](evidence/CLEANUP-VERIFICATION.json) binds the new
+inventory, independent cleanup reviews and fresh checks; historical SOURCE SHIP applies
+only to its original candidate. Whole-wish and paid comparison acceptance remain blocked.
 

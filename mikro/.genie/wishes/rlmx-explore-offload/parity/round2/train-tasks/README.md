@@ -4,6 +4,12 @@
 `.genie/wishes/rlmx-explore-offload/tasks/{1..6}.md`, which is frozen, and
 nothing here may be scored against it or folded into it.
 
+**Historical reproduction:** the task and selection-policy bytes remain unchanged,
+but the runner/scorer suite and recorded outputs below are archived together.
+Use the full immutable snapshot in the [archive index](../../../../../INDEX.md)
+before following those historical commands. This cleanup does not re-mine, rerun,
+rescore or revise the recorded training/gate boundary.
+
 | | |
 |---|---|
 | Tasks | 8 (`1.md` … `8.md`) |

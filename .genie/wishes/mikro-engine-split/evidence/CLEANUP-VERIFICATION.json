@@ -1,0 +1,271 @@
+{
+  "schemaVersion": 1,
+  "scope": "Owner-authorized source/evidence cleanup only; not original wish/paid comparison acceptance",
+  "archiveCommit": "1b58ca73a1b9e322597a41000cc4ebd897e86bdc",
+  "archiveTree": "2b313d0c6ee354d396859d26277e53cf8cc0a187",
+  "archiveVerification": {
+    "githubTreeTruncated": false,
+    "allRemovedBlobsMatchPublishedIndex": true,
+    "removedTrackedFiles": 1119,
+    "removedRecordsSha256": "82c949788f4fe460049d89d00cf417aa43ca450bd24cffff572d6e150312ed38"
+  },
+  "sourceBaseline": {
+    "publishedHead": "1b58ca73a1b9e322597a41000cc4ebd897e86bdc",
+    "historicalReviewedCandidateSha256": "7241a0a39d2a270093e6ae0d1af905f9603b3092eff373795146f493ff8e29e9",
+    "originalCorrectnessCriteriaSha256": "4c1c29f61bd7389197eff5d421c26e47d9d4f67003cfb3a101c1953b78eae868",
+    "originalQualityCriteriaSha256": "3f59563b814baae42fafdd19f7d704fad52293f72e439a770dd25821fbbdeb36"
+  },
+  "retention": {
+    "sealedManualExperimentInputs": 13,
+    "originalReviewRows": [
+      40,
+      22
+    ],
+    "originalReviewsVerbatimSha256": {
+      "G9-SOURCE-ONLY-SHIPPED-ARCHIVE-TERMINAL-563-FINAL-CORRECTNESS.json": "ea900296f52b5b5d9678326b3e2d06392b4a8d3350c54de85ce68e88e71949e5",
+      "G9-SOURCE-ONLY-SHIPPED-ARCHIVE-TERMINAL-563-FINAL-QUALITY.json": "6c8bbeaa1dbb2f286f9a25b4c241dd79504f4ecdef3fe68c1122a45d1a8962c0"
+    },
+    "mikroFixtureAndPolicyFiles": 19,
+    "generatedMikroDistribution": "Retained unchanged; package main/types/files/test require it",
+    "historicalBenchmarkSuite": "Archived coherently with its recorded inputs at the ancestor; no broken current reporting entrypoints retained"
+  },
+  "unchangedScope": [
+    "Production runtime source",
+    "Tests and required fixtures",
+    "Dependencies/lockfiles",
+    "Build/CI/package contracts",
+    "Signed design and original criteria",
+    "Private paid cohorts and canonical reports",
+    "Original checkout HEAD/index"
+  ],
+  "currentStage": "Fresh full gates and smokes passed; independent cleanup checkpoint found no archive blocking defects; final independent reviews await normal descendant identity",
+  "limits": {
+    "wholeWish": "IN_PROGRESS/BLOCKED",
+    "paidComparison": "Incomplete/confounded/unknown; no recommendation",
+    "pricingThread": "Unresolved; no scope expansion",
+    "gitHistoryAndCloneSize": "Not reduced; old evidence remains reachable",
+    "productionInstall": false,
+    "paidRerun": false,
+    "mergeOrMainPromotion": false
+  },
+  "currentGates": [
+    {
+      "command": [
+        "flock",
+        "/var/tmp/genie-full-check.lock",
+        "bun",
+        "install",
+        "--frozen-lockfile"
+      ],
+      "cwd": "/home/genie/.local/share/mikro-engine-split/experiments-g8/final-local-smokes/history-only-reword-6qjyzwas/tree",
+      "exitCode": 0,
+      "seconds": 0.584
+    },
+    {
+      "command": [
+        "flock",
+        "/var/tmp/genie-full-check.lock",
+        "npm",
+        "run",
+        "deps:ci"
+      ],
+      "cwd": "/home/genie/.local/share/mikro-engine-split/experiments-g8/final-local-smokes/history-only-reword-6qjyzwas/tree/mikro",
+      "exitCode": 0,
+      "seconds": 34.467
+    },
+    {
+      "command": [
+        "bun",
+        "run",
+        "build"
+      ],
+      "cwd": "/home/genie/.local/share/mikro-engine-split/experiments-g8/final-local-smokes/history-only-reword-6qjyzwas/tree",
+      "exitCode": 0,
+      "seconds": 0.189
+    },
+    {
+      "name": "Whole Mikro TypeScript/full compiled Node suite/actual isolated installed-update smoke",
+      "exitCode": 0,
+      "exitProof": "Actual && chain reached CLEANUP_SDK_COMPLETE_EXIT_0 in job bg_151; handle expired before lookup, no retroactive handle result claimed",
+      "wallSeconds": 268.36,
+      "counts": {
+        "tests": 1244,
+        "suites": 218,
+        "pass": 1244,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0,
+        "testDurationMs": 183945.82214
+      },
+      "fullOutput": "artifact://1326",
+      "observedArtifactLinesIncludingEofEmpty": 1783,
+      "retainedOutput": "Private out-of-tree archive, not repeated in PR",
+      "installedUpdate": {
+        "version": "1.260907.1",
+        "initial": "685330af04e543c109f179ba429d19a0eb2dbe4c",
+        "target": "75ad46761521dcd5d34ee3ce3817d8fef1dd071e",
+        "dirtyRefusal": true,
+        "forcedUpdate": true,
+        "isolatedOnly": true
+      }
+    },
+    {
+      "name": "Whole Genie aggregate:root/bothDSHtypes,Biome,Knip,skills,wishes,complexity,fullBunSuite",
+      "exitCode": 0,
+      "exitProof": "Actual full && chain reached CLEANUP_ROOT_COMPLETE_EXIT_0 in bg_150; completed process readback observed, no narrowed run",
+      "command": "env -i PATH=\"$PATH\" HOME=<isolated-cleanup-home> GENIE_HOME=<isolated-cleanup-home>/.genie XDG_CONFIG_HOME=<isolated-cleanup-home>/.config TMPDIR=<owned-temp-outside-home> GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 flock /var/tmp/genie-full-check.lock bun run check && printf CLEANUP_ROOT_COMPLETE_EXIT_0",
+      "wallSecondsIncludingLockWait": 801.17,
+      "counts": {
+        "pass": 3294,
+        "skip": 2,
+        "fail": 0,
+        "assertions": 19667,
+        "tests": 3296,
+        "files": 158,
+        "testSeconds": 510.83
+      },
+      "fullOutput": "artifact://1325",
+      "observedArtifactLinesIncludingEofEmpty": 4470,
+      "retainedWarnings": [
+        "Existing doctor complexity26/max25",
+        "Three existing Knip hints"
+      ],
+      "skips": [
+        "(skip) live boundary: the facts context file (skipped without bwrap + the mikro runtime) > a facts file under the trusted root is readable inside the sandbox and cannot be written",
+        "(skip) live boundary: the facts context file (skipped without bwrap + the mikro runtime) > git runs inside the sandbox over a linked worktree, which is what the facts scan needs"
+      ],
+      "retainedOutput": "Private out-of-tree archive, not repeated in PR"
+    }
+  ],
+  "independentCleanupReviews": [],
+  "retainedWarnings": [
+    "npm audit reports 5 vulnerabilities (3 moderate, 2 high); no audit fix or lock upgrade",
+    "Five allow-scripts warnings and inherited deprecations remain visible"
+  ],
+  "cleanupCandidateSha256": "a4bb7d8f7417aa832a23e13153b2ff11773148442dffa30eba22124b5098cc60",
+  "candidateManifest": ".genie/wishes/mikro-engine-split/evidence/CURRENT-MANIFEST.json",
+  "byteModeCorrespondence": {
+    "unexpectedDrift": [],
+    "actualModifiedDocumentation": [
+      ".genie/wishes/mikro-engine-split/WISH.md",
+      "CHANGELOG.md",
+      "mikro/.genie/INDEX.md",
+      "mikro/.genie/wishes/rlmx-explore-offload/parity/round2/train-tasks/README.md",
+      "mikro/docs/parity-explore.md",
+      "mikro/docs/worker-models.md"
+    ],
+    "retainedFrozenInputsAndOriginalReviewsUnchanged": true,
+    "ignoredExecutedRootBundleUnchanged": true,
+    "runtimeTestsPackagesLocksCiOutsideArchivedHistoricalSuiteUnchanged": true,
+    "trainingReadme": "Original body preserved; added archive-execution note only. Numeric task and policy input bytes unchanged."
+  },
+  "offlineConsumers": {
+    "positiveRoutingPins": 5,
+    "realRecordedPlantedFailureVerified": true,
+    "missingRoutingTaskExitCode": 2,
+    "frozenExperimentSeals": 13,
+    "wrongDigestAndEmptySealsRejected": true,
+    "actualBenchmarkSelectionManifest": {
+      "exitCode": 0,
+      "selectionSha256": "6da102f0ec6fdd599438cccec97afa3aaf46ee659637daf08975cb226d492e01"
+    },
+    "actualBuiltGenieVersion": "6.261009.1",
+    "actualBuiltMikroVersion": "mikro v1.260907.1",
+    "actualWishLintExitCode": 0,
+    "providerAndPaidCalls": 0,
+    "harnessLimitation": "Offline routing-pin function exercised via in-memory main replacement; full historical paid routing evaluation not rerun."
+  },
+  "archiveAndLinkSmoke": {
+    "checkedDocuments": 6,
+    "archiveLinksMatchedPublicTree": 147,
+    "uniqueArchiveTargets": 136,
+    "liveLocalLinks": 35,
+    "missingLocalLinks": [],
+    "publicExactBlobFetches": [
+      {
+        "path": ".genie/wishes/mikro-engine-split/evidence/G9-SOURCE-ONLY-SHIPPED-ARCHIVE-TERMINAL-563-FINAL-CANDIDATE-MANIFEST.json",
+        "gitBlob": "6f5b97b038904e9bc1c10bc647c9c36b2c63ea66",
+        "bytes": 553698,
+        "publicApiExitCode": 0,
+        "sha256": "7c6981c752eef24dce47f60f333a2c4b0236e37aef98a30fb482cd5da71cfaef"
+      },
+      {
+        "path": ".genie/wishes/mikro-engine-split/evidence/G8-RECEIPT3-FINAL-PAIRED-REPORT.json",
+        "gitBlob": "b1a70c7cf2d8e3904011611279089f6af059c765",
+        "bytes": 3054,
+        "publicApiExitCode": 0,
+        "sha256": "ecdd85915cc0e30cb0468f2139e03e32295be1270af6c4d74f858ae37b298cd2"
+      },
+      {
+        "path": "mikro/.genie/wishes/rlmx-explore-offload/parity/run-task.mjs",
+        "gitBlob": "c84a99931763ca90821490abb487b5272e83ebe0",
+        "bytes": 17222,
+        "publicApiExitCode": 0,
+        "sha256": "73a5a46aa254fb9f5c8aad909089fb0cdb32b53487ab5e5ec751e816d162cfb9"
+      }
+    ],
+    "initialDirectoryGapCorrected": true
+  },
+  "gateAttribution": "Both full gates cover unchanged runtime/test/config/package/CI bytes; one historical Mikro Markdown directory-link correction occurred during execution, in a path excluded from those gates. Fresh direct link proof covers all changed documentation afterward.",
+  "anonymousPublicArchiveSmoke": {
+    "exitCode": 0,
+    "blobs": [
+      {
+        "url": "https://raw.githubusercontent.com/automagik-dev/genie/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/.genie/wishes/mikro-engine-split/evidence/G9-SOURCE-ONLY-SHIPPED-ARCHIVE-TERMINAL-563-FINAL-CANDIDATE-MANIFEST.json",
+        "status": 200,
+        "bytes": 553698,
+        "sha256": "7c6981c752eef24dce47f60f333a2c4b0236e37aef98a30fb482cd5da71cfaef",
+        "authorizationHeader": false
+      },
+      {
+        "url": "https://raw.githubusercontent.com/automagik-dev/genie/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/.genie/wishes/mikro-engine-split/evidence/G8-RECEIPT3-FINAL-PAIRED-REPORT.json",
+        "status": 200,
+        "bytes": 3054,
+        "sha256": "ecdd85915cc0e30cb0468f2139e03e32295be1270af6c4d74f858ae37b298cd2",
+        "authorizationHeader": false
+      },
+      {
+        "url": "https://raw.githubusercontent.com/automagik-dev/genie/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/mikro/.genie/wishes/rlmx-explore-offload/parity/run-task.mjs",
+        "status": 200,
+        "bytes": 17222,
+        "sha256": "73a5a46aa254fb9f5c8aad909089fb0cdb32b53487ab5e5ec751e816d162cfb9",
+        "authorizationHeader": false
+      }
+    ],
+    "credentialsUsed": false
+  },
+  "originalCheckoutIsolation": {
+    "before": {
+      "genie": {
+        "head": "553eebab32c33a667a7c96634c4b7f488a223fcc",
+        "indexSha256": "4486dc3acb0c831b5e906e62475ddb4414489c0246bc1ad780113a6dd9ffdcaa"
+      },
+      "mikro": {
+        "head": "62894e49314bad07382492ac074ea96df6776f61",
+        "indexSha256": "aa74f553e19f8107b24220a146412e7fdc4a9f3514b941be258cc184f0e8435c"
+      }
+    },
+    "afterDependencyBuildSmokeAndCleanup": {
+      "genie": {
+        "head": "553eebab32c33a667a7c96634c4b7f488a223fcc",
+        "indexSha256": "4486dc3acb0c831b5e906e62475ddb4414489c0246bc1ad780113a6dd9ffdcaa"
+      },
+      "mikro": {
+        "head": "62894e49314bad07382492ac074ea96df6776f61",
+        "indexSha256": "aa74f553e19f8107b24220a146412e7fdc4a9f3514b941be258cc184f0e8435c"
+      }
+    },
+    "exactHeadIndexUnchanged": true
+  },
+  "postValidationContinuity": {
+    "candidateSha256": "a4bb7d8f7417aa832a23e13153b2ff11773148442dffa30eba22124b5098cc60",
+    "recordCount": 2489,
+    "byteModeSymlinkDeletionDrift": [],
+    "exactTwoFutureMetadataOnly": [
+      ".genie/wishes/mikro-engine-split/evidence/CURRENT-MANIFEST.json",
+      ".genie/wishes/mikro-engine-split/evidence/CLEANUP-VERIFICATION.json"
+    ],
+    "rootWarningsAndSkipsPreserved": true
+  }
+}

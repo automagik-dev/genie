@@ -11,6 +11,11 @@ adds nothing new to the parity record: every number here traces to a run record
 committed under `.genie/wishes/rlmx-explore-offload/parity/round2/`, and the
 scoping is [`docs/parity-explore.md`](parity-explore.md)'s own.
 
+**Historical reproduction:** the benchmark tools, recipe snapshots and recorded
+runs used below are archived together. See the [archive index](../.genie/INDEX.md)
+for the immutable snapshot; run those historical commands from that full snapshot,
+not this cleaned checkout. No results, scores or model recommendations are changed.
+
 ---
 
 ## Read this before quoting anything below
@@ -213,7 +218,7 @@ returned an empty body after 600 s. `scripts/smoke-explore.mjs` already records
 that even a **4 B** "runs the protocol fine and fails the task", so 0/34 here
 is a statement about model capacity, not about the recipe, the provider, or
 local inference in general. Full escalation record:
-[`station-arm/README.md`](../.genie/wishes/rlmx-explore-offload/parity/round2/optimizer/station-arm/README.md).
+[`station-arm/README.md`](https://github.com/automagik-dev/genie/blob/1b58ca73a1b9e322597a41000cc4ebd897e86bdc/mikro/.genie/wishes/rlmx-explore-offload/parity/round2/optimizer/station-arm/README.md).
 
 What the two replicates therefore **do** establish:
 
