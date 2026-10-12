@@ -2222,7 +2222,16 @@ export function runSkillsInstall(options: SkillsInstallOptions): SkillsInstallOu
     };
   }
 
-  const snapshot = snapshotCollisionsSafely({ ...options, home, skillsRoot, inventory, previous, warnings, nowMs });
+  const snapshot = snapshotCollisionsSafely({
+    ...options,
+    home,
+    skillsRoot,
+    inventory,
+    previous,
+    selectedHomes: selection.homes,
+    warnings,
+    nowMs,
+  });
   // What the snapshot staged is judged — kept and reported, or discarded — by
   // re-digesting the originals after the spawn. It is therefore correct on
   // every exit path below, including the ones where the install never ran.
@@ -2322,7 +2331,8 @@ export function runSkillsInstall(options: SkillsInstallOptions): SkillsInstallOu
 /**
  * Every directory the install could conceivably overwrite: the known table
  * (whether or not those homes exist yet), the homes the previous record proves
- * the CLI wrote last time, and — because neither list can track a CLI whose
+ * the CLI wrote last time, the homes of the agents this run names on the CLI's
+ * command line, and — because none of those lists can track a CLI whose
  * registry names 77 agents and whose `--agent` list genie derives from product
  * detection — every `skills` directory the bounded `$HOME` walk finds.
  *
@@ -2338,6 +2348,7 @@ function collisionCandidateHomes(context: {
   genieHome: string;
   skillsRoot: string;
   previous: SkillsInstallRecord | null;
+  selectedHomes: readonly string[];
   nowMs?: () => number;
   scan?: Pick<SkillsHomeScanOptions, 'maxDepth' | 'maxDirs' | 'budgetMs'>;
 }): string[] {
@@ -2352,6 +2363,7 @@ function collisionCandidateHomes(context: {
   const candidates = [
     ...agentSkillHomes(context.home).map((entry) => entry.dir),
     ...(context.previous?.agentDirs ?? []),
+    ...context.selectedHomes,
     ...scan.dirs,
   ];
   for (const dir of candidates) {
@@ -2389,6 +2401,11 @@ function hasGenieOwnedSkill(
  *  - every dir the previous record proves the CLI wrote last time (57 of them
  *    on the dogfood host, 53 outside the table — this is what keeps M1's
  *    `~/.openclaw` case backed up);
+ *  - the skills home of every agent this run names with `--agent` — genie
+ *    hands those to the CLI itself, so the first write into one is never a
+ *    surprise (issue #3147: a first install replaced the Hermes category
+ *    `~/.hermes/skills/research`, five skills, with no copy taken, and an agent
+ *    installed after genie lost its same-named dir on the next update);
  *  - any other discovered home that ALREADY carries a genie-owned skill dir, so
  *    a home genie delivered to before a record existed is covered too.
  *
@@ -2403,11 +2420,13 @@ function collisionBackupHomes(context: {
   skillsRoot: string;
   inventory: readonly string[];
   previous: SkillsInstallRecord | null;
+  selectedHomes: readonly string[];
   candidates: readonly string[];
 }): string[] {
   const homes = new Set<string>([
     ...agentSkillHomes(context.home).map((entry) => entry.dir),
     ...(context.previous?.agentDirs ?? []),
+    ...context.selectedHomes,
   ]);
   for (const dir of context.candidates) {
     if (homes.has(dir)) continue;
@@ -2559,6 +2578,8 @@ function snapshotCollisionsSafely(context: {
   skillsRoot: string;
   inventory: string[];
   previous: SkillsInstallRecord | null;
+  /** The skills homes of the agents this run names on the CLI's command line. */
+  selectedHomes: readonly string[];
   warnings: string[];
   now?: () => Date;
   nowMs?: () => number;

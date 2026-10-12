@@ -459,19 +459,21 @@ describe('runSkillsInstall', () => {
   });
 
   /**
-   * The cost of that narrowing, stated out loud. A home no record names and no
-   * genie skill lives in is indistinguishable from `~/.Trash/skills` BEFORE the
-   * spawn, so nothing is copied out of it — but if the install does replace
-   * something there, the operator is told in plain words instead of being shown
-   * a backup that does not exist. The home is recorded, so the NEXT update
-   * backs it up (the test below).
+   * The cost of that narrowing, stated out loud. A home no record names, no
+   * genie skill lives in and no selected agent writes is indistinguishable from
+   * `~/.Trash/skills` BEFORE the spawn, so nothing is copied out of it — but if
+   * the install does replace something there, the operator is told in plain
+   * words instead of being shown a backup that does not exist. The home is
+   * recorded, so the NEXT update backs it up (the test below).
    */
   test('an unknown home the install writes is reported, never silently overwritten, on a FIRST install', () => {
     fixtureSkillsTree(['wish']);
-    // No previous record, and a home the known table never names.
-    const astrbot = join(home, '.astrbot', 'data', 'skills');
-    mkdirSync(join(astrbot, 'wish'), { recursive: true });
-    writeFileSync(join(astrbot, 'wish', 'SKILL.md'), '# a foreign wish\n', 'utf8');
+    // No previous record, and a home no detected agent's registry entry names —
+    // what the CLI writes when it resolves a home differently from genie's
+    // mirror of its registry (an `$XDG_CONFIG_HOME` override, a registry drift).
+    const unknown = join(home, 'workspace', 'tool', 'skills');
+    mkdirSync(join(unknown, 'wish'), { recursive: true });
+    writeFileSync(join(unknown, 'wish', 'SKILL.md'), '# a foreign wish\n', 'utf8');
     const stray = join(home, '.Trash', 'skills', 'wish');
     mkdirSync(stray, { recursive: true });
     writeFileSync(join(stray, 'SKILL.md'), '# deleted by the user\n', 'utf8');
@@ -481,17 +483,17 @@ describe('runSkillsInstall', () => {
       genieHome,
       home,
       which: alwaysFound,
-      spawn: deliveringOkRunner({ argv: [] }, [astrbot]),
+      spawn: deliveringOkRunner({ argv: [] }, [unknown]),
     });
 
     expect(outcome.ok).toBe(true);
-    expect(outcome.ok && outcome.record.agentDirs).toContain(astrbot);
+    expect(outcome.ok && outcome.record.agentDirs).toContain(unknown);
     expect(outcome.ok && outcome.record.collisions).toEqual([
-      { dir: join(astrbot, 'wish'), skill: 'wish', kind: 'foreign' },
+      { dir: join(unknown, 'wish'), skill: 'wish', kind: 'foreign' },
     ]);
     const lines = (outcome.ok ? (outcome.warnings ?? []) : []).filter((entry) => entry.includes('collision:'));
     expect(lines).toEqual([
-      `skills: collision: ${join(astrbot, 'wish')} (wish) — a foreign skill dir that changed while this install ran, outside every agent home genie could name in advance, so no copy of it was taken`,
+      `skills: collision: ${join(unknown, 'wish')} (wish) — a foreign skill dir that changed while this install ran, outside every agent home genie could name in advance, so no copy of it was taken`,
     ]);
     // Nothing was copied into GENIE_HOME — not the overwritten home, and above
     // all not the tree the user deleted.
@@ -501,14 +503,14 @@ describe('runSkillsInstall', () => {
 
   test('the next install DOES back that home up, because the record now names it', () => {
     fixtureSkillsTree(['wish']);
-    const astrbot = join(home, '.astrbot', 'data', 'skills');
-    mkdirSync(join(astrbot, 'wish'), { recursive: true });
-    writeFileSync(join(astrbot, 'wish', 'SKILL.md'), '# a foreign wish\n', 'utf8');
+    const unknown = join(home, 'workspace', 'tool', 'skills');
+    mkdirSync(join(unknown, 'wish'), { recursive: true });
+    writeFileSync(join(unknown, 'wish', 'SKILL.md'), '# a foreign wish\n', 'utf8');
     writeSkillsInstallRecord(genieHome, {
       ref: 'v5.260830.15',
       cliVersion: SKILLS_CLI_VERSION,
       inventory: ['wish'],
-      agentDirs: [astrbot],
+      agentDirs: [unknown],
       installedAt: '2026-08-30T00:00:00.000Z',
     });
 
@@ -517,22 +519,95 @@ describe('runSkillsInstall', () => {
       genieHome,
       home,
       which: alwaysFound,
-      spawn: deliveringOkRunner({ argv: [] }, [astrbot]),
+      spawn: deliveringOkRunner({ argv: [] }, [unknown]),
     });
 
     expect(outcome.ok).toBe(true);
     // The record puts a genie skill dir at exactly this path, so whatever its
     // bytes say now it is genie's own — `modified`, never `foreign`.
     expect(outcome.ok && outcome.record.collisions).toEqual([
-      { dir: join(astrbot, 'wish'), skill: 'wish', kind: 'modified' },
+      { dir: join(unknown, 'wish'), skill: 'wish', kind: 'modified' },
     ]);
     const line = (outcome.ok ? (outcome.warnings ?? []) : []).find((entry) =>
       entry.includes('was modified locally'),
     ) as string;
     const backupRoot = line.split('backed up to ')[1] as string;
-    expect(readFileSync(join(backupRoot, '.astrbot', 'data', 'skills', 'wish', 'SKILL.md'), 'utf8')).toBe(
+    expect(readFileSync(join(backupRoot, 'workspace', 'tool', 'skills', 'wish', 'SKILL.md'), 'utf8')).toBe(
       '# a foreign wish\n',
     );
+  });
+
+  /**
+   * Issue #3147: genie names every detected agent on the CLI's command line, so
+   * that agent's skills home is one genie CAN name in advance — the first write
+   * into it (a first install, or an agent installed after genie) is backed up
+   * like a known-table home. `~/.hermes/skills/research` held five Hermes skills
+   * and was replaced by genie's `research` with no copy taken.
+   */
+  test('a selected agent home outside the known table is backed up on a FIRST install', () => {
+    fixtureSkillsTree(['research']);
+    const hermes = join(home, '.hermes', 'skills');
+    mkdirSync(join(hermes, 'research', 'my-skill'), { recursive: true });
+    writeFileSync(join(hermes, 'research', 'my-skill', 'SKILL.md'), '# user-owned\n', 'utf8');
+
+    const outcome = runSkillsInstall({
+      version: VERSION_UNDER_TEST,
+      genieHome,
+      home,
+      which: alwaysFound,
+      spawn: deliveringOkRunner({ argv: [] }, [hermes]),
+      now: () => new Date('2026-10-12T00:00:00.000Z'),
+    });
+
+    expect(outcome.ok).toBe(true);
+    const backupRoot = join(genieHome, 'state-backups', 'skills-collision-2026-10-12T00-00-00-000Z');
+    expect((outcome.warnings ?? []).filter((entry) => entry.includes('collision:'))).toEqual([
+      `skills: collision: ${join(hermes, 'research')} (research) — a foreign skill dir that changed while this install ran; its previous contents are backed up to ${backupRoot}`,
+    ]);
+    expect(outcome.ok && outcome.record.collisionBackups).toEqual([
+      { root: backupRoot, entries: [{ dir: join(hermes, 'research'), skill: 'research', kind: 'foreign' }] },
+    ]);
+    expect(readFileSync(join(backupRoot, '.hermes', 'skills', 'research', 'my-skill', 'SKILL.md'), 'utf8')).toBe(
+      '# user-owned\n',
+    );
+  });
+
+  test('an agent installed after genie has its home backed up on the next update', () => {
+    fixtureSkillsTree(['review']);
+    const claudeSkills = join(home, '.claude', 'skills');
+    mkdirSync(join(claudeSkills, 'review'), { recursive: true });
+    writeFileSync(join(claudeSkills, 'review', 'SKILL.md'), '# review\n', 'utf8');
+    writeSkillsInstallRecord(genieHome, {
+      ref: 'v6.261008.1',
+      cliVersion: SKILLS_CLI_VERSION,
+      inventory: ['review'],
+      agentDirs: [claudeSkills],
+      dirDigests: { [join(claudeSkills, 'review')]: computeSkillDirDigest(join(claudeSkills, 'review')) as string },
+      installedAt: '2026-10-10T00:00:00.000Z',
+    });
+    // Junie arrives after the record was written.
+    const junie = join(home, '.junie', 'skills');
+    mkdirSync(join(junie, 'review'), { recursive: true });
+    writeFileSync(join(junie, 'review', 'notes.md'), 'notes\n', 'utf8');
+
+    const outcome = runSkillsInstall({
+      version: VERSION_UNDER_TEST,
+      genieHome,
+      home,
+      which: alwaysFound,
+      spawn: deliveringOkRunner({ argv: [] }, [junie]),
+      now: () => new Date('2026-10-12T00:00:00.000Z'),
+    });
+
+    expect(outcome.ok).toBe(true);
+    const backupRoot = join(genieHome, 'state-backups', 'skills-collision-2026-10-12T00-00-00-000Z');
+    expect((outcome.warnings ?? []).filter((entry) => entry.includes('collision:'))).toEqual([
+      `skills: collision: ${join(junie, 'review')} (review) — a foreign skill dir that changed while this install ran; its previous contents are backed up to ${backupRoot}`,
+    ]);
+    expect(outcome.ok && outcome.record.collisionBackups).toEqual([
+      { root: backupRoot, entries: [{ dir: join(junie, 'review'), skill: 'review', kind: 'foreign' }] },
+    ]);
+    expect(readFileSync(join(backupRoot, '.junie', 'skills', 'review', 'notes.md'), 'utf8')).toBe('notes\n');
   });
 
   /**
@@ -542,27 +617,27 @@ describe('runSkillsInstall', () => {
    */
   test("a home that already carries genie's own skills is backed up without a record", () => {
     const source = fixtureSkillsTree(['wish', 'work']);
-    const astrbot = join(home, '.astrbot', 'data', 'skills');
-    mkdirSync(astrbot, { recursive: true });
-    cpSync(join(source, 'work'), join(astrbot, 'work'), { recursive: true });
-    mkdirSync(join(astrbot, 'wish'), { recursive: true });
-    writeFileSync(join(astrbot, 'wish', 'SKILL.md'), '# a foreign wish\n', 'utf8');
+    const unknown = join(home, 'workspace', 'tool', 'skills');
+    mkdirSync(unknown, { recursive: true });
+    cpSync(join(source, 'work'), join(unknown, 'work'), { recursive: true });
+    mkdirSync(join(unknown, 'wish'), { recursive: true });
+    writeFileSync(join(unknown, 'wish', 'SKILL.md'), '# a foreign wish\n', 'utf8');
 
     const outcome = runSkillsInstall({
       version: VERSION_UNDER_TEST,
       genieHome,
       home,
       which: alwaysFound,
-      spawn: deliveringOkRunner({ argv: [] }, [astrbot]),
+      spawn: deliveringOkRunner({ argv: [] }, [unknown]),
     });
 
     expect(outcome.ok).toBe(true);
     expect(outcome.ok && outcome.record.collisions).toEqual([
-      { dir: join(astrbot, 'wish'), skill: 'wish', kind: 'foreign' },
+      { dir: join(unknown, 'wish'), skill: 'wish', kind: 'foreign' },
     ]);
     const line = (outcome.ok ? (outcome.warnings ?? []) : []).find((entry) => entry.includes('collision:')) as string;
     const backupRoot = line.split('backed up to ')[1] as string;
-    expect(readFileSync(join(backupRoot, '.astrbot', 'data', 'skills', 'wish', 'SKILL.md'), 'utf8')).toBe(
+    expect(readFileSync(join(backupRoot, 'workspace', 'tool', 'skills', 'wish', 'SKILL.md'), 'utf8')).toBe(
       '# a foreign wish\n',
     );
   });
@@ -578,15 +653,15 @@ describe('runSkillsInstall', () => {
    */
   test('a replaced dir in a home discovery cannot recognize keeps its backup', () => {
     const source = fixtureSkillsTree(['review', 'wish']);
-    const astrbot = join(home, '.astrbot', 'data', 'skills');
+    const unknown = join(home, 'workspace', 'tool', 'skills');
     // Genie's own `review` from an OLDER release: proof the channel delivers
     // here, but not byte-equal to the delivered tree, so the post-install probe
     // never recognizes the home.
-    mkdirSync(join(astrbot, 'review'), { recursive: true });
-    writeFileSync(join(astrbot, 'review', 'SKILL.md'), '# review (previous release)\n', 'utf8');
-    mkdirSync(join(astrbot, 'wish'), { recursive: true });
-    writeFileSync(join(astrbot, 'wish', 'SKILL.md'), "# the user's OWN wish skill\n", 'utf8');
-    const previousDigest = computeSkillDirDigest(join(astrbot, 'review'));
+    mkdirSync(join(unknown, 'review'), { recursive: true });
+    writeFileSync(join(unknown, 'review', 'SKILL.md'), '# review (previous release)\n', 'utf8');
+    mkdirSync(join(unknown, 'wish'), { recursive: true });
+    writeFileSync(join(unknown, 'wish', 'SKILL.md'), "# the user's OWN wish skill\n", 'utf8');
+    const previousDigest = computeSkillDirDigest(join(unknown, 'review'));
     if (previousDigest === null) throw new Error('fixture skill dir was not digestable');
     const claudeSkills = join(home, '.claude', 'skills');
     mkdirSync(claudeSkills, { recursive: true });
@@ -597,7 +672,7 @@ describe('runSkillsInstall', () => {
       // The home itself is NOT recorded — only the digest of the skill inside
       // it — so nothing but that digest can justify backing it up.
       agentDirs: [claudeSkills],
-      dirDigests: { [join(astrbot, 'review')]: previousDigest },
+      dirDigests: { [join(unknown, 'review')]: previousDigest },
       installedAt: '2026-08-30T00:00:00.000Z',
     });
 
@@ -609,22 +684,22 @@ describe('runSkillsInstall', () => {
       spawn: (command, args, options) => {
         // The CLI replaces `wish` there — and only `wish`, so the probe skill
         // `review` stays untouched and stale.
-        cpSync(join(source, 'wish'), join(astrbot, 'wish'), { recursive: true });
+        cpSync(join(source, 'wish'), join(unknown, 'wish'), { recursive: true });
         return deliveringOkRunner({ argv: [] })(command, args, options);
       },
     });
 
     expect(outcome.ok).toBe(true);
-    // The post-install probe never recognized the home (its `review` is stale),
-    // so only the recorded digest justified the backup. `.astrbot` exists, so
-    // AstrBot is a detected agent this run targeted — hence the recorded home.
-    expect(outcome.ok && outcome.record.agentDirs).toContain(astrbot);
+    // The post-install probe never recognized the home (its `review` is stale)
+    // and no selected agent writes it, so it is not recorded — only the
+    // recorded digest justified the backup.
+    expect(outcome.ok && outcome.record.agentDirs).not.toContain(unknown);
     expect(outcome.ok && outcome.record.collisions).toEqual([
-      { dir: join(astrbot, 'wish'), skill: 'wish', kind: 'foreign' },
+      { dir: join(unknown, 'wish'), skill: 'wish', kind: 'foreign' },
     ]);
     const line = (outcome.ok ? (outcome.warnings ?? []) : []).find((entry) => entry.includes('collision:')) as string;
     const backupRoot = line.split('backed up to ')[1] as string;
-    expect(readFileSync(join(backupRoot, '.astrbot', 'data', 'skills', 'wish', 'SKILL.md'), 'utf8')).toBe(
+    expect(readFileSync(join(backupRoot, 'workspace', 'tool', 'skills', 'wish', 'SKILL.md'), 'utf8')).toBe(
       "# the user's OWN wish skill\n",
     );
   });
