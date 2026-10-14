@@ -47,6 +47,7 @@
     "ignore": [
       "node_modules",
       "dist",
+      "mikro",
       "*.min.js",
       ".dev",
       ".hermes",

@@ -16,9 +16,10 @@
  */
 import { existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { type Engine, parseEngineFlag } from './call';
 import { AGENT_NAMES, type AgentName, isAgentName } from './schemas';
 
-export const BENCH_USAGE = `usage: genie mikro bench <${AGENT_NAMES.join('|')}> [--reps n] [--concurrency n] [--only a,b] [--tag k=v] [--dir repo] [--agents-dir dir] [--fixtures path] [--timeout-ms n] [--boundary none|bwrap] [--no-phoenix] [--write-evidence]
+export const BENCH_USAGE = `usage: genie mikro bench <${AGENT_NAMES.join('|')}> [--engine rlm|pi|prime|prime-sdk] [--reps n] [--concurrency n] [--only a,b] [--tag k=v] [--dir repo] [--agents-dir dir] [--fixtures path] [--timeout-ms n] [--boundary none|bwrap] [--no-phoenix] [--write-evidence]
        (inside this checkout the same code runs as: bun scripts/mikro/bench.ts <agent> …)
 `;
 
@@ -28,6 +29,7 @@ export class BenchUsageError extends Error {}
 export interface BenchOptions {
   /** A registered agent name — the schema its answers are validated against. */
   agent: AgentName;
+  engine?: Engine;
   /** The repository the agent reads and citations are verified against. */
   dir: string;
   /**
@@ -94,6 +96,9 @@ export function resolveFixturesPath(
 export function parseBenchOptions(argv: string[], cwd: string): BenchOptions {
   const agent = argv[0];
   if (!agent || !isAgentName(agent)) throw new BenchUsageError(BENCH_USAGE);
+  let engine: Engine | undefined;
+  try { engine = parseEngineFlag(argv); }
+  catch (error) { throw new BenchUsageError(error instanceof Error ? error.message : String(error)); }
   const opt = (name: string): string | undefined => {
     const i = argv.indexOf(name);
     return i >= 0 ? argv[i + 1] : undefined;
@@ -111,6 +116,7 @@ export function parseBenchOptions(argv: string[], cwd: string): BenchOptions {
   const timeoutMs = opt('--timeout-ms');
   return {
     agent,
+    ...(engine === undefined ? {} : { engine }),
     dir,
     ...(agentsDir === undefined ? {} : { agentsDir: resolve(agentsDir) }),
     reps: Number(opt('--reps') ?? 1),

@@ -1,0 +1,69 @@
+schema_version: 1
+tools_api: 1
+
+# ── DRAFT — NOT ACTIVE ──────────────────────────────────────────────────────
+#
+# Written by `/mikro:microagent-create` from this host's own transcripts on
+# 2026-07-27. It sits in `git-historian.proposed/`, which `discoverAgents`
+# skips (src/mcp/agents.ts, `isProposedDir`), so it is neither listed nor
+# callable. Activate by renaming the directory yourself:
+#
+#   mv .mikro/agents/git-historian.proposed .mikro/agents/git-historian
+#
+# The tool appears as `mikro_git-historian` on the next request — live refresh,
+# no restart, no reconnect. Renaming back withdraws it just as fast.
+#
+# Why this agent at all: EVIDENCE.md, next to this file. Read it before you
+# rename — it records what was measured and, more importantly, what is not
+# claimed.
+# ────────────────────────────────────────────────────────────────────────────
+
+# `loop`, not `single-step`: mikro externalizes context into the Python REPL, so
+# the model has run no `git` at all until its first block comes back. One pass
+# means it answers about this repository's history from memory, which is the
+# one failure this agent exists to prevent.
+#
+# Not `recurse` either. `recurse` and `loop` are byte-for-byte identical at
+# runtime (only `single-step` changes behaviour, by capping iterations at 1) —
+# the difference is entirely in the prompt. A history question is one
+# investigation over one log, not a tree to partition, so there is no fan-out
+# here and none of explore-r's two install requirements
+# (MIKRO_REPL_TIMEOUT_MS=600000, the child model pin) apply.
+shape: loop
+model: khal/deepseek-v4-flash
+
+description: >-
+  Answers a question about the git history of the repository in the server's
+  working directory — when something changed, in which commit, by which diff,
+  and what the commit said about it. Returns the answer with commit SHAs and
+  file:line references a reader can open. Use it instead of running a series of
+  git log / git show / git diff commands and reading their output inline.
+
+system: SYSTEM.md
+
+budget:
+  # 10, from explore-r's 14 minus the fan-out it does not do.
+  # examples/agents/explore-r/agent.yaml sizes 14 for a parent path of 8 turns
+  # — survey, fan-out, aggregate, three verification reads, verification block,
+  # FINAL — and that number is also every child's wall clock, which is what
+  # actually dominates there. This agent spawns nothing, so its path is
+  # shorter: orient on the range, read the commits, verify, answer. 10 keeps
+  # comparable slack over that path. It is a rail, not a target.
+  max_iterations: 10
+
+  # 0.50, from explore-r's 2.00 scaled to one process.
+  # That 2.00 was sized for a worst case of one parent plus four children at 14
+  # turns each (~5 x $0.012 ~= $0.06, i.e. ~30x headroom on flash). A
+  # single-agent run is ~1/5 of that work, so 0.50 preserves the same order of
+  # headroom on `khal/deepseek-v4-flash` while staying a real rail on a pricier
+  # model. Do not tighten it: a rail set to the wrong model's prices ends runs
+  # instead of catching them (docs/parity-explore.md r15/haiku, and the
+  # max_cost comment in examples/agents/explore/agent.yaml).
+  max_cost: 0.50
+
+  # DECLARATIVE ONLY — NOT ENFORCED. `applyAgent` copies model, system and
+  # budget.maxCost and nothing else, so this key never reaches config.budget;
+  # `max_iterations` is rescued separately by `agentMaxIterations`. Stated
+  # because the intent is real (this agent spawns nothing) and because a reader
+  # is entitled to know the key is inert.
+  max_depth: 0

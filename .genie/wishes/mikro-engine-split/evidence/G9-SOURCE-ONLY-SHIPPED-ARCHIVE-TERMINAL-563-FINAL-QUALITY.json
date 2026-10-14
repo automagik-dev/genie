@@ -1,0 +1,886 @@
+{
+  "schemaVersion": 1,
+  "reviewer": {
+    "identity": "Independent read-only quality reviewer; openai-codex/gpt-6.1-sol:high",
+    "role": "Quality22 Phase B reviewer, not implementation writer or coordinator",
+    "reviewDate": "2026-10-10",
+    "timePrecision": "Session date only; an exact wall-clock completion time was not independently observed",
+    "independent": true,
+    "readOnly": true
+  },
+  "scope": "Whole current G1–G9 candidate assessed against all 22 original frozen quality criteria, including preceding implementations, receiving consumers, current dev integration, generated artifacts, retained experiments and current validation evidence. This is not a latest-patch-only or reduced-matrix review.",
+  "sourceIdentity": {
+    "checkout": "/home/genie/.local/share/mikro-engine-split/experiments-g8/final-local-smokes/history-only-reword-6qjyzwas/tree",
+    "sourceCandidateSha256": "7241a0a39d2a270093e6ae0d1af905f9603b3092eff373795146f493ff8e29e9",
+    "fileCount": 2480,
+    "manifest": ".genie/wishes/mikro-engine-split/evidence/G9-SOURCE-ONLY-SHIPPED-ARCHIVE-TERMINAL-563-FINAL-CANDIDATE-MANIFEST.json",
+    "algorithm": "SHA-256 over UTF-8 json.dumps(records,sort_keys=True,separators=(comma,colon),ensure_ascii=False), records lexicographically sorted by relative path. Each record covers path/kind/permission mode/sha256(file bytes or symlink target UTF-8). Deleted tracked entries retain explicit null mode/hash. Existing gitlink entries cover index mode160000, exact gitlinkCommit and SHA256 of UTF8 gitlink:commit; not external checkout bytes.",
+    "historicalPrivateHead": "40ddcadbe9ae5690bafae23f523179bf91a8e4eb",
+    "originalPublishedHead": "553eebab32c33a667a7c96634c4b7f488a223fcc",
+    "incomingDevBase": "fa8469e0e1beb953823bb2619ed0a39fe581dba7",
+    "originalMikroSource": "62894e49314bad07382492ac074ea96df6776f61",
+    "docsGitlink": "ea8c0230e6ddcabe302ca6419ab2c99f2d15174c",
+    "actualSourcePatch": "local://mikro-shipped-archive-terminal-563-actual-source.patch",
+    "actualSourcePatchSha256": "e78faa2a22d082fafcc4dd82eb85f97dba8085eeba9417a7e9e06c4e8750a470",
+    "actualSourcePatchBytes": 439099,
+    "postValidationRecordDrift": [],
+    "identityProvenance": "Supplied current manifest and FINAL-CONTINUITY receipt, inspected alongside current source and attributable validation. No independent digest recomputation or Git-state mutation was performed.",
+    "includedScope": "Historical records, cached/index and new nonignored source paths, generated Mikro distribution, executed ignored root bundle, symlink targets/modes, exact docs gitlink and explicit absent obsolete-test records.",
+    "excludedFutureEvidence": [
+      "G9-SOURCE-ONLY-SHIPPED-ARCHIVE-TERMINAL-563-DOCS-GATE.json",
+      "G9-SOURCE-ONLY-SHIPPED-ARCHIVE-TERMINAL-563-FINAL-CANDIDATE-MANIFEST.json",
+      "G9-SOURCE-ONLY-SHIPPED-ARCHIVE-TERMINAL-563-FINAL-CONTINUITY.json",
+      "G9-SOURCE-ONLY-SHIPPED-ARCHIVE-TERMINAL-563-FINAL-CORRECTNESS.json",
+      "G9-SOURCE-ONLY-SHIPPED-ARCHIVE-TERMINAL-563-FINAL-QUALITY.json",
+      "G9-SOURCE-ONLY-SHIPPED-ARCHIVE-TERMINAL-563-FOUR-RELEASE-PAYLOADS.json",
+      "G9-SOURCE-ONLY-SHIPPED-ARCHIVE-TERMINAL-563-PUBLICATION.json",
+      "G9-SOURCE-ONLY-SHIPPED-ARCHIVE-TERMINAL-563-SUPPLEMENTAL-GATE.json",
+      "G9-SOURCE-ONLY-SHIPPED-ARCHIVE-TERMINAL-563-WHOLE-GENIE-GATE.json",
+      "G9-SOURCE-ONLY-SHIPPED-ARCHIVE-TERMINAL-563-WHOLE-MIKRO-INSTALL-GATE.json"
+    ],
+    "otherDeclaredExclusions": "Git metadata, dependencies/private operational state and ignored release outputs. Installed/release outputs have separate current candidate-bound receipts. The manifest binds the docs gitlink object, not an external checkout inventory.",
+    "publicationState": "Current content is reviewed before its exact-path source checkpoint, current-base graph merge, publication and new remote CI. No delivered-commit identity is claimed."
+  },
+  "sourceCandidateSha256": "7241a0a39d2a270093e6ae0d1af905f9603b3092eff373795146f493ff8e29e9",
+  "originalCriteriaSha256": "3f59563b814baae42fafdd19f7d704fad52293f72e439a770dd25821fbbdeb36",
+  "originalCriteriaPath": "local://mikro-g9-final-quality-criteria.txt",
+  "criteriaVerbatim": "PHASE A — FROZEN SECURITY / MAINTAINABILITY / PERFORMANCE QUALITY MATRIX\n\nDisposition: criteria preparation complete. Implementation, integration evidence, experiments and delivery are NOT ASSESSED. The correctness field describes this Phase A deliverable, not the unseen candidate. Only the outcome-blind scope and relevant review, evidence-identity, security, architecture, performance, code-quality and test-quality references were read. Scope-document checkmarks were not accepted as execution evidence. No repository implementation, diff, prior review, gate output or paid result was inspected; no mutation or verification command was performed.\n\nASSESSMENT RULES\n\nEach numbered criterion below freezes the contract, evidence needed and SHIP/FIX-FIRST/BLOCKED triggers. SHIP requires evidence of the stated invariant. FIX-FIRST requires a demonstrated, actionable contract violation or attributable failed required validation. BLOCKED means missing identity, evidence, authorization or environmental prerequisite prevents assessment or completion; it is not a finding of an implementation defect. Unsupported hypotheses are not confirmed findings. Nonblocking style preferences and bounded maintenance nits do not invalidate correctness. Findings in Phase B must identify the exact candidate, affected boundary, trigger, impact and evidence provenance. New criteria introduced after inspection must be explicitly labelled rather than retroactively presented as frozen requirements.\n\nFROZEN THREAT MODEL\n\nTrusted authority: explicit operator configuration and sanctioned credentials; the approved public engine controls; pinned SDK contracts; owning runtime validators; frozen source/fixture provenance; canonical native workflow and billing consumers. Model output, recursive tool arguments, repository text, filenames, symlinks, local Git configuration, ambient SDK resources, provider errors and externally returned catalog/viewer/JEV bodies are data, not authority. A repository under examination cannot grant broader filesystem, process, credential, Git or billing authority through instructions or configuration. A project key grants project-scoped inference/viewer access, not administrative exports. Bench and workflow observations describe events; they cannot manufacture identities, measured usage or verification success. Pi is explicitly read-only and isolated. RLM's approved Python execution must not be misrepresented as a general security sandbox; this review checks its specified lifecycle, scope and side-effect guarantees without inventing a new sandbox architecture.\n\nNUMBERED QUALITY CRITERIA\n\nQ01 — Exact content identity and evidence attribution.\nContract: Phase B assesses the complete G1–G9 candidate, not merely the latest patch. Bind a sorted bytes-and-mode manifest, algorithm, file count, digest and explicit exclusions; include untracked and generated artifacts. Relate that identity to candidate SHA, supplied validation and final remote head/base.\nEvidence: immutable candidate inventory and attributable coordinator receipts, including identity after validation; full approved-scope-to-evidence map.\nSHIP: reviewed bytes, validated bytes and delivered bytes agree, with no acceptance-critical artifact silently excluded. FIX-FIRST: demonstrated identity drift, excluded shipped content or misattributed receipts must be corrected and relevant reviews refreshed. BLOCKED: missing or ambiguous identity prevents assessment. A branch name or earlier verdict is insufficient.\n\nQ02 — Source, original WIP and operator-state preservation.\nContract: retain the non-squash Mikro import at 62894e49314bad07382492ac074ea96df6776f61, exact initial subtree identity and independent npm authority; preserve original checkout HEAD/index/WIP, unrelated installer/CLI/CHANGELOG work and existing operator auth/settings.\nEvidence: ancestry and initial-tree proof; attributable before/after HEAD/index, dirty-file and operator-state inventories; complete changed-path inventory.\nSHIP: required import identities and preservation agree. FIX-FIRST: an actual unauthorized mutation or unrelated change is demonstrated. BLOCKED: absent baseline/provenance prevents establishing preservation. Current final files alone cannot prove original WIP was untouched.\n\nQ03 — Package, retirement and standalone-update authority.\nContract: parent discovery exclusions isolate only independently gated Mikro; imported skills/history do not fall under Genie retirement authority. Nested standalone update is rejected before owner/journal/fetch/reset/clean mutation.\nEvidence: discovery and update entry points through their consumers; real boundary regression receipts and standalone install/update proof.\nSHIP: independent package authority holds without removing existing Genie coverage. FIX-FIRST: an exclusion hides unrelated tests, retirement consumes imported ownership, or a nested update reaches mutation before denial. BLOCKED: missing owning-boundary or installed proof leaves the authority contract unverified.\n\nQ04 — Dependency and provider identity.\nContract: directly used Pi-family packages are exactly 1.0.2 under Mikro's npm lock and Node >=22.19.0; custom providers and operator auth/sampling/cache/output settings retain their behavior; built-in deepseek/deepseek-flash resolves without obsolete repository provider shadowing. No Prime re-pin or scored Prime arm.\nEvidence: manifest/lock/import graph and dependency API/types; dependency-backed provider regressions; compiled generic query with repository configuration and no model override.\nSHIP: identities, settings and actual resolution agree. FIX-FIRST: wrong package versions, duplicate incompatible provider identities, lost controls or shadowed defaults are demonstrated. BLOCKED: missing resolution or compiled-call evidence prevents claiming operational compatibility.\n\nQ05 — Explicit credential and project boundaries.\nContract: Juice remains disabled until explicitly configured; assigned projects have distinct private keys, directory 0700/file 0600, credential references rather than public secrets. Provisioning is supported, additive/idempotent and does not alter unrelated keys. Invocation credentials never mutate global provider state across callers. Management authority is restricted to explicit provisioning, not ordinary inference/viewer calls.\nEvidence: configuration-to-client credential flow; permission and secret-safe output receipts; provisioning before/after inventory; project-specific catalog/call receipts; overlapping-call isolation proof where global state could otherwise be shared.\nSHIP: every credential use remains within its configured invocation/project/operation. FIX-FIRST: key crossover, ambient activation, public secret exposure, insecure storage or unrelated key modification is shown. BLOCKED: unavailable sanctioned provisioning/auth or missing isolation evidence prevents an operational claim.\n\nQ06 — Secret-safe failures and external responses.\nContract: credentials, cookies and sensitive response bodies cannot leak through argv, logs, exceptions, manifests, source, commits or chat. Provider errors remain meaningful without exposing authentication material; malformed external bodies do not become success.\nEvidence: success and transport/auth/body/schema-failure paths through CLI, MCP, provider and viewer/JEV consumers; redacted negative-case receipts with independent assertions that no secret escaped.\nSHIP: safe failures retain truthful classification. FIX-FIRST: a traced path discloses a secret or masks an external failure as success. BLOCKED: absent failure-path evidence leaves that boundary unverified. Redaction must not erase the failure semantics needed for diagnosis.\n\nQ07 — Filesystem scope and Pi ambient-resource isolation.\nContract: Pi exposes only scoped read/grep/glob/git/emit_done; realpath containment includes symlink escapes. Its ModelRuntime, SettingsManager, SessionManager and ResourceLoader do not import ambient credentials, instructions, plugins, shell tools or mutable resources. Recursive discovery and subsequent reads preserve the same authority boundary.\nEvidence: entry-to-tool dispatch and tool-to-filesystem traces; actual SDK execution; adversarial absolute/traversal/symlink/out-of-root/ambient-resource tests at the real tool boundary, including recursive results and their later consumption.\nSHIP: all reachable operations remain in the approved read-only scope. FIX-FIRST: any tool, resource loader or recursive path exposes unauthorized access or mutation. BLOCKED: mocked tool declarations without dependency-backed scope proof cannot establish containment.\n\nQ08 — Hermetic Git inspection.\nContract: allowed Git inspection is read-only and cannot execute external diff/textconv/fsmonitor/pager/hooks or accept config-environment injection; repository-controlled arguments/config cannot turn it into a command or mutation channel.\nEvidence: allowlist, argument/environment construction and process invocation; adversarial configured-repository receipts showing denial or inert behavior, rather than simply checking advertised capabilities.\nSHIP: permitted inspection works while execution/mutation paths remain closed. FIX-FIRST: a specific allowed invocation can cross this boundary. BLOCKED: missing real Git/config boundary evidence prevents a security SHIP for this surface.\n\nQ09 — Proposal versus evidence authority and frozen fixtures.\nContract: NEW is proposal-only in top-level plan.files, with missing path, no line, tracked nearest ancestor and containment checks. It cannot authorize ordinary citations, untracked/ignored existing files, traversal, escapes or evidence-dedup leakage. Added-file cases execute against frozen parent trees with implementations absent, preserving evaluation/source/parent provenance.\nEvidence: verifier-to-score consumer traces; positive and independently targeted negative boundary tests; four fixture identities, parent-tree inventories and generator CLI proof.\nSHIP: proposal/file/citation scoring stays distinct and leakage-free. FIX-FIRST: NEW grants citation authority, stale success survives failure, or a fixture contains the answer implementation. BLOCKED: unavailable frozen provenance or parent-tree proof invalidates the affected comparison.\n\nQ10 — Provider termination and bounded retry accounting.\nContract: error/aborted/length are typed failures, never empty successful answers; reported usage survives failure once. Transport retry default is three and explicit zero is honored without adding other retry layers.\nEvidence: provider-to-RLM/Pi/MCP/caller failure dispatch, owning regressions and actual provider-boundary receipts; attempt counts and usage ledger reconciliation.\nSHIP: classifications, retries and charges remain truthful. FIX-FIRST: a new stop value is dropped by a consumer, a retry limit is ignored, or failure usage is lost/doubled. BLOCKED: missing actual boundary proof prevents the specified operational claim.\n\nQ11 — RLM final protocol and budget integrity.\nContract: bare safe FINAL identifiers resolve variables; quoted values stay literal; arbitrary expressions are not evaluated; missing variables and ellipsis produce repair feedback. Final schema validation occurs inside iteration/token/cost/deadline limits, with no extra forced completion beyond the cap.\nEvidence: parser-to-runtime-to-result consumer traces; identifier/quoted/missing/ellipsis regressions; actual model-call and final-validation receipts at boundary budgets.\nSHIP: only valid final answers succeed and limits bound every completion. FIX-FIRST: expression execution, false success, ignored feedback or out-of-budget finalization is demonstrated. BLOCKED: unmeasured call counts or missing boundary-finalization proof prevent assessing the caps.\n\nQ12 — Timeout, bridge and process lifecycle.\nContract: typed REPL timeout terminates/waits/detaches the old child, rejects stale bridge replies, restores approved context/tools with visible user-variable loss and never replays timed-out code. Restart/deadline failure is terminal. Pi cancellation/deadline/abort and disposal release sessions and processes without continuing tools after completion.\nEvidence: actual Python side-effect-once and fresh-state receipts; stale-reply/restart-failure/deadline regressions; SDK abort/disposal boundary evidence and cross-backend signal handling.\nSHIP: work stops and lifecycle transitions are explicit and bounded. FIX-FIRST: duplicate side effects, stale state contamination, surviving unauthorized work, hidden state loss or a dropped cancellation signal is shown. BLOCKED: mocks alone cannot establish real child/session containment.\n\nQ13 — Public selector and unchanged defaults.\nContract: engine is rlm|pi|prime|prime-sdk; call > agent > rlm precedence is strict, including generic query. Unknown/empty/non-string engines and obsolete backend keys fail before billing. No shape heuristic, silent fallback, automatic routing, native-stage model change or operator-config migration. Wish omission preserves existing RLM behavior; off disables both scout and review offloads.\nEvidence: configuration, MCP, backend registry, call/bench and both wish dispatch paths; compiled selector/error receipts and owning workflow behavior tests; complete old-selector caller inventory.\nSHIP: selected treatments reach both consumers and off/default behavior is unchanged. FIX-FIRST: a selector is decorative/dropped, a fallback changes treatment, stale aliases remain active or rejection follows billing. BLOCKED: missing real caller/compiled dispatch proof prevents an end-to-end feature claim.\n\nQ14 — Pi finalization and outward compatibility.\nContract: Pi is protocol-free, uses the supported SDK tool loop, validates tool and final schemas with declared precedence, accepts the first valid final and stops after that turn. Missing/invalid final is a meaningful failure, not a last-paragraph fallback. MCP structuredContent {answer, session_id}, priced footer, history, progress heartbeat and failure classification remain compatible.\nEvidence: SDK event/tool/final dispatch through RuntimeBackend, MCP, ledger/history and Genie consumers; actual valid/invalid/missing/schema-final and final-then-tool receipts; compiled envelopes and progress/history records.\nSHIP: accepted finals and failures reach every owning consumer without extra work or envelope drift. FIX-FIRST: new events silently disappear, multiple finals overwrite success, post-final work continues or accounting/result contracts break. BLOCKED: dependency-backed loop or actual outward-surface evidence is missing.\n\nQ15 — Viewer-only aggregate extraction.\nContract: manual usage/analyze authenticates with the project key, keeps viewer cookies in memory and uses only key-overview/key-analysis/key-analysis/latency aggregates. Snapshots preserve URL/query/project/key epoch/returned range/timezone/fetch time/hash and capabilities; unavailable costs/time fields remain unknown. No admin escalation, request/conversation export, invented request IDs or aggregate rebilling.\nEvidence: authorization-to-route-to-snapshot-to-report traces; actual viewer/version/logout/project-scope receipts; unknown-field and secret-safe failure tests.\nSHIP: snapshots are source-linked, project-scoped observations with honest limitations. FIX-FIRST: broader authority, cross-project data, fabricated detail or conversion of unknown to zero is demonstrated. BLOCKED: unavailable authorized viewer access or missing provenance blocks actual snapshot completion.\n\nQ16 — One-shot manual JEV selection.\nContract: one explicit configured endpoint/model/key request follows {state,model,questions}; Choice supports bounded candidate IDs and abstention, optional Noul/Score stay in that request, response/model/probabilities/usage are validated and source links are locally reattached. Cancellation works. No retries, translation, caching, generation, routing, schedules or source mutation; ordinary runs invoke neither JEV nor extra instrumentation inference.\nEvidence: manual caller-to-adapter-to-result traces; typed malformed/abstention/source-mapping tests; real sanctioned manual extraction receipt; ordinary-run network/call evidence; preserved snapshot hashes and candidate source spans.\nSHIP: exactly the requested manual selection occurs with typed observed usage and source fidelity. FIX-FIRST: automatic invocation, extra call, fabricated fallback, invalid success or wrong source mapping is shown. BLOCKED: an unavailable sanctioned endpoint/auth blocks live extraction, not reachable adapter review; expired AWS SSO is not permission to substitute an unsanctioned public service.\n\nQ17 — Maintainability and six-month change cost.\nContract: reuse RuntimeBackend, supported SDK loop, verifier/ledger/report consumers and saved wish runner; keep npm/Node and Bun/release domains intentionally independent. Remove obsolete selectors/callers/shims and temporary scaffolds, update affected docs/changelogs, and keep experiment observation local rather than introducing a second accounting or workflow system. Runtime-validated boundary types should not become unchecked interior type holes.\nEvidence: complete import/interface/caller graph and ownership map; state-machine/error paths; affected docs; attributable full quality gates and existing policy/baselines.\nSHIP: each added mechanism serves an approved current requirement and interfaces have one clear authority. FIX-FIRST: demonstrated contract-breaking state machinery, consumer duplication, dead compatibility paths or type holes with concrete failure impact. BLOCKED: an architectural scope decision is missing or repairing unjustified machinery would change the approved approach. Stylistic extraction, deliberate package separation and unsupported complexity preferences are not blocking findings.\n\nQ18 — Concrete allocation, computation and resource bounds.\nContract: review actual hot paths for repeated full-tree scans, avoidable copies/serialization, eager unrelated SDK/resource loading, repeated catalog/config work, unbounded tool output/history and recursive calls that evade declared limits. Preserve required validation, provenance and correctness retries; no speculative cache/daemon/compaction or new tuning API.\nEvidence: exact shipped-path call sites, repetition/input bounds and attributable resource/latency measurements; cold-start versus repeated-run results where relevant; full computation and model/tool call counts, including failed attempts.\nSHIP: resource work is bounded and no concrete introduced overhead violates required budgets or measured non-regression. FIX-FIRST: a traced repeated allocation/computation or runaway recursion causes a demonstrated cap, latency, memory or compatibility failure. BLOCKED: missing measurements prevent a performance claim, not a speculative code defect. Minor bounded overhead is not automatically a blocker.\n\nQ19 — Behavioral test ownership and complete gates.\nContract: tests protect observable boundaries with independent oracles and credible regressions, not copied defaults/source text or mocks that supply the behavior. Isolation protects original repos, credentials and operator state. Real dependency/process/Git/provider/compiled/install boundaries receive the proof their contracts require; no test-only production seam or narrowed replacement for full gates.\nEvidence: full owning tests and their production dispatch paths; pre-fix failure/post-fix receipts for repaired regressions; suite pass/fail/skip counts and exit codes; exact-candidate Mikro deps:ci/build/check/test/install-update and Genie frozen install/check receipts plus actual CLI/MCP/release checks.\nSHIP: required full gates and boundary proof pass for the candidate. FIX-FIRST: attributable required gate failure, a security/accounting test passing for the wrong guard, or a high-impact accepted behavior not actually exercised. BLOCKED: absent/stale/skipped required validation prevents SHIP. The reviewer consumes coordinator evidence and performs no builds, mutation probes or resampling.\n\nQ20 — Exact matched experiments and honest selection.\nContract: retain all four frozen Genie/brain existing/new-directory fixtures, three reps per Flash control arm, all 36 control runs; freeze and separately execute/report each available curated candidate cell. Freeze launcher/runtime/artifact/schema/prompt/pricing/catalog identities before outcomes; concurrency is one. Retain every failure, retry and unknown. No Pro/Claude calls, scored Prime arm or post-outcome resampling.\nEvidence: immutable manifests, catalog exclusions and all attempt receipts; paired cell metrics for file/NEW/citation verification, all-attempt and run p50/p90 latency, cost per verified success, cost coverage, cap share and repetition dispersion.\nSHIP: planned cells and attempts are complete and any recommendation satisfies cell-wise verified-success parity plus real-workflow non-regression. FIX-FIRST: omitted failures, treatment mismatch, leakage, unsupported speed/cost claim or success-parity violation. BLOCKED: missing cells, pricing/usage coverage or provenance prevents comparison SHIP. Aggregate speed cannot compensate for a failing repository/model cell, and equal failure rates do not establish useful verified success.\n\nQ21 — Genuine wish outcomes and canonical business/adoption accounting.\nContract: execute two bounded objectives × three treatments × three reps as 18 actual saved-wish runs in isolated repository/common-directory/state roots. First prove the native loader, non-Claude route and observer in an unscored actual smoke. Retain real workflow UUID/seq/childId, outcomes/SHIP/repairs, stage tokens/tools/durations/offloads and runtime failures. Count persisted own-suffix native assistant/message and assistant/attempt usage once, tool/call events once, and lifecycle durations from actual events; reconcile inherited/forked usage, failed attempts, priced offloads and aggregate Keeper spend without double billing. Append existing reports only when all required top-level accounting is measured and compatible; never redesign frozen consumers, invent IDs/totals/zero usage or equate a success journal with accounting.\nEvidence: native session/event persistence and observer dispatch; 18 treatment/outcome receipts; stage-to-run reconciliation and report consumer/schema acceptance; explicit coverage/unknown ledger and separate aggregate snapshots.\nSHIP: all runs and required accounting are real, complete and compatible; business/adoption recommendations reflect verified outcomes, cost per verified success, repair burden and coverage rather than token price or latency alone. FIX-FIRST: incorrect deduplication, invented receipts, unknown-as-zero, false report append or a surrogate pipeline is demonstrated. BLOCKED: any missing required usage/stage identity/cost field blocks completed accounting comparison even if all outcomes are successful. Honest incomplete records may be retained, but cannot be called a completed comparison.\n\nQ22 — Installed artifacts, release payload and remote delivery.\nContract: compiled Mikro dist/install/CLI/MCP behavior matches reviewed source and exact dependency family; Genie binary/tarball payload and runtime dependency boundary remain unchanged. Independent execution and quality review cover the candidate. Deliver a committed exact-path merge-ready PR to Genie dev with current remote head/base/files/CI readback. No main promotion, merge, production installation/update or source deletion; wish remains IN_PROGRESS until authorized merge/QA.\nEvidence: source-to-dist and installed-path receipts; original-versus-candidate release inventory and runtime dependency proof; full gates/reviews tied to candidate identity; live target/head/file/CI and merge-readiness evidence supplied by the coordinator.\nSHIP: installed/release behavior, source preservation, reviews and current remote checks agree. FIX-FIRST: generated/installed drift, Mikro leakage into Genie payload, wrong target, stale review presented as current or unauthorized mutation is demonstrated. BLOCKED: missing installed/release proof, live remote readback or current required CI prevents whole-delivery SHIP. Local green alone does not establish remote readiness.\n\nFROZEN VERDICT COMPOSITION AND G8/G9 RECONCILIATION\n\n1. Source-quality SHIP: no confirmed blocking security, correctness, maintainability or resource defect in the exact reviewed source/artifact scope, with its required attributable validation. State separately any unavailable live integration; source-quality SHIP cannot be represented as proof that an unexercised feature works operationally. Feature/runtime SHIP additionally requires the named applicable actual provider/REPL/Pi/MCP/caller/Juice/JEV/installed surfaces.\n\n2. Comparison SHIP: Q20 and Q21 are fully satisfied, including every exact experiment and complete canonical accounting. A performance or adoption recommendation additionally requires cell-wise verified-success parity and no real workflow SHIP/repair regression. An accurately reported non-advantage is acceptable; the obligation is honest comparison, not selecting Pi or claiming a win.\n\n3. Whole-delivery SHIP: every G1–G9 obligation, source/runtime/comparison reviews, original-state protection, full gates, installed/release behavior and current merge-ready dev PR evidence is satisfied. No source verdict alone closes the wish, authorizes publication or substitutes for another independent review.\n\n4. G9's exercised-proof-or-exact-unreachable-prerequisite clause permits an honest explicit blocker disposition, not acceptance by omission. An unreachable prerequisite must identify the precise sanctioned endpoint/auth/capability/data/environment needed, the authorized discovery/access paths already tried, their attributable failure and exactly which criteria remain incomplete. Missing evidence is not automatically proof that a prerequisite is unreachable. Finish all reachable review work; do not substitute fake output, forbidden admin access, public inference or paid reruns.\n\n5. G8's missing-accounting rule remains binding even when the exact prerequisite is unreachable. Thus source-quality may independently SHIP, while runtime/comparison/whole-delivery remain BLOCKED where appropriate; no fully measured report append or completed-comparison claim is allowed. An exact blocker satisfies truthful reporting, not the missing experiment/accounting acceptance criterion. Scope may change only through explicit owner authorization, not reviewer reinterpretation.\n\n6. A confirmed actionable blocker produces FIX-FIRST for the affected verdict. A missing assessment/completion prerequisite produces BLOCKED for that affected verdict; confirmed defects must still be retained rather than hidden by the blocker. Phase B must report the separate source-quality, feature/runtime, comparison and whole-delivery dispositions and coverage. Relevant source, generated-content, dependency, fixture or evidence changes invalidate affected reviews and receipts; bounded author repairs do not silently relax this frozen matrix.\n\nPHASE B HANDOFF\n\nRequired inputs are the exact candidate identity and full approved diff/context; attributable preservation, complete gate and actual-surface receipts; frozen experiment manifests and all retained attempts; native workflow/session/accounting reconciliation; installed/release evidence; and current remote dev-PR identity/checks. This reviewer remains independent and read-only. No source edits, git-state changes, provisioning, model/JEV requests, tests, formatters or resampling are authorized.\n",
+  "criteriaChanges": [],
+  "assessmentConventions": {
+    "status": "PASS, FAIL, BLOCKED or INCOMPLETE applies to the stated assessment; sourceAssessment separates reachable current source quality from remaining operational/comparison/delivery obligations. A PASS never erases a limitation.",
+    "paths": "Code paths are relative to sourceIdentity.checkout. Evidence filenames are relative to .genie/wishes/mikro-engine-split/evidence unless another path is explicit.",
+    "historicalEvidence": "Historical receipts are retained for their original actual observations only. They are not substituted for fresh whole-source gates or interpreted as completed current paid experiments.",
+    "newAuthorization": "The supplied owner-authorized shipped/proven-archive retirement choice, bounded G2 marker repair and fa846 integration are applied as stated. No cap, matrix, cohort, default or scope change was made by this reviewer."
+  },
+  "assessments": [
+    {
+      "number": 1,
+      "criterion": "Q01",
+      "group": [
+        "G1",
+        "G9"
+      ],
+      "status": "PASS",
+      "sourceAssessment": "PASS",
+      "receivingCode": [
+        "scripts/git-history-ownership.ts:11-43,107-149",
+        "mikro/package.json",
+        "mikro/dist/src/mcp/backends/legacy.js",
+        "mikro/dist/src/mcp/backends/pi.js",
+        ".github/workflows/ci.yml"
+      ],
+      "evidence": [
+        "G9-SOURCE-ONLY-SHIPPED-ARCHIVE-TERMINAL-563-FINAL-CANDIDATE-MANIFEST.json:1-12,14954-14969",
+        "G9-SOURCE-ONLY-SHIPPED-ARCHIVE-TERMINAL-563-FINAL-CONTINUITY.json:1-24,101-124",
+        "G9-SOURCE-ONLY-SHIPPED-ARCHIVE-TERMINAL-563-FROZEN-CONTRACT.json",
+        "G9-SOURCE-ONLY-SHIPPED-ARCHIVE-TERMINAL-563-LIVE-BASE-INTEGRATION.json"
+      ],
+      "assessment": "The current source identity is explicit and includes generated/executed source artifacts and new helpers. Current gate receipts name the same 7241 digest; continuity reports no post-validation record drift. The ten exclusions are enumerated future evidence metadata, not runtime or experiment exclusions. The exact current dev composition is distinguished from the historical private HEAD and old published head.",
+      "limitation": "Delivered-byte correspondence, final source commit and new remote head/base/CI are pending and are assessed BLOCKED under Q22. Identity was consumed from attributable coordinator evidence, not independently recomputed."
+    },
+    {
+      "number": 2,
+      "criterion": "Q02",
+      "group": [
+        "G1",
+        "G9"
+      ],
+      "status": "BLOCKED",
+      "sourceAssessment": "No confirmed unauthorized mutation found; whole-preservation proof unavailable",
+      "receivingCode": [
+        "scripts/git-history-ownership.ts:11-43",
+        "mikro/bin/install-state.mjs:175-275,300-355",
+        "mikro/src/cli.ts:1039-1056"
+      ],
+      "evidence": [
+        "G1-IMPORT-RECEIPT.json",
+        "G9-SOURCE-ONLY-SHIPPED-ARCHIVE-TERMINAL-563-PRESERVATION.json",
+        "G9-SOURCE-ONLY-SHIPPED-ARCHIVE-TERMINAL-563-FINAL-CONTINUITY.json:105-123"
+      ],
+      "assessment": "The import receipt establishes the two-parent import, original source commit and exact initial Mikro subtree. Current preservation records match the original Mikro HEAD/index, nine recorded WIP files and operator settings; original Genie HEAD553 remains unchanged. The independently rediscovered helper matches its separately recorded 15fa26c639dc5d7b81313be54ada4f0a8ce4c5035b29288684a86a8eaa2c77fd hash.",
+      "limitation": "The broader original Genie before-inventory for dirty/untracked files, index and auth was not captured. Matching current files, unchanged HEAD and the separately proven helper cannot reconstruct that absent baseline. Original whole-preservation remains BLOCKED, not PASS and not a demonstrated source defect."
+    },
+    {
+      "number": 3,
+      "criterion": "Q03",
+      "group": [
+        "G1",
+        "G9"
+      ],
+      "status": "PASS",
+      "sourceAssessment": "PASS",
+      "receivingCode": [
+        "bunfig.toml:1-8",
+        ".github/workflows/mikro-ci.yml:1-47",
+        "scripts/legacy-skills-catalog.ts:61-145",
+        "scripts/git-history-ownership.ts:46-105,188-260",
+        "src/lib/legacy-skills-catalog.ts:1-153",
+        "src/lib/legacy-skills.ts:1-155",
+        "src/lib/skills-installer.ts:1590-1655",
+        "mikro/bin/install-state.mjs:175-275,300-355",
+        "mikro/src/cli.ts:1039-1056"
+      ],
+      "evidence": [
+        "G1-IMPORT-RECEIPT.json",
+        "G1-DISCOVERY-SMOKE.json",
+        "G9-SOURCE-ONLY-SHIPPED-ARCHIVE-TERMINAL-563-BOUNDARY-PROOF.json",
+        "G9-SOURCE-ONLY-SHIPPED-ARCHIVE-TERMINAL-563-WHOLE-MIKRO-INSTALL-GATE.json",
+        "artifact://1233:447-466",
+        "artifact://1233:-55"
+      ],
+      "assessment": "The collector derives default eligibility from HEAD/tags, exact origin/main-dev and archive refs, while validating ownership across all refs. Exact independently Genie-owned non-Mikro commit-bound proof can add legitimate archives; stale/source/self-attesting/prefixed proof cannot bootstrap authority. The receiving generated catalog and retirement classifier preserve unproven name-only/description-only entries; the installer archives only proven/marker entries. Copying declared roots before the consuming stack walk preserves opt-in eligibility. Nested updates reach the standalone-worktree denial before mutation ownership; actual standalone install, dirty refusal and forced update passed.",
+      "limitation": "The catalog check intentionally proves an additive superset, not absence of hand-added historic entries. Owning G1 red33/3 and green36/0 are retained; the separate namespace-oracle failure is not presented as a production regression."
+    },
+    {
+      "number": 4,
+      "criterion": "Q04",
+      "group": [
+        "G2",
+        "G4",
+        "G6",
+        "G9"
+      ],
+      "status": "PASS",
+      "sourceAssessment": "PASS",
+      "receivingCode": [
+        "mikro/package.json",
+        "mikro/package-lock.json",
+        "mikro/src/custom-providers.ts",
+        "mikro/src/llm.ts:1-210,260-440,740-920",
+        "mikro/src/mcp/backends/pi.ts:106-140",
+        "mikro/src/config.ts",
+        "mikro/node_modules/@earendil-works/pi-coding-agent/package.json:1-110"
+      ],
+      "evidence": [
+        "G9-SOURCE-ONLY-SHIPPED-ARCHIVE-TERMINAL-563-WHOLE-MIKRO-INSTALL-GATE.json",
+        "WAVE3-LIVE-VERIFICATION.json",
+        "JUICE-CONFIGURED-LIVE-VERIFICATION.json",
+        "artifact://1233:314-352,593-636,1055-1080"
+      ],
+      "assessment": "Direct Pi-family packages remain exact1.0.2 and the npm/Node authority remains separate from parent Bun. Real SDK tests cover configured gateway overrides, concurrent equal provider IDs, headless auth, explicit-zero sampling and preserved output controls. Built-in Flash resolves without a local alias/custom provider. Current Pi performs declared-price validation before inference; Prime's existing0.8.1 compatibility surface is not repinned or scored.",
+      "limitation": "Retained real configured generic calls are historical actual observations, not fresh external calls on this review date. The reviewer made no model calls. Missing historical full-cost coverage remains a Q20/Q21 blocker, not an assertion that every provider path has a complete invoice."
+    },
+    {
+      "number": 5,
+      "criterion": "Q05",
+      "group": [
+        "G6",
+        "G9"
+      ],
+      "status": "PASS",
+      "sourceAssessment": "PASS",
+      "receivingCode": [
+        "mikro/src/juice.ts:1-420",
+        "mikro/src/custom-providers.ts",
+        "mikro/src/llm.ts",
+        "mikro/src/cli.ts:1061-1093",
+        "mikro/tests/juice.test.ts:1-160"
+      ],
+      "evidence": [
+        "WAVE3-LIVE-VERIFICATION.json:52-90",
+        "JUICE-CONFIGURED-LIVE-VERIFICATION.json",
+        "G9-SOURCE-ONLY-SHIPPED-ARCHIVE-TERMINAL-563-PRESERVATION.json",
+        "artifact://1233:504-519"
+      ],
+      "assessment": "Management credentials are accepted only by explicit provisioning; ordinary inference/viewer paths use project key references. Actual provisioning retained all15 preexisting keys, produced17 total with distinct Genie/brain keys, was idempotent and recorded0700 directories/0600 files outside repositories. Owning actual SDK concurrent calls and file rotation verify per-invocation auth without environment mutation; permissive/symlink key references are denied before transport.",
+      "limitation": "No current reprovisioning was authorized or performed. Preservation proves named recorded credentials/settings, not the missing broader original Genie auth inventory."
+    },
+    {
+      "number": 6,
+      "criterion": "Q06",
+      "group": [
+        "G2",
+        "G4",
+        "G6",
+        "G7",
+        "G9"
+      ],
+      "status": "PASS",
+      "sourceAssessment": "PASS",
+      "receivingCode": [
+        "mikro/src/llm.ts",
+        "mikro/src/juice.ts",
+        "mikro/src/jev.ts:1-320",
+        "mikro/src/cli.ts:1061-1190",
+        "mikro/src/mcp/server.ts:978-995",
+        "mikro/tests/juice.test.ts:138-160",
+        "mikro/tests/jev.test.ts:60-71,85-155"
+      ],
+      "evidence": [
+        "G9-SOURCE-ONLY-SHIPPED-ARCHIVE-TERMINAL-563-WHOLE-MIKRO-INSTALL-GATE.json",
+        "artifact://1233:473-523,593-636",
+        "WAVE3-LIVE-VERIFICATION.json"
+      ],
+      "assessment": "Real provider failures retain typed error classification while reflected credentials, configured header values, auth URLs and request bodies are not forwarded as diagnostics. Viewer and JEV failures are typed and omit raw response bodies/causes; malformed/admin/logout-failed viewer results do not become success. Manual JEV input is decoded and checked before transport/local reattachment, and the CLI prints credential references rather than credential values. Actual canary assertions exercise the receiving errors, not only advertised redaction helpers.",
+      "limitation": "This is a traced affected-surface assessment, not a proof that arbitrary unrelated user files never contain secrets. Private credential contents were not requested or printed."
+    },
+    {
+      "number": 7,
+      "criterion": "Q07",
+      "group": [
+        "G4"
+      ],
+      "status": "PASS",
+      "sourceAssessment": "PASS",
+      "receivingCode": [
+        "mikro/src/mcp/backends/pi.ts:45-140,172-215",
+        "mikro/src/mcp/backends/pi-tools.ts:14-125,127-156,225-257",
+        "mikro/tests/pi-backend.test.ts",
+        "mikro/tests/pi-tools.test.ts"
+      ],
+      "evidence": [
+        "artifact://1233:1062-1090",
+        "G9-SOURCE-ONLY-SHIPPED-ARCHIVE-TERMINAL-563-WHOLE-MIKRO-INSTALL-GATE.json",
+        "G9-SOURCE-ONLY-SHIPPED-ARCHIVE-TERMINAL-563-BOUNDARY-PROOF.json"
+      ],
+      "assessment": "The real SDK tool registry receives only read/grep/glob/git/emit_done. A fresh runtime, in-memory settings/session manager and fixed ResourceLoader prevent ambient instructions, extensions, packages and shell tools. ReadScope applies realpath containment to discovery and subsequent reads, excludes secret paths/realpaths and validates explicit context roots. Actual SDK tests deny symlink, root, narrow-scope and credential escapes across read/glob/grep.",
+      "limitation": "No general RLM sandbox guarantee is inferred from Pi isolation. Existing skipped bwrap facts cases are not used as containment evidence; Pi's own actual SDK filesystem/Git tests passed."
+    },
+    {
+      "number": 8,
+      "criterion": "Q08",
+      "group": [
+        "G4"
+      ],
+      "status": "PASS",
+      "sourceAssessment": "PASS",
+      "receivingCode": [
+        "mikro/src/mcp/backends/pi-tools.ts:158-220,254-256"
+      ],
+      "evidence": [
+        "artifact://1233:1082-1090",
+        "G9-SOURCE-ONLY-SHIPPED-ARCHIVE-TERMINAL-563-WHOLE-MIKRO-INSTALL-GATE.json"
+      ],
+      "assessment": "The receiving Git tool accepts only the fixed read-only operation union, validates revision/path arguments, fixes the physical repository/worktree and builds a hermetic environment with fixed PATH, disabled inherited config and pager, literal pathspecs and bounded output/deadline. Real adversarial Git tests demonstrate that external diff/textconv/clean/process/fsmonitor/pager/hooks and config-environment injection are inert and mutations/directory pathspecs are denied.",
+      "limitation": "This verdict applies to the Pi inspection tool, not arbitrary Git commands in trusted repository maintenance or approved RLM Python execution."
+    },
+    {
+      "number": 9,
+      "criterion": "Q09",
+      "group": [
+        "G5",
+        "G8"
+      ],
+      "status": "PASS",
+      "sourceAssessment": "PASS",
+      "receivingCode": [
+        "scripts/mikro/call.ts:250-365",
+        "scripts/mikro/score.ts:1-122",
+        "scripts/mikro/fixtures-from-commits.ts:135-320",
+        "scripts/mikro/bench.ts:215-310"
+      ],
+      "evidence": [
+        "FROZEN-FIXTURES.json",
+        "G8-PHYSICAL-FIXTURE-HASH-PROOF.json",
+        "G8-FIXTURE-HASH-UNDER-DECISION.json",
+        "G9-SOURCE-ONLY-SHIPPED-ARCHIVE-TERMINAL-563-WHOLE-GENIE-GATE.json",
+        "scripts/mikro/call.test.ts",
+        "scripts/mikro/call.adversarial.test.ts",
+        "scripts/mikro/fixtures-from-commits.test.ts",
+        "scripts/mikro/bench-cli.test.ts"
+      ],
+      "assessment": "The verifier distinguishes proposal entries from ordinary evidence; NEW requires a missing contained path, no line and a tracked nearest ancestor, and its dedup key includes proposal/evidence authority. Score consumes verification results rather than treating the token itself as execution. Fixture generation records source/parent/evaluation identities, and physical fixture proof establishes the actual consumed parent trees and absent new implementations. Benchmark overlays keep runtime provenance distinct from evaluation-tree source.",
+      "limitation": "The physical fixture seal is not falsely called the original FROZEN-FIXTURES.json byte hash; the retained discrepancy/decision is explicit. Correct verifier/fixture mechanics do not make the historical paid comparison complete or unconfounded."
+    },
+    {
+      "number": 10,
+      "criterion": "Q10",
+      "group": [
+        "G2",
+        "G4",
+        "G5"
+      ],
+      "status": "PASS",
+      "sourceAssessment": "PASS",
+      "receivingCode": [
+        "mikro/src/llm.ts",
+        "mikro/src/ipc.ts",
+        "mikro/src/repl.ts:620-795",
+        "mikro/python/llm_bridge.py:58-111",
+        "mikro/python/repl_server.py",
+        "mikro/src/rlm.ts:712-778,1247-1328",
+        "mikro/src/mcp/backends/legacy.ts:107-166",
+        "mikro/src/mcp/backends/pi.ts:146-215",
+        "mikro/src/mcp/server.ts:771-804,845-850,978-995",
+        "scripts/mikro/call.ts:83-103"
+      ],
+      "evidence": [
+        "G9-SOURCE-ONLY-SHIPPED-ARCHIVE-TERMINAL-563-BOUNDARY-PROOF.json:G2terminal",
+        "artifact://1233:85-116,593-636",
+        "G9-SOURCE-ONLY-SHIPPED-ARCHIVE-TERMINAL-563-WHOLE-MIKRO-INSTALL-GATE.json"
+      ],
+      "assessment": "Typed terminal failure values reach the Node→Python response discriminator, REPL execution failure, RLM settlement and MCP failed envelope rather than becoming ordinary empty values. The current three-empty-root terminal return forwards usageComplete:false through Legacy and formatFooter; partial subtotals cannot match the unchanged complete numeric host footer parser. The saved actual10-local-request receipt preserves known44in/7out once with full totals null, while the complete55in/14out control retains its numeric footer. SDK tests verify default three transport retries and explicit zero without an added agent retry layer.",
+      "limitation": "Known subtotals are not full bills and rounded footer prices are not invoices. The10 requests describe the saved local driver only; permanent-suite fixtures add further local requests. No external/JEV request was made during this review."
+    },
+    {
+      "number": 11,
+      "criterion": "Q11",
+      "group": [
+        "G3",
+        "G5"
+      ],
+      "status": "PASS",
+      "sourceAssessment": "PASS",
+      "receivingCode": [
+        "mikro/src/parsers.ts:1-200",
+        "mikro/src/rlm.ts:780-925,1039-1393",
+        "mikro/src/sdk/validate.ts",
+        "mikro/src/mcp/backends/legacy.ts:145-166",
+        "mikro/src/mcp/server.ts:845-850,966-976",
+        "scripts/mikro/call.ts:83-103"
+      ],
+      "evidence": [
+        "artifact://1233:102-115,1046-1054",
+        "G9-SOURCE-ONLY-SHIPPED-ARCHIVE-TERMINAL-563-WHOLE-MIKRO-INSTALL-GATE.json",
+        "mikro/tests/rlm-final.test.ts",
+        "mikro/tests/backend-contract.test.ts"
+      ],
+      "assessment": "Parser/runtime handling separates safe identifier lookup from literal finals and does not evaluate arbitrary FINAL expressions. Empty/ellipsis/missing candidates produce next-turn feedback rather than fabricated completion. Validation retries use remaining normal turns, token/cost/deadline checks and the shared cap; no outside-cap forced final call remains. A retained schema-invalid payload may be returned flagged, but the actual receiving MCP isFailedRun classifier marks validation_failed as failure; owning real output-schema and VALIDATE tests verify that invalid finals do not become successful outward results.",
+      "limitation": "Flagged invalid answer text is preserved for diagnostics, not counted as a valid success. No extra G3 policy or repair budget was introduced by this assessment."
+    },
+    {
+      "number": 12,
+      "criterion": "Q12",
+      "group": [
+        "G3",
+        "G4"
+      ],
+      "status": "PASS",
+      "sourceAssessment": "PASS",
+      "receivingCode": [
+        "mikro/src/repl.ts:1-160,300-560,620-795",
+        "mikro/src/rlm.ts:1039-1328",
+        "mikro/src/mcp/backends/legacy.ts:132-143",
+        "mikro/src/mcp/backends/pi.ts:141-215",
+        "mikro/python/llm_bridge.py"
+      ],
+      "evidence": [
+        "G9-SOURCE-ONLY-SHIPPED-ARCHIVE-TERMINAL-563-WHOLE-MIKRO-INSTALL-GATE.json",
+        "G9-SOURCE-ONLY-SHIPPED-ARCHIVE-TERMINAL-563-BOUNDARY-PROOF.json",
+        "artifact://1233:108-112,1075-1076",
+        "mikro/tests/repl-tool-bridge.test.ts",
+        "mikro/tests/repl.test.ts",
+        "mikro/tests/rlm-final.test.ts",
+        "mikro/tests/pi-backend.test.ts"
+      ],
+      "assessment": "Actual child-process tests cover timeout fresh-state and side-effect-once behavior, generation-bound stale bridge responses and terminal restart/deadline failures. Cancellation is forwarded through request signals and the current bridge rather than replaying timed-out code. Pi combines runtime abort signals, refuses tools after termination and aborts/disposes/unsubscribes in finally. Real blocked-provider deadline and in-flight SDK cancellation tests settle without an extra request. Legacy timeout conversion explicitly exposes only an observed partial receipt.",
+      "limitation": "Process/lifecycle evidence is scoped to tested Python/SDK boundaries; it is not a claim that all host processes belong to this candidate. The stock host V5 audit's transient PID remains unattributed."
+    },
+    {
+      "number": 13,
+      "criterion": "Q13",
+      "group": [
+        "G2",
+        "G4",
+        "G5"
+      ],
+      "status": "PASS",
+      "sourceAssessment": "PASS",
+      "receivingCode": [
+        "mikro/src/mcp/backend.ts",
+        "mikro/src/mcp/server.ts:860-978,1150-1195",
+        "mikro/src/sdk/agent-spec.ts",
+        "scripts/mikro/call.ts",
+        "scripts/mikro/bench.ts",
+        ".claude/workflows/wish.js",
+        "scripts/wish-workflow.ts"
+      ],
+      "evidence": [
+        "artifact://1233:67-76",
+        "G9-SOURCE-ONLY-SHIPPED-ARCHIVE-TERMINAL-563-WHOLE-GENIE-GATE.json",
+        "scripts/wish-workflow-behavior.test.ts",
+        "scripts/wish-workflow-quality.test.ts",
+        "scripts/mikro/call.test.ts",
+        "scripts/mikro/bench-cli.test.ts",
+        "WAVE3-LIVE-VERIFICATION.json"
+      ],
+      "assessment": "Public engine selection is explicit and strict, with call override before agent selection and RLM omission default, including generic query. The MCP receiver rejects obsolete backend/malformed engine input before running a backend. Both saved-wish scout and review receiving paths forward the selected engine; off disables both offloads, and omission retains existing behavior. Benchmark selection reaches runAgent rather than remaining metadata. No automatic routing/default/model adoption was added.",
+      "limitation": "Passing workflow forwarding/loader behavior is not evidence of useful SHIP outcomes in the paid18 native cohort. Its missed/problem/refused outcomes remain recorded under Q21."
+    },
+    {
+      "number": 14,
+      "criterion": "Q14",
+      "group": [
+        "G4",
+        "G5"
+      ],
+      "status": "PASS",
+      "sourceAssessment": "PASS",
+      "receivingCode": [
+        "mikro/src/mcp/backends/pi.ts:45-215",
+        "mikro/src/mcp/server.ts:747-1005,1150-1203",
+        "scripts/mikro/call.ts:83-103",
+        "mikro/tests/pi-backend.test.ts:1-165"
+      ],
+      "evidence": [
+        "artifact://1233:1062-1080",
+        "G9-SOURCE-ONLY-SHIPPED-ARCHIVE-TERMINAL-563-BOUNDARY-PROOF.json",
+        "G9-SOURCE-ONLY-SHIPPED-ARCHIVE-TERMINAL-563-WHOLE-MIKRO-INSTALL-GATE.json",
+        "mikro/tests/backend-contract.test.ts"
+      ],
+      "assessment": "The installed SDK tool loop validates original emit_done arguments against output precedence and independent VALIDATE contracts. First accepted final wins; beforeToolCall blocks all later tools and finishTurn ends the run without requiring a synthetic ToolCall implementation. Actual mixed-batch tests observe real filesystem opens, so blocked post-final reads are not merely uninspected error text. Missing/invalid finals fail, and message_end usage, progress, failed envelopes, history and compatible structuredContent reach the existing MCP/Genie consumers.",
+      "limitation": "A provider failure or incomplete receipt can override a nominal final with truthful failure/partial accounting. This is not a last-prose fallback or a complete billing claim."
+    },
+    {
+      "number": 15,
+      "criterion": "Q15",
+      "group": [
+        "G6",
+        "G8"
+      ],
+      "status": "PASS",
+      "sourceAssessment": "PASS",
+      "receivingCode": [
+        "mikro/src/juice.ts",
+        "mikro/src/cli.ts:1061-1093",
+        "mikro/tests/juice.test.ts:162-203"
+      ],
+      "evidence": [
+        "WAVE3-LIVE-VERIFICATION.json:305-337",
+        "JUICE-CONFIGURED-LIVE-VERIFICATION.json",
+        "artifact://1233:510-519",
+        "G9-SOURCE-ONLY-SHIPPED-ARCHIVE-TERMINAL-563-WHOLE-MIKRO-INSTALL-GATE.json"
+      ],
+      "assessment": "The manual viewer path authenticates an api_key_viewer using the configured project key, keeps cookies local to the request sequence, validates session/version and aggregate response shapes, and logs out. Actual retained project snapshots preserve URL/query/epoch/timezone/fetch/hash and report aggregate-only capabilities. Missing range/cost/latency fields remain null or unsupported instead of invented per-request records or free billing. Receiving tests reject admin/malformed/logout-failed responses.",
+      "limitation": "Keeper aggregates are not request-level receipts or canonical invoices and cannot fill the missing native/engine full totals. Historical actual snapshots are not a new live refresh on this date."
+    },
+    {
+      "number": 16,
+      "criterion": "Q16",
+      "group": [
+        "G7"
+      ],
+      "status": "PASS",
+      "sourceAssessment": "PASS",
+      "receivingCode": [
+        "mikro/src/jev.ts:1-320",
+        "mikro/src/cli.ts:1100-1190",
+        "mikro/tests/jev.test.ts:1-155"
+      ],
+      "evidence": [
+        "WAVE3-LIVE-VERIFICATION.json:1489-1618",
+        "artifact://1233:473-503,520-523",
+        "G9-SOURCE-ONLY-SHIPPED-ARCHIVE-TERMINAL-563-WHOLE-MIKRO-INSTALL-GATE.json"
+      ],
+      "assessment": "Manual CLI dispatch alone invokes JEV. It validates the explicit endpoint/model/key reference and caller-approved sanitized input, then sends one state/model/questions POST. Bounded Choice IDs, abstention, optional Noul/Score, response model/probabilities/confidence/usage and cancellation are checked; local source snapshots and references are cloned/reattached rather than transmitted as authority. Current actual local tests verify exactly one call, no retry, immutable source mapping and safe malformed/auth/transport failures. The retained sanctioned manual real extraction is separately identified.",
+      "limitation": "No current JEV call, AWS provisioning or automatic ordinary-run invocation was authorized/performed. An earlier unavailable AWS route is not treated as permission for an unsanctioned substitution; the already recorded sanctioned extraction is not a fresh operational receipt."
+    },
+    {
+      "number": 17,
+      "criterion": "Q17",
+      "group": [
+        "G1",
+        "G2",
+        "G3",
+        "G4",
+        "G5",
+        "G6",
+        "G7",
+        "G8",
+        "G9"
+      ],
+      "status": "PASS",
+      "sourceAssessment": "PASS",
+      "receivingCode": [
+        "mikro/src/mcp/backend.ts",
+        "mikro/src/mcp/backends/legacy.ts",
+        "mikro/src/mcp/backends/pi.ts",
+        "scripts/git-history-ownership.ts",
+        "scripts/commitlint.ts:1-85",
+        "scripts/legacy-skills-catalog.ts",
+        "scripts/mikro/engine-experiment.ts:1033-1204",
+        ".genie/wishes/mikro-engine-split/experiments/native-workflow-observer.mjs",
+        ".genie/wishes/mikro-engine-split/experiments/native-session-accounting.mjs",
+        "src/lib/metrics-export.ts",
+        "src/lib/metrics-prices.ts",
+        "src/lib/metrics-usage.ts",
+        "src/genie-commands/doctor.ts:1315-1410"
+      ],
+      "evidence": [
+        "G9-SOURCE-ONLY-SHIPPED-ARCHIVE-TERMINAL-563-LIVE-BASE-INTEGRATION.json",
+        "G9-SOURCE-ONLY-SHIPPED-ARCHIVE-TERMINAL-563-WHOLE-GENIE-GATE.json",
+        "G9-SOURCE-ONLY-SHIPPED-ARCHIVE-TERMINAL-563-DOCS-GATE.json",
+        "artifact://1232:1-27",
+        "artifact://1237:1-90"
+      ],
+      "assessment": "RuntimeBackend remains the cross-engine authority, and Pi reuses the supported SDK rather than a parallel handwritten loop. History ownership is shared by catalog and commitlint consumers; the bounded root-array copy fixes an actually consumed traversal value. Experimental native observation stays local and calls canonical session/accounting/report consumers instead of introducing a production workflow. The incoming doctor advisory and optional manual metrics pricing/export/capture are integrated at their existing consumers; no unconditional fetch or adoption is added. Runtime boundary validation precedes the Type.Unsafe schema interface. Affected source docs/changelogs and current full types/lint/dead-code/complexity gates are present.",
+      "limitation": "Doctor complexity26 and three Knip hints are retained warn-level observations, not newly manufactured blockers. The additive catalog and deliberate npm/Bun separation are not collapsed into a new abstraction. Docs tooling limitations remain explicit."
+    },
+    {
+      "number": 18,
+      "criterion": "Q18",
+      "group": [
+        "G2",
+        "G3",
+        "G4",
+        "G5",
+        "G8",
+        "G9"
+      ],
+      "status": "INCOMPLETE",
+      "sourceAssessment": "PASS for bounded source/resource correctness; no confirmed introduced cap or resource defect",
+      "receivingCode": [
+        "mikro/src/mcp/backends/pi-tools.ts:11-13,106-156,193-220,225-257",
+        "mikro/src/mcp/backends/pi.ts:66-75,142-215",
+        "mikro/src/rlm.ts:862-925,1286-1328",
+        "mikro/src/acp/session-store.ts:19-58,126-135",
+        "src/lib/metrics-export.ts:229-270",
+        "src/lib/metrics-usage.ts:521-635"
+      ],
+      "evidence": [
+        "artifact://1233:19-24,1068-1076",
+        "G8-RECEIPT3-ENGINE-108-COMPLETE.json",
+        "G8-RECEIPT3-FINAL-PAIRED-REPORT.json",
+        "G9-SOURCE-ONLY-SHIPPED-ARCHIVE-TERMINAL-563-WHOLE-GENIE-GATE.json",
+        "G9-SOURCE-ONLY-SHIPPED-ARCHIVE-TERMINAL-563-WHOLE-MIKRO-INSTALL-GATE.json"
+      ],
+      "assessment": "Pi file reads are256KiB-bounded, search traversal has20000-entry and1000-result limits, Git has bounded buffer/deadline, and tool/final work is fenced by measured model-turn/token/cost limits. Session storage has existing field/turn/file bounds. Export caches session/offload reads within an invocation, and incoming OMP tool-evidence inspection streams logs rather than repeatedly decoding whole transcripts per interval. Actual SDK tests exercise pre-exhausted and reached caps. No concrete introduced repeated computation/allocation causing a measured budget, latency, memory or compatibility failure was found.",
+      "limitation": "A current cold-start/repeated-run performance improvement or non-regression claim is not established. Gate wall times include lock waiting and are not treatment benchmarks. Historical paid comparisons are incomplete/confounded; they cannot justify a winner or resource advantage. Missing performance measurement is not converted into a speculative source defect."
+    },
+    {
+      "number": 19,
+      "criterion": "Q19",
+      "group": [
+        "G1",
+        "G2",
+        "G3",
+        "G4",
+        "G5",
+        "G6",
+        "G7",
+        "G8",
+        "G9"
+      ],
+      "status": "PASS",
+      "sourceAssessment": "PASS for current required source/build/install/boundary gates",
+      "receivingCode": [
+        "scripts/legacy-skills-catalog.test.ts",
+        "scripts/commitlint.test.ts",
+        "mikro/tests/backend-contract.test.ts:975-1407",
+        "mikro/tests/pi-backend.test.ts",
+        "mikro/tests/pi-tools.test.ts",
+        "mikro/tests/repl-tool-bridge.test.ts",
+        "mikro/tests/juice.test.ts",
+        "mikro/tests/jev.test.ts",
+        "scripts/mikro/call.adversarial.test.ts",
+        "scripts/wish-workflow-behavior.test.ts",
+        "scripts/test-preload.ts:1-70",
+        ".github/workflows/ci.yml",
+        ".github/workflows/mikro-ci.yml"
+      ],
+      "evidence": [
+        "G9-SOURCE-ONLY-SHIPPED-ARCHIVE-TERMINAL-563-BOUNDARY-PROOF.json",
+        "G9-SOURCE-ONLY-SHIPPED-ARCHIVE-TERMINAL-563-WHOLE-GENIE-GATE.json",
+        "G9-SOURCE-ONLY-SHIPPED-ARCHIVE-TERMINAL-563-WHOLE-MIKRO-INSTALL-GATE.json",
+        "G9-SOURCE-ONLY-SHIPPED-ARCHIVE-TERMINAL-563-SUPPLEMENTAL-GATE.json",
+        "G9-SOURCE-ONLY-SHIPPED-ARCHIVE-TERMINAL-563-DOCS-GATE.json",
+        "G9-SOURCE-ONLY-SHIPPED-ARCHIVE-TERMINAL-563-FOUR-RELEASE-PAYLOADS.json",
+        "artifact://1232",
+        "artifact://1233",
+        "artifact://1237",
+        "artifact://1241"
+      ],
+      "assessment": "Current root full gate exited0 with3294pass/2skip/0fail,3296 tests,158 files and19664 assertions; current Mikro check/build/full Node/install-update exited0 with1244pass/0fail,218 suites and no reported skip/cancel/todo. Fresh authoritative dependency installation is separately recorded. The G1 owning33/3 red→36/0 green and exact saved G2 red driver→actual Python/RLM/MCP green establish credible independent regression oracles; current owning Node80/0 is not mislabeled as the old196 suite. Actual SDK/process/Git/compiled/install boundary tests are exercised, not inferred from test filenames. Standalone loader50/0 and the unchanged entire stock lifecycle pass in a real clean Docker PID namespace provide supplemental proof.",
+      "limitation": "The original host lifecycle failed at transient PID2660981; its causality remains UNKNOWN and it is not declared green. The entire unchanged script passed in a different hermetic environment. Two existing bwrap/live-facts cases remain skipped and supply no live proof. Npm audit5 warnings and install-script warnings are retained. Markdownlint printed4 files but reported0 issues in0 files; no four-document lint claim is made. Remote CI remains Q22 BLOCKED."
+    },
+    {
+      "number": 20,
+      "criterion": "Q20",
+      "group": [
+        "G8"
+      ],
+      "status": "BLOCKED",
+      "sourceAssessment": "PASS for honest incomplete-report gating; completed comparison not established",
+      "receivingCode": [
+        "scripts/mikro/engine-experiment.ts:1033-1204",
+        "scripts/mikro/engine-experiment-runtime.mjs",
+        "scripts/mikro/score.ts",
+        "scripts/mikro/bench.ts:215-310"
+      ],
+      "evidence": [
+        "FROZEN-FIXTURES.json",
+        "G8-PHYSICAL-FIXTURE-HASH-PROOF.json",
+        "G8-RECEIPT3-ENGINE-108-COMPLETE.json",
+        "G8-RECEIPT3-FINAL-PAIRED-REPORT.json"
+      ],
+      "assessment": "The retained engine cohort contains all108 executions, including the36 frozen Flash control runs and separately frozen available candidate cells. Source report consumers preserve attempts, failures and null missing costs; engineAccountingBlockers prevents incomplete accounting from becoming complete. The paired report exited1, complete:false, parity:false, recommendation:null and defaultEngine:rlm. No post-outcome resampling, source/default/model/control change or winner claim is accepted.",
+      "limitation": "Seven named engine cells lack complete SDK nominal totals: genie-new-directory Flash unpatched-r2; genie-existing GLM5.3-flash patched-r2/r3; brain-existing GLM5.3-flash patched-r1/r3; brain-new-directory GLM5.3-flash patched-r3; genie-existing MiMo2.6 Pi-r1. Original confounding/provenance limits remain binding. Executed108 is not completed108-accounting, and report-only reuse does not repair missing totals. No rerun/refreeze/regrade is authorized."
+    },
+    {
+      "number": 21,
+      "criterion": "Q21",
+      "group": [
+        "G5",
+        "G8"
+      ],
+      "status": "BLOCKED",
+      "sourceAssessment": "PASS for canonical observation and truthful incomplete accounting; native business/adoption completion unavailable",
+      "receivingCode": [
+        ".genie/wishes/mikro-engine-split/experiments/native-workflow-observer.mjs:1-28,400-440,510-610,690-705",
+        ".genie/wishes/mikro-engine-split/experiments/native-session-accounting.mjs:1-249",
+        "scripts/mikro/engine-experiment.ts:1036-1088",
+        "src/lib/metrics-export.ts",
+        "src/lib/metrics-usage.ts",
+        "scripts/wish-workflow.ts"
+      ],
+      "evidence": [
+        "G8-RECEIPT3-NATIVE-18-COMPLETE.json",
+        "G8-RECEIPT3-FINAL-PAIRED-REPORT.json",
+        "G8-ACCOUNTING-CONSUMER-PROOF.json",
+        "WAVE3-LIVE-VERIFICATION.json",
+        "G9-SOURCE-ONLY-SHIPPED-ARCHIVE-TERMINAL-563-LIVE-BASE-INTEGRATION.json"
+      ],
+      "assessment": "The same18 saved native runs were actually executed after an unscored loader/route/observer smoke. The observer uses actual run/session IDs, durable canonical handles and persisted own-suffix events, detects inherited-cut/sequence/served-route discrepancies, delegates turn usage derivation and reconciles one-to-one SDK/caller offloads. The report refuses incomplete accounting instead of synthesizing closers, zero totals or a success journal. Retained native observations report7missed/2problem/9refused, businessOkCount0,25 canonical attempts and20 SDK calls. The consumer proof is explicitly an unscored declared fixture, not a native outcome or invoice.",
+      "limitation": "Three native rows remain missing/incomplete: genie-existing offload-pi-r1/r3 and brain-existing offload-rlm-r3. Native comparison exited2, complete:false; the paired report also blocks native identity/smoke/required accounting coverage. Aggregate Keeper spend is not added to native/offload totals, and missing canonical prices/usage are not zero. No completed report append, genuine full-accounting comparison or adoption recommendation is supported."
+    },
+    {
+      "number": 22,
+      "criterion": "Q22",
+      "group": [
+        "G1",
+        "G9"
+      ],
+      "status": "BLOCKED",
+      "sourceAssessment": "PASS for current local generated/installed/release boundary; remote delivery pending",
+      "receivingCode": [
+        "mikro/scripts/smoke-install-update.sh",
+        ".github/workflows/mikro-ci.yml",
+        ".github/workflows/ci.yml:79-88",
+        ".github/workflows/commitlint.yml",
+        "scripts/commitlint.ts:1-85",
+        "scripts/build-binary.sh",
+        "package.json",
+        "plugins/dsh-workflow-loader/package.json"
+      ],
+      "evidence": [
+        "artifact://1233:-55",
+        "G9-SOURCE-ONLY-SHIPPED-ARCHIVE-TERMINAL-563-FOUR-RELEASE-PAYLOADS.json",
+        "G9-SOURCE-ONLY-SHIPPED-ARCHIVE-TERMINAL-563-LIVE-BASE-INTEGRATION.json",
+        "G9-SOURCE-ONLY-SHIPPED-ARCHIVE-TERMINAL-563-FINAL-CONTINUITY.json:101-124"
+      ],
+      "assessment": "Current generated Mikro, actual isolated installedCLI1.260907.1 and dirty-refusal/forced-update smoke match the current source. All four fresh Genie6.261009.1 release targets were built/stamped/staged/extracted and inspected for bidirectional byte/kind/mode correspondence, root0700, size bounds and absence of Mikro/links/tests. Current glibc and musl binaries actually executed --version successfully. Incoming root version/skills/runtime correctly invalidated older release proofs; source plugin versions are distinguished from builder-stamped stage versions. Current CI configuration uses full history for the catalog/commitlint ownership gates and keeps independent Mikro validation.",
+      "limitation": "ARM64 Linux/Darwin are compiled/extracted/hashed, not executed on this host. The short builder result has no surviving spilled-artifact URL; durable receipts retain actual observed stages/marker/current hashes rather than inventing a log. PR3139 still publishes old553; exact-path checkpoint/currentfa846 graph merge preserving628 ancestry, publication and newhead remote CI/file/base/mergeability readback are pending. No remote readiness, merge, main promotion or production install is claimed."
+    }
+  ],
+  "sourceQualityVerdict": "SHIP",
+  "featureRuntimeVerdict": "BLOCKED",
+  "comparisonVerdict": "BLOCKED",
+  "wholeWishVerdict": "BLOCKED",
+  "deliveryVerdict": "BLOCKED",
+  "verdictExplanation": {
+    "sourceQuality": "No confirmed blocking patch-introduced security, correctness, maintainability or resource defect was found in the exact current7241 source/artifact scope. The current attributable full gates, owning receiving-boundary regressions and installed/release evidence support source-quality SHIP under the original frozen composition rules. This does not convert the historically rejected435 candidate or incomplete experiments into SHIP.",
+    "featureRuntime": "The named provider/REPL/Pi/MCP/caller/Juice/JEV/installed source surfaces have attributable boundary evidence, but a whole G1–G9 operational/native-feature completion claim is not supported by the original incomplete/confounded engine/native cohorts and incomplete canonical accounting. Local/source surface approval is separated from that broader runtime claim; no fresh external/provider/JEV execution was performed.",
+    "comparison": "All108 engine and the same18 native executions are retained, but seven engine full-total gaps, three native provenance/accounting gaps, original confounding and failed parity remain binding. The honest report has no recommendation and retains RLM.",
+    "wholeWish": "Missing broader original Genie preservation baseline, incomplete original comparison/native accounting and pending current remote delivery prevent whole-wish completion. There is no criterion waiver or silent reduction to source-only success.",
+    "delivery": "Current local install and all four fresh payloads are supported, but the final exact source commit/graph merge/publication and new remote CI/mergeability readback do not yet exist in the supplied evidence. Both independent whole-matrix source approvals and authorized normal-hook publication prerequisites remain distinct requirements."
+  },
+  "confirmedFindings": [],
+  "unresolvedHypotheses": [
+    {
+      "id": "H1",
+      "subject": "Transient pgserve/postgres PID during stock host V5 lifecycle",
+      "status": "UNRESOLVED_ATTRIBUTION_NOT_CONFIRMED_SOURCE_DEFECT",
+      "evidence": "artifact://1241 and G9-SOURCE-ONLY-SHIPPED-ARCHIVE-TERMINAL-563-SUPPLEMENTAL-GATE.json record the exact host audit failure on PID2660981; subsequent process inspection found it gone. The unchanged complete stock script passed in a real clean Docker PID namespace.",
+      "limitation": "Neither foreign-process causality nor candidate-created-process causality is established. The host failure is retained; it is not suppressed or relabeled green."
+    },
+    {
+      "id": "H2",
+      "subject": "Historical old553 custom-provider unknown-pricing review thread",
+      "status": "NOT_A_CONFIRMED_NEW_CURRENT_DEFECT",
+      "evidence": "Current PiBackend validates declared input/output pricing before inference. The original628 custom-provider construction was inspected through read-only git show; optional unknown pricing is not established here as newly introduced by the current patch. Current retained engine/native report consumers block absent full totals.",
+      "limitation": "An old remote P1 thread is not a fresh current-source reproduction or a completed cost receipt. Missing accounting remains Q20/Q21 BLOCKED; unknown cost is not accepted as a measured free run."
+    }
+  ],
+  "reusedCommandsAndEvidence": [
+    {
+      "command": "npm run deps:ci",
+      "owner": "Coordinator; reused, not rerun by reviewer",
+      "evidence": "G9-SOURCE-ONLY-SHIPPED-ARCHIVE-TERMINAL-563-WHOLE-MIKRO-INSTALL-GATE.json:freshNpmAuthorityCiBeforeThisGate",
+      "exitCode": 0,
+      "coverage": "Fresh Mikro npm authority, lock installation and prepare build",
+      "limits": "Five audit warnings, three moderate/two high, and install-script allow-list warnings retained; no audit fix performed."
+    },
+    {
+      "command": "npm run check; npm run build; npm test; bash scripts/smoke-install-update.sh",
+      "owner": "Coordinator; reused",
+      "evidence": "artifact://1233; G9-SOURCE-ONLY-SHIPPED-ARCHIVE-TERMINAL-563-WHOLE-MIKRO-INSTALL-GATE.json",
+      "exitCode": 0,
+      "coverage": "Current Node/typecheck/build1244 tests,218 suites; actual installedCLI, dirty refusal and forced standalone update",
+      "limits": "No production install. Wall921.55 seconds includes lock waiting; test duration212495.856 milliseconds is not a treatment performance claim."
+    },
+    {
+      "command": "bun install --frozen-lockfile; flock /var/tmp/genie-full-check.lock bun run check",
+      "owner": "Coordinator; reused",
+      "evidence": "artifact://1232; G9-SOURCE-ONLY-SHIPPED-ARCHIVE-TERMINAL-563-WHOLE-GENIE-GATE.json",
+      "exitCode": 0,
+      "coverage": "Root and both DSH types, Biome, Knip, skill/wish lint, complexity budget and complete Bun suite3294pass/2skip/0fail",
+      "limits": "Two original live bwrap/facts skips, inherited complexity26 and three Knip hints retained. Current test565.72 seconds/whole wall592.03 seconds are gate observations only."
+    },
+    {
+      "command": "Actual standalone collector/catalog/retirement owning regression and catalog check",
+      "owner": "Coordinator; reused",
+      "evidence": "G9-SOURCE-ONLY-SHIPPED-ARCHIVE-TERMINAL-563-BOUNDARY-PROOF.json",
+      "exitCode": 0,
+      "coverage": "Actual owning33pass3fail before necessary array copy;36pass0fail200 assertions after. Shipped refs, trusted archives, source/shared ancestry and refusal cases; current40 names95 descriptions catalog check.",
+      "limits": "Separate initial namespace oracle failure and formatting-only catalog failure retained. Superset check is not an exact exclusion proof."
+    },
+    {
+      "command": "node receiving435-child-empty-terminal.mjs; unchanged Genie parseFooter invocation",
+      "owner": "Coordinator; reused exact saved driver",
+      "evidence": "G9-SOURCE-ONLY-SHIPPED-ARCHIVE-TERMINAL-563-BOUNDARY-PROOF.json:G2terminal",
+      "exitCode": 0,
+      "coverage": "Actual compiled SDK/real Python/RLM/MCP terminal receipt and actual unchanged Genie receiving parser: complete55/14 numeric control; partial44/7 known subtotal, totals:null, parser:null",
+      "limits": "10 requests are local provider requests for this driver only; external model/JEV0. Suite fixtures add local requests. Historical filename does not make the old code current; source/compiled receipt is candidate-bound."
+    },
+    {
+      "command": "Standalone workflow-loader tests; VN5_E2E_BUILD=1 bash tests/e2e/v5-lifecycle.sh",
+      "owner": "Coordinator; reused",
+      "evidence": "artifact://1241; G9-SOURCE-ONLY-SHIPPED-ARCHIVE-TERMINAL-563-SUPPLEMENTAL-GATE.json",
+      "exitCode": 1,
+      "coverage": "Loader50pass0fail; actual host stock lifecycle reaches the daemon audit and fails on new matching PID2660981",
+      "limits": "Host remainder did not execute; process causality UNKNOWN. Reviewer did not kill or reprobe processes."
+    },
+    {
+      "command": "Cached, network-none, read-only, nonroot, cap-drop/no-new-privileges Docker execution of unchanged tests/e2e/v5-lifecycle.sh with actual Bun and current bundle",
+      "owner": "Coordinator; reused",
+      "evidence": "G9-SOURCE-ONLY-SHIPPED-ARCHIVE-TERMINAL-563-SUPPLEMENTAL-GATE.json:changedEnvironmentNotChangedOracle",
+      "exitCode": 0,
+      "coverage": "Whole stock lifecycle, every remaining assertion, real CLI/SQLite/git/worktrees, empty PG baseline/no new PG or shell jobs and final PASS",
+      "limits": "Different actual PID environment, not a mocked process/PID response and not proof that the original host audit passed. Unprivileged unshare attempt separately failed with Operation not permitted."
+    },
+    {
+      "command": "bun run lint:docs-markdown; bun run lint:docs-links; exact retired-term search at physical docs root",
+      "owner": "Coordinator; reused",
+      "evidence": "artifact://1237; G9-SOURCE-ONLY-SHIPPED-ARCHIVE-TERMINAL-563-DOCS-GATE.json",
+      "exitCode": 0,
+      "coverage": "Exact hydrated EA docs, physical nonempty root,44 reported link entries, current CI term search no matches",
+      "limits": "Markdownlint prints Linting4 but Summary0issuesin0files. Ignored[/] link entries are not verified resolving links."
+    },
+    {
+      "command": "bash scripts/build-binary.sh --platform for linux-x64-glibc, linux-x64-musl, linux-arm64, darwin-arm64",
+      "owner": "Coordinator; reused",
+      "evidence": "G9-SOURCE-ONLY-SHIPPED-ARCHIVE-TERMINAL-563-FOUR-RELEASE-PAYLOADS.json",
+      "exitCode": 0,
+      "coverage": "All four fresh6.261009.1 builds and actual archive inspections; glibc and musl --version actual exit0",
+      "limits": "ARM/Mach not runtime-executed. No signing/upload/promotion/production installation. Short builder output has no surviving artifact URL."
+    },
+    {
+      "command": "Original engine108 execution, same native18 execution and final report-only reconciliation",
+      "owner": "Coordinator; historical retained attempts, not rerun",
+      "evidence": "G8-RECEIPT3-ENGINE-108-COMPLETE.json; G8-RECEIPT3-NATIVE-18-COMPLETE.json; G8-RECEIPT3-FINAL-PAIRED-REPORT.json",
+      "exitCodes": [
+        1,
+        2,
+        1
+      ],
+      "coverage": "Actual complete execution counts with honest incomplete costs/provenance, all failures retained; final parity:false/recommendation:null/defaultEngine:rlm",
+      "limits": "Not a complete accounting comparison, current treatment resample, winner claim or canonical partial report append."
+    },
+    {
+      "command": "Historical sanctioned Juice provisioning/catalog/viewer/configured calls and one-shot manual JEV extraction",
+      "owner": "Coordinator; retained actual source-surface evidence",
+      "evidence": "WAVE3-LIVE-VERIFICATION.json; JUICE-CONFIGURED-LIVE-VERIFICATION.json",
+      "exitCode": 0,
+      "coverage": "Distinct private project keys and additive/idempotent provisioning; viewer aggregate provenance; explicit configured credential/model flow; sanctioned manual extraction/source mapping",
+      "limits": "Historical observation times and aggregate/invoice limitations preserved. No refresh, provisioning, external inference or JEV call was made by this reviewer."
+    }
+  ],
+  "releaseIdentity": {
+    "version": "6.261009.1",
+    "linux-x64-glibc": {
+      "tarSha256": "0dffc55f1cb03a56d6812f78bf3e4ba724d3b8d698b3eacffe8239d2140a6b7a",
+      "binarySha256": "8055f44039b30f3d6ec6e3fa0e21fff6773330588aa82e08e7f34f98e2bf1a25",
+      "bytes": 36987611,
+      "actuallyExecuted": true
+    },
+    "linux-x64-musl": {
+      "tarSha256": "0b84f6c6cc1ebd606801ec740498a7a6f6444338fe0d4ebc387cd93fa4f547df",
+      "binarySha256": "4b742843309120fa24001fc2e49cc38a45a074d8886a8d79619200dbcc6f9633",
+      "bytes": 35677052,
+      "actuallyExecuted": true
+    },
+    "linux-arm64": {
+      "tarSha256": "3fe90ef50db525f051828190197fd27edc5ed26ea363ff8d7dfe1fc5fd43bbe3",
+      "binarySha256": "3bd01611b16bae4010983655c6c05bd5759d207ed097a212fd3d95ae4839179d",
+      "bytes": 36708634,
+      "actuallyExecuted": false
+    },
+    "darwin-arm64": {
+      "tarSha256": "1a07ad52d7b503735beb98862b08a562eab27f00da59623412595cdf7f83d0d0",
+      "binarySha256": "4a72c99a8cbb755afa6d475cabd7276c6377a3e832c3c86d8bc39d702cb42273",
+      "bytes": 24980820,
+      "actuallyExecuted": false
+    },
+    "provenance": "Current FOUR-RELEASE-PAYLOADS receipt; each target203 members/root0700/current version and stamped plugin versions, separate from source manifest."
+  },
+  "coverage": {
+    "originalNumberedRows": 22,
+    "assessedRows": [
+      "Q01",
+      "Q02",
+      "Q03",
+      "Q04",
+      "Q05",
+      "Q06",
+      "Q07",
+      "Q08",
+      "Q09",
+      "Q10",
+      "Q11",
+      "Q12",
+      "Q13",
+      "Q14",
+      "Q15",
+      "Q16",
+      "Q17",
+      "Q18",
+      "Q19",
+      "Q20",
+      "Q21",
+      "Q22"
+    ],
+    "groupsCovered": [
+      "G1",
+      "G2",
+      "G3",
+      "G4",
+      "G5",
+      "G6",
+      "G7",
+      "G8",
+      "G9"
+    ],
+    "method": "Read original frozen criteria before artifact, relevant review/evidence-identity/architecture/code-quality/performance/QA/supply-chain guidance and test-audit instructions; inspect current diff and full receiving contexts for affected authority/result/accounting paths; consume current attributable receipts and actual retained gate output; preserve original paid attempts and unavailable prerequisites.",
+    "crossBoundaryTraces": [
+      "History ownership → eligible shipped/proven archive commits → collector → generated catalog → actual retirement classifier → archival consumer; same ownership helper → commitlint receiving filter.",
+      "CLI update → runManaged → shared standalone-worktree guard → mutation worker ordering.",
+      "Provider stop/receipt → Node bridge response → Python discriminator → execution result → RLM failure/final settlement → RuntimeBackend receipt → MCP envelope/footer → unchanged Genie parser.",
+      "Pi SDK event/tool loop → original argument validation → first accepted final → beforeToolCall guard/finishTurn → result/usage/progress/history → MCP/Genie.",
+      "Public engine → agent/backend registry → generic query/call/bench → saved wish scout and review; off/default receiving branches.",
+      "NEW plan proposal → verifier authority/dedup → score; generator source/parent/evaluation records → physical fixture/benchmark overlay.",
+      "Project references → explicit provisioning/invocation auth → project viewer login/routes/logout → sanitized aggregate snapshot; manual JEV CLI → one request → typed answer/source reattachment.",
+      "Native saved workflow → persisted canonical events/own suffix → turn usage/tool identity/offload reconciliation → existing report gates; optional incoming metrics price/evidence fields → export/Phoenix consumers."
+    ],
+    "reviewerCommands": "No builds, lint, tests, formatters, runtime/network/provisioning/inference probes, Git-state changes or task-state changes were executed. Read-only git show was used to distinguish original imported pricing behavior from a newly introduced defect. Other investigation used read/grep/glob only.",
+    "notClaimed": [
+      "Independent rehash of every manifest byte or external docs checkout.",
+      "Every individual file in the2480-record inventory read line by line.",
+      "Every long retained log line inspected; actual named gate start/finish, receiving suites, receipts and limitations were inspected.",
+      "Current remote head/base/checks/mergeability after future publication.",
+      "Broad original Genie-state preservation without its missing baseline.",
+      "Complete original108+18 accounting, performance advantage, useful native business success or adoption recommendation.",
+      "Current live AWS/JEV/provider refresh, billing invoice or per-request Keeper details.",
+      "Unexecuted ARM/Mach runtime behavior or skipped live bwrap facts behavior."
+    ]
+  },
+  "limitations": [
+    "This source SHIP belongs only to7241a0a39d2a270093e6ae0d1af905f9603b3092eff373795146f493ff8e29e9 and its stated inventory/exclusions. Relevant source/generated/dependency/fixture/evidence changes invalidate affected approval.",
+    "Original whole-preservation baseline remains unavailable; only the named actually recorded Mikro/operator/helper identities are proven.",
+    "Original108+18 paid comparisons remain incomplete/confounded/unknown. No criterion, cohort, price/control/model/default/cap or paid report was changed.",
+    "Current source/boundary/installed proofs are not whole-wish or delivery success. Final remote publication/new checks remain pending on the owner-authorized path.",
+    "A publication-only WISH append must preserve the exact reviewed prefix and needs post-publication correspondence; it is not authorization to rewrite source/design.",
+    "Evidence retrieval initially used four misread artifact labels; those failed reads were not evidence. Exact labels were then read from current receipts and artifact://1232,1233,1237,1241 were successfully consumed.",
+    "Missing evidence is not automatically an unreachable prerequisite. This result names missing baseline/accounting/remote receipts without inventing environmental impossibility or demanding forbidden reruns."
+  ],
+  "confidence": 0.91
+}

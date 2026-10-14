@@ -10,7 +10,7 @@
 schema_version: 1
 tools_api: 1
 shape: loop
-model: deepseek-api/deepseek-flash
+model: deepseek/deepseek-flash
 thinking: low
 description: >-
   Reads one sibling microagent's SYSTEM.md, its EVIDENCE.md rounds and its fixture

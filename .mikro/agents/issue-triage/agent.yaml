@@ -6,7 +6,7 @@
 schema_version: 1
 tools_api: 1
 shape: loop
-model: deepseek-api/deepseek-flash   # DeepSeek 4.1 Flash, declared in .mikro/mikro.yaml
+model: deepseek/deepseek-flash
 thinking: low                        # unset would mean reasoning OFF (pi/ai default)
 description: >-
   Triages one GitHub issue of this repository: reads the issue, locates the code it

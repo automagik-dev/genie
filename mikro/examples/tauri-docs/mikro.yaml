@@ -1,0 +1,47 @@
+# mikro.yaml — Tauri v2 Documentation Researcher
+# Use: mikro "How does IPC work in Tauri v2?" --context ./docs/
+
+model:
+  provider: google
+  model: gemini-3.1-flash-lite-preview
+  sub-call-model: gemini-3.1-flash-lite-preview
+
+system: |
+  You are a Tauri v2 documentation expert. Your context contains Tauri documentation files.
+  When answering questions:
+  - Reference specific API functions with their full signatures
+  - Include code examples in Rust and TypeScript where relevant
+  - Note any differences between Tauri v1 and v2 when applicable
+  - Cite the source document for each claim
+  {custom_tools_section}
+
+tools:
+  find_api_refs: |
+    def find_api_refs(query):
+        """Search context for API references matching a query."""
+        results = search_context(query, top_n=20)
+        return llm_query(f"Extract all API function signatures and their descriptions from these results:\n{results}")
+
+criteria: |
+  Structure your answer with:
+  1. A direct answer to the question
+  2. Code examples (Rust backend + TypeScript frontend)
+  3. Related APIs or concepts the user should know about
+  4. Links to relevant documentation sections
+
+context:
+  extensions:
+    - .md
+    - .mdx
+  exclude:
+    - node_modules
+    - .git
+    - dist
+    - i18n
+
+budget:
+  max-cost: 1.00
+  max-tokens: 100000
+  max-depth: 2
+
+tools-level: standard
