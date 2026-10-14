@@ -431,8 +431,9 @@ describe('capabilities, adapters and clock', () => {
     }
   });
 
-  test('the adapter map registers no adapter yet', () => {
-    expect(Object.keys(ADAPTERS)).toEqual([]);
+  test('the adapter map registers the omp adapter', () => {
+    expect(Object.keys(ADAPTERS)).toEqual(['omp']);
+    expect(ADAPTERS.omp?.harness).toBe('omp');
   });
 
   test('hostClock is monotonic and reports ISO wall time', () => {
