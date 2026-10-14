@@ -1,0 +1,30 @@
+{
+  "note": "Synthetic pool rows for pilot.test.ts; ids are fake. The test expands each row to a full PoolEntry.",
+  "rows": [
+    { "source": "deepswe", "category": "bugfix", "taskId": "bf-b", "status": "eligible" },
+    { "source": "deepswe", "category": "bugfix", "taskId": "bf-a", "status": "eligible" },
+    { "source": "deepswe", "category": "bugfix", "taskId": "bf-Z", "status": "eligible" },
+    { "source": "deepswe", "category": "bugfix", "taskId": "bf-9", "status": "eligible" },
+    { "source": "deepswe", "category": "bugfix", "taskId": "bf-10", "status": "eligible" },
+    { "source": "deepswe", "category": "bugfix", "taskId": "bf-03", "status": "eligible" },
+    { "source": "deepswe", "category": "bugfix", "taskId": "bf-02", "status": "eligible" },
+    { "source": "deepswe", "category": "bugfix", "taskId": "bf-01", "status": "eligible" },
+    { "source": "deepswe", "category": "bugfix", "taskId": "bf-00", "status": "ineligible" },
+    { "source": "deepswe", "category": "feature", "taskId": "ft-1", "status": "eligible" },
+    { "source": "deepswe", "category": "feature", "taskId": "ft-2", "status": "eligible" },
+    { "source": "deepswe", "category": "feature", "taskId": "ft-3", "status": "eligible" },
+    { "source": "deepswe", "category": "feature", "taskId": "ft-4", "status": "eligible" },
+    { "source": "terminal-bench", "category": "build", "taskId": "tb-1", "status": "eligible" },
+    { "source": "terminal-bench", "category": "build", "taskId": "tb-2", "status": "eligible" },
+    { "source": "terminal-bench", "category": "security", "taskId": "ts-1", "status": "eligible" },
+    { "source": "terminal-bench", "category": "security", "taskId": "ts-2", "status": "eligible" },
+    { "source": "swe-atlas", "category": "qa", "taskId": "qa-1", "status": "eligible" },
+    { "source": "swe-atlas", "category": "qa", "taskId": "qa-2", "status": "eligible" },
+    { "source": "swe-atlas", "category": "docs", "taskId": "doc-1", "status": "unresolved" },
+    { "source": "swe-atlas", "category": "docs", "taskId": "doc-2", "status": "eligible" },
+    { "source": "skillsbench", "category": "office", "taskId": "of-1", "status": "eligible" },
+    { "source": "skillsbench", "category": "office", "taskId": "of-2", "status": "eligible" },
+    { "source": "skillsbench", "category": "office", "taskId": "of-3", "status": "eligible" },
+    { "source": "skillsbench", "category": "office", "taskId": "of-4", "status": "eligible" }
+  ]
+}
