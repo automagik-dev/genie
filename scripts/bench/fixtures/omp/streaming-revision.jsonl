@@ -1,0 +1,4 @@
+{"type":"session","version":3,"id":"sess-stream-0004","timestamp":"2026-10-01T13:00:00.000Z","cwd":"/work/bench-task"}
+{"type":"message","id":"v01","parentId":null,"timestamp":"2026-10-01T13:00:01.000Z","message":{"role":"user","content":[{"type":"text","text":"Explain the failure."}]}}
+{"type":"message","id":"v02","parentId":"v01","timestamp":"2026-10-01T13:00:03.000Z","message":{"role":"assistant","content":[{"type":"text","text":"The"}],"provider":"example-provider","model":"model-observed","usage":{"input":1000,"output":10,"cacheRead":0,"cacheWrite":0,"totalTokens":1010}}}
+{"type":"message","id":"v02","parentId":"v01","timestamp":"2026-10-01T13:00:08.000Z","message":{"role":"assistant","content":[{"type":"text","text":"The fixture path is wrong."}],"provider":"example-provider","model":"model-observed","usage":{"input":1000,"output":250,"cacheRead":0,"cacheWrite":350,"totalTokens":1600},"stopReason":"stop"}}
