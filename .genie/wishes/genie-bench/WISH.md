@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | APPROVED |
+| **Status** | IN_PROGRESS |
 | **Slug** | `genie-bench` |
 | **Date** | 2026-10-09 |
 | **Author** | Felipe Rosa |
