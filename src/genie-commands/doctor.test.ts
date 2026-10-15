@@ -685,6 +685,7 @@ describe('checkV4Residue — accounting + uncertain keeps + json fix', () => {
     const repo = join(fxHome, 'repo');
     const worktrees = join(fxHome, 'worktrees');
     mkdirSync(repo, { recursive: true });
+    chmodSync(repo, 0o755); // the mode scan probes the worktree root against 0755; keep the planted drift umask-free
     mkdirSync(worktrees, { recursive: true });
     const git = (...args: string[]) => execFileSync('git', args, { cwd: repo, stdio: ['ignore', 'pipe', 'pipe'] });
     git('init', '-q');
