@@ -7,7 +7,10 @@
  * that ever lived under a `skills/` directory on a shipped ref
  * ({@link historyRevisions}) or an explicitly proven Genie archive and is no
  * longer delivered, plus every frontmatter `description` any Genie skill shipped
- * under any name that NO currently shipped skill carries. A retired description
+ * under any name that NO currently shipped skill carries. "Currently shipped"
+ * is the union of HEAD, exact origin/dev and exact origin/main read through git
+ * ({@link currentSkills}), never the working tree: a skill live on a release
+ * branch but absent from HEAD is not retired (#3141). A retired description
  * under a genie name proves a directory is genie's own pre-record install — a
  * third party does not copy genie's description verbatim, and a user's fork of a
  * CURRENT skill keeps a current description, which is deliberately absent here.
@@ -41,7 +44,7 @@
  * every verdict prints.
  */
 import { execFileSync } from 'node:child_process';
-import { readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { catalogGenieCommits } from './git-history-ownership.js';
 
@@ -70,10 +73,14 @@ const SHIPPED_REMOTE_BRANCHES = ['refs/remotes/origin/main', 'refs/remotes/origi
  * Commit-bound Genie proof may opt additional exact archive tips into collection.
  */
 export function historyRevisions(root: string): string[] {
-  const shippedBranches = gitIn(root, 'for-each-ref', '--format=%(refname)', ...SHIPPED_REMOTE_BRANCHES)
+  return ['HEAD', '--tags', ...shippedRemoteBranches(root), '--glob=refs/archive/*'];
+}
+
+/** Exact origin/main and origin/dev when present; a descendant or lookalike ref never qualifies. */
+function shippedRemoteBranches(root: string): string[] {
+  return gitIn(root, 'for-each-ref', '--format=%(refname)', ...SHIPPED_REMOTE_BRANCHES)
     .split('\n')
     .filter((ref) => SHIPPED_REMOTE_BRANCHES.includes(ref));
-  return ['HEAD', '--tags', ...shippedBranches, '--glob=refs/archive/*'];
 }
 
 function parseDescription(markdown: string): string | null {
@@ -93,14 +100,6 @@ function parseDescription(markdown: string): string | null {
     return value.length > 0 ? value : null;
   }
   return null;
-}
-
-function currentSkillNames(): Set<string> {
-  return new Set(
-    readdirSync(join(ROOT, 'skills'), { withFileTypes: true })
-      .filter((entry) => entry.isDirectory())
-      .map((entry) => entry.name),
-  );
 }
 
 /**
@@ -149,20 +148,40 @@ export function collectCatalog(root: string = ROOT, provenance?: string): Map<st
   return catalog;
 }
 
-/** The descriptions the tree ships right now: a fork of a current skill carries one of these. */
-function currentDescriptions(): Set<string> {
-  const found = new Set<string>();
-  for (const name of currentSkillNames()) {
-    let markdown = '';
+export interface CurrentSkills {
+  /** Every `skills/<name>` directory a current tree carries. */
+  names: Set<string>;
+  /** Every parseable `skills/<name>/SKILL.md` description a current tree carries: a fork of a current skill keeps one. */
+  descriptions: Set<string>;
+}
+
+/**
+ * What ships right now: the union of HEAD, exact origin/dev and exact origin/main,
+ * read through git (ls-tree / cat-file), never the working tree. A revision that
+ * does not resolve (unborn HEAD, an absent release branch) contributes nothing.
+ */
+export function currentSkills(root: string = ROOT): CurrentSkills {
+  const names = new Set<string>();
+  const descriptions = new Set<string>();
+  const seenBlobs = new Set<string>();
+  for (const revision of ['HEAD', ...shippedRemoteBranches(root)]) {
     try {
-      markdown = readFileSync(join(ROOT, 'skills', name, 'SKILL.md'), 'utf8');
+      gitIn(root, 'rev-parse', '--verify', '--quiet', `${revision}^{tree}`);
     } catch {
       continue;
     }
-    const description = parseDescription(markdown);
-    if (description !== null) found.add(description);
+    for (const row of gitIn(root, 'ls-tree', '-r', '-t', '-z', revision, '--', 'skills/').split('\0')) {
+      const entry = /^\d+ (tree|blob) ([0-9a-f]+)\tskills\/([^/]+)(\/SKILL\.md)?$/.exec(row);
+      if (!entry) continue;
+      const [, type, object, name, skillFile] = entry as unknown as [string, string, string, string, string?];
+      if (type === 'tree' && skillFile === undefined) names.add(name);
+      if (type !== 'blob' || skillFile === undefined || seenBlobs.has(object)) continue;
+      seenBlobs.add(object);
+      const description = parseDescription(gitIn(root, 'cat-file', 'blob', object));
+      if (description !== null) descriptions.add(description);
+    }
   }
-  return found;
+  return { names, descriptions };
 }
 
 /**
@@ -215,8 +234,9 @@ export function mergeCatalog(
 export function render(
   catalog: Map<string, Set<string>>,
   recorded: { names: string[]; descriptions: string[] },
+  current: CurrentSkills = currentSkills(),
 ): string {
-  const { names, descriptions } = mergeCatalog(catalog, recorded, currentSkillNames(), currentDescriptions());
+  const { names, descriptions } = mergeCatalog(catalog, recorded, current.names, current.descriptions);
   const lines: string[] = [
     '// GENERATED by `bun scripts/legacy-skills-catalog.ts --write` from git history. Do not edit by hand.',
     '//',
@@ -338,7 +358,8 @@ if (import.meta.main) {
   }
   const collected = collectCatalog(ROOT, provenance);
   const recorded = await recordedCatalog();
-  const rendered = render(collected, recorded);
+  const current = currentSkills(ROOT);
+  const rendered = render(collected, recorded, current);
 
   if (mode === '--write') {
     writeFileSync(OUTPUT, formatted(rendered), 'utf8');
@@ -351,7 +372,7 @@ if (import.meta.main) {
       // Missing counts as stale.
     }
     const verdict = evaluateCatalogCheck(existing, formatted(rendered), {
-      merged: mergeCatalog(collected, recorded, currentSkillNames(), currentDescriptions()),
+      merged: mergeCatalog(collected, recorded, current.names, current.descriptions),
       recorded,
     });
     const sink = verdict.stale ? process.stderr : process.stdout;
