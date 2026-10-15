@@ -13,8 +13,9 @@
  * Ownership of such a directory cannot be proven by bytes: those installs were
  * copied from working trees, so no digest genie ever shipped matches them. It
  * is proven by DESCRIPTION under a GENIE NAME instead. Every retired frontmatter
- * `description` a genie skill ever carried — any name, any ref, minus what the
- * tree ships today — is embedded in `legacy-skills-catalog.ts`; a directory
+ * `description` a genie skill carried in shipped or proven archive history —
+ * any name — minus what HEAD, origin/dev and origin/main ship today — is
+ * embedded in `legacy-skills-catalog.ts`; a directory
  * outside the current inventory whose `SKILL.md` carries one of them AND whose
  * name is a retired genie skill name or a `genie-` prefixed one is genie's own,
  * and is retired backup-first like any other retired skill. Either half alone

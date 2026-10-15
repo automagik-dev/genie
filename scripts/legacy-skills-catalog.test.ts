@@ -7,6 +7,7 @@ import type { classifyLegacySkillEntry } from '../src/lib/legacy-skills.js';
 import {
   CATALOG_CHECK_GAP,
   collectCatalog,
+  currentSkills,
   evaluateCatalogCheck,
   mergeCatalog,
   recordedCatalog,
@@ -237,10 +238,15 @@ describe('catalog CLI over isolated Git histories', () => {
     return dir;
   }
 
-  function sideRef(repo: string, base: string, ref: string, name: string): string {
+  /** `retired`: the skill is added, then removed, so the ref's history carries it and its tip does not. */
+  function sideRef(repo: string, base: string, ref: string, name: string, retired = false): string {
     git(repo, 'checkout', '-q', '--detach', base);
     skill(repo, `skills/${name}`, `The ${name} skill.`);
-    const tip = commit(repo, `add ${name}`);
+    let tip = commit(repo, `add ${name}`);
+    if (retired) {
+      rmSync(join(repo, 'skills', name), { recursive: true });
+      tip = commit(repo, `retire ${name}`);
+    }
     git(repo, 'update-ref', ref, tip);
     git(repo, 'checkout', '-q', 'main');
     return tip;
@@ -427,8 +433,9 @@ describe('catalog CLI over isolated Git histories', () => {
 
   test('exact origin/main, origin/dev and refs/archive/* ship; lookalike and unmerged refs do not', async () => {
     const { repo, base } = seedShippingOrigin();
-    sideRef(repo, base, 'refs/remotes/origin/main', 'on-main');
-    sideRef(repo, base, 'refs/remotes/origin/dev', 'on-dev');
+    // Retired at the tip: a skill a release branch still ships is current, never retired (#3141).
+    sideRef(repo, base, 'refs/remotes/origin/main', 'on-main', true);
+    sideRef(repo, base, 'refs/remotes/origin/dev', 'on-dev', true);
     sideRef(repo, base, 'refs/archive/shelved', 'archived');
     sideRef(repo, base, 'refs/remotes/origin/dev-experiment', 'dev-lookalike');
     sideRef(repo, base, 'refs/remotes/origin/main-experiment', 'main-lookalike');
@@ -441,6 +448,51 @@ describe('catalog CLI over isolated Git histories', () => {
       expect(classify(home, name, ['kept'])?.kind).toBe('proven');
     }
     for (const name of ['new', 'dev-lookalike', 'main-lookalike', 'archive-lookalike']) {
+      skill(home, name, `The ${name} skill.`);
+      expect(classify(home, name, ['kept'])).toBeNull();
+    }
+  });
+
+  test('skill live on origin/dev, missing in HEAD is not reported retired', async () => {
+    const { repo, base } = seedShippingOrigin();
+    // `live` ships on the tip of origin/dev but HEAD (main) never carried it;
+    // `old` is in shipped tag history and on no current tree, so it stays retired.
+    sideRef(repo, base, 'refs/remotes/origin/dev', 'live');
+    expect(git(repo, 'ls-tree', '--name-only', 'HEAD', 'skills/').trim().split('\n')).toEqual(['skills/kept']);
+    const current = currentSkills(repo);
+    expect([...current.names].sort()).toEqual(['kept', 'live']);
+    expect([...current.descriptions].sort()).toEqual(['The kept skill.', 'The live skill.']);
+
+    const catalog = outputCatalog(repo);
+    expect(catalog.names).toEqual(['old']);
+    expect(catalog.descriptions).toEqual(['The old skill.']);
+
+    const { home, classify } = await consumerFor(repo);
+    skill(home, 'live', 'The live skill.');
+    skill(home, 'old', 'The old skill.');
+    expect(classify(home, 'live', ['kept'])).toBeNull();
+    expect(classify(home, 'old', ['kept'])?.kind).toBe('proven');
+  });
+
+  test('a descendant of an exact release-branch name is neither current nor retirement history', async () => {
+    const { repo, base } = seedShippingOrigin();
+    // origin/dev itself is absent, so its descendant can exist beside it.
+    sideRef(repo, base, 'refs/remotes/origin/dev/live-under-dev', 'under-dev');
+    sideRef(repo, base, 'refs/remotes/origin/main/retired-under-main', 'under-main', true);
+    expect(
+      git(repo, 'for-each-ref', '--format=%(refname)', 'refs/remotes/origin/dev', 'refs/remotes/origin/main'),
+    ).toBe('refs/remotes/origin/dev/live-under-dev\nrefs/remotes/origin/main/retired-under-main\n');
+    const current = currentSkills(repo);
+    expect([...current.names]).toEqual(['kept']);
+    expect([...current.descriptions]).toEqual(['The kept skill.']);
+    expect([...collectCatalog(repo).keys()].sort()).toEqual(['kept', 'old']);
+
+    const catalog = outputCatalog(repo);
+    expect(catalog.names).toEqual(['old']);
+    expect(catalog.descriptions).toEqual(['The old skill.']);
+
+    const { home, classify } = await consumerFor(repo);
+    for (const name of ['under-dev', 'under-main']) {
       skill(home, name, `The ${name} skill.`);
       expect(classify(home, name, ['kept'])).toBeNull();
     }
