@@ -1,0 +1,4 @@
+{"type":"session","version":3,"id":"sess-conflict-0006","timestamp":"2026-10-01T15:00:00.000Z","cwd":"/work/bench-task"}
+{"type":"message","id":"k01","parentId":null,"timestamp":"2026-10-01T15:00:01.000Z","message":{"role":"user","content":[{"type":"text","text":"Rename the helper."}]}}
+{"type":"message","id":"k02","parentId":"k01","timestamp":"2026-10-01T15:00:04.000Z","message":{"role":"assistant","content":[{"type":"text","text":"Renamed."}],"provider":"example-provider","model":"model-observed","usage":{"input":400,"output":100,"cacheRead":0,"cacheWrite":50,"totalTokens":550},"stopReason":"stop"}}
+{"type":"message","id":"k02","parentId":"k01","timestamp":"2026-10-01T15:00:04.000Z","message":{"role":"assistant","content":[{"type":"text","text":"Renamed."}],"provider":"example-provider","model":"model-observed","usage":{"input":400,"output":999,"cacheRead":0,"cacheWrite":50,"totalTokens":1449},"stopReason":"stop"}}

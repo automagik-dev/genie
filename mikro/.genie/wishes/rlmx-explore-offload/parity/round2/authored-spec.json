@@ -1,0 +1,370 @@
+{
+  "authoredBy": "round-2 prep (explore-offload wish), verified by scripts/author-explore-tasks.mjs",
+  "startAt": 1,
+  "tasks": [
+    {
+      "slug": "rlmx-recursion-child",
+      "root": "/home/namastex/prod/rlmx",
+      "fitness": false,
+      "fitnessNote": "Training-signal contamination: this task is authored about the tree the round-2 prompt was written in, and its F1-F7 anchor on the same line set (src/llm.ts:667, src/rlm.ts:436, src/rlm.ts:438, src/llm.ts:563, src/mcp/server.ts:487, src/cli.ts:35, src/config.ts:122) that parity/round2/recursion-recon.md §2/§3/§4 is built from. F6 anchors src/cli.ts:35, whose verified text exists only because the same change corrected src/settings.ts. Selecting on it would tune the prompt against ground truth authored by the investigation that produced the prompt — a self-consistency loop, not a training signal. Kept as a held-out diagnostic.",
+      "title": "Where a recursive rlm_query child gets its model, budget and concurrency",
+      "question": "In this repository a Python REPL block can call rlm_query() to spawn a child rlmx run. I need to know exactly what the parent controls about that child and what it does not. Which source lines decide (a) how many children can run at once, (b) what iteration cap and depth ceiling the child is handed, (c) how the child is spawned relative to the parent's process group, and (d) what decides the model the child ends up running on? Answer with a path:line citation for every claim.",
+      "answer": "Four separate mechanisms, none of which is the agent's own config.\n\n**Concurrency.** A batched fan-out is capped at four concurrent children: `src/llm.ts:667` sets MAX_CONCURRENT to 4, so nine prompts run as 4 + 4 + 1 in three blocking waves.\n\n**Budget handed down.** The per-request child options are assembled in the parent's LLM-request handler. The iteration cap is passed straight through, unreduced, at `src/rlm.ts:436` — a child gets the *same* cap as its parent, so a 4-way fan-out multiplies model turns rather than dividing them. The recursion ceiling comes from the ambient config, not the agent: `src/rlm.ts:438` hands the child `config.budget.maxDepth ?? 3`.\n\n**Spawn.** Children are started in their own process group — `src/llm.ts:563` sets detached on every non-Windows platform. That is why a killed parent block does not take its children with it.\n\n**Model.** This is the one that surprises. An agent's `agent.yaml` model is applied by replacing only the provider and the model id over the ambient model config: `src/mcp/server.ts:487`. Anything else on that object, including an inherited sub-call model, survives from the ambient yaml. And the child process itself re-derives its config from scratch under the ordinary precedence documented at `src/cli.ts:35`, with the hardcoded fallback at `src/config.ts:122` when neither a settings file nor a yaml supplies one.\n",
+      "facts": [
+        {
+          "claim": "A batched fan-out runs at most four children at a time: MAX_CONCURRENT is 4, so a list of nine prompts runs as three blocking waves rather than nine parallel processes.",
+          "anchor": "src/llm.ts:667",
+          "term": "MAX_CONCURRENT",
+          "kind": "symbol"
+        },
+        {
+          "claim": "The child inherits the parent's iteration cap unreduced — the request options pass maxIterations: opts.maxIterations straight through — so a fan-out multiplies total model turns.",
+          "anchor": "src/rlm.ts:436",
+          "term": "maxIterations: opts.maxIterations",
+          "kind": "quote"
+        },
+        {
+          "claim": "The depth ceiling comes from the ambient config and not from the agent: the child is handed config.budget.maxDepth ?? 3, so a max_depth declared in agent.yaml never reaches it.",
+          "anchor": "src/rlm.ts:438",
+          "term": "config.budget.maxDepth ?? 3",
+          "kind": "quote"
+        },
+        {
+          "claim": "Every child is spawned detached into its own process group on non-Windows platforms, which is why children outlive a parent block that was killed while waiting on them.",
+          "anchor": "src/llm.ts:563",
+          "term": "detached",
+          "kind": "symbol"
+        },
+        {
+          "claim": "Applying an agent's model replaces only the provider and the model id over the ambient model config — provider: parsed.provider is spread onto config.model — so any inherited sub-call model survives.",
+          "anchor": "src/mcp/server.ts:487",
+          "term": "provider: parsed.provider",
+          "kind": "quote"
+        },
+        {
+          "claim": "Model precedence is CLI flags > settings.json > rlmx.yaml > hardcoded defaults, which is what makes a settings file in the process's HOME able to pin the model a child runs on.",
+          "anchor": "src/cli.ts:35",
+          "term": "CLI flags > settings.json > rlmx.yaml",
+          "kind": "quote"
+        },
+        {
+          "claim": "When neither a settings file nor a local yaml supplies a model, the child falls back to DEFAULT_MODEL, the hardcoded bottom of that precedence chain.",
+          "anchor": "src/config.ts:122",
+          "term": "DEFAULT_MODEL",
+          "kind": "symbol"
+        }
+      ]
+    },
+    {
+      "slug": "rlmx-khal-provider",
+      "root": "/home/namastex/prod/rlmx",
+      "fitness": false,
+      "fitnessNote": "Training-signal contamination by root: authored about the same working tree the round-2 prompt was written in, by the same author, in the same sitting. Its anchor files (src/khal-provider.ts) are not the recursion-recon line set, so the loop is looser than task 1's — but 'same tree, same author, same sitting' is the condition the disjointness test exists to break, and a fitness set should not have to argue about degree. Kept as a held-out diagnostic.",
+      "title": "How the khal provider identifies itself, finds its credential, and fails",
+      "question": "This repository ships a provider for a gateway called khal. Where is that provider defined, which environment variables can supply its credential and in what order, and what are the distinct failure modes it can report? I also want to know how it converts the gateway's advertised prices into the units the rest of the code uses. Cite path:line for everything.",
+      "answer": "All of it lives in one module.\n\n**Identity.** The provider id is a constant, `src/khal-provider.ts:40`, so nothing matches on a bare string literal elsewhere.\n\n**Credential.** Two environment variables are accepted, in a fixed order, from the list at `src/khal-provider.ts:74`: the plain name first, the namespaced one as a fallback. The resolution order matters because a diagnostic that tells the user which variable to edit has to name the one that actually won.\n\n**Failure modes.** Three, and they are deliberately distinct rather than one generic error: a missing credential (`src/khal-provider.ts:55`), a credential the gateway refused (`src/khal-provider.ts:63`), and a gateway that answered but advertised no usable models (`src/khal-provider.ts:71`). The third is a real state, not a variant of the second — an authenticated client can still get an empty catalogue.\n\n**Prices.** The gateway quotes dollars per million tokens; the conversion into per-token dollars is `src/khal-provider.ts:148`.\n\n**One more filter worth knowing:** the catalogue is not taken wholesale — the set at `src/khal-provider.ts:103` names the modes that are not chat completions and are therefore excluded.\n",
+      "facts": [
+        {
+          "claim": "The provider identifies itself through the KHAL_PROVIDER_ID constant rather than a bare string literal, so every match on the provider name goes through one definition.",
+          "anchor": "src/khal-provider.ts:40",
+          "term": "KHAL_PROVIDER_ID",
+          "kind": "symbol"
+        },
+        {
+          "claim": "Two environment variables can supply the credential, in the fixed order given by KHAL_API_KEY_ENV — the plain name first and the namespaced one as a fallback.",
+          "anchor": "src/khal-provider.ts:74",
+          "term": "KHAL_API_KEY_ENV",
+          "kind": "symbol"
+        },
+        {
+          "claim": "A missing credential is its own failure mode, reported through KHAL_MISSING_KEY_ERROR rather than folded into a generic request failure.",
+          "anchor": "src/khal-provider.ts:55",
+          "term": "KHAL_MISSING_KEY_ERROR",
+          "kind": "symbol"
+        },
+        {
+          "claim": "A credential the gateway refuses is distinguished from a missing one by KHAL_REJECTED_KEY_ERROR, so an authentication failure is not reported as an absent key.",
+          "anchor": "src/khal-provider.ts:63",
+          "term": "KHAL_REJECTED_KEY_ERROR",
+          "kind": "symbol"
+        },
+        {
+          "claim": "A gateway that answers but advertises no usable models is a third distinct state, KHAL_EMPTY_CATALOG_ERROR, not a variant of an auth failure.",
+          "anchor": "src/khal-provider.ts:71",
+          "term": "KHAL_EMPTY_CATALOG_ERROR",
+          "kind": "symbol"
+        },
+        {
+          "claim": "The gateway quotes prices per million tokens, and perMillionDollars is the single conversion into the per-token dollar figures the rest of the cost accounting uses.",
+          "anchor": "src/khal-provider.ts:148",
+          "term": "perMillionDollars",
+          "kind": "symbol"
+        },
+        {
+          "claim": "The advertised catalogue is filtered rather than taken wholesale: NON_CHAT_MODES names the modes that are not chat completions and are excluded from the model list.",
+          "anchor": "src/khal-provider.ts:103",
+          "term": "NON_CHAT_MODES",
+          "kind": "symbol"
+        }
+      ]
+    },
+    {
+      "slug": "xdna-npu-power",
+      "root": "/home/namastex/prod/xdna-top",
+      "title": "The NPU power read, its three unavailable reasons, and how iGPU discovery differs",
+      "question": "How does this project read the NPU's power/clock state, and what exactly does it return when it cannot? I want the distinct unavailability reasons, not just 'it returns None'. Separately: iGPU telemetry discovery is a different mechanism in this codebase — what does it probe and how does it choose between candidates? Cite path:line for each claim.",
+      "answer": "**The NPU read** is a debugfs read, rooted at the constant defined in `src/xdna_top/npu_power.py:30`, resolved per device before anything is opened.\n\nIt never raises, and it distinguishes three failures rather than collapsing them:\n\n1. no accel directory at all — `src/xdna_top/npu_power.py:115`;\n2. the directory exists but neither node could be read, which is the ordinary unprivileged case since debugfs is root-only — `src/xdna_top/npu_power.py:123`;\n3. a node that read but carried nothing parsable — `src/xdna_top/npu_power.py:130`.\n\nOnly after none of those fires is the result marked available. Within a parsed line, the *active* DPM level is the bracketed token: the parser marks a state active on the bracket group at `src/xdna_top/npu_power.py:84`.\n\n**iGPU discovery is unrelated** and lives in `src/xdna_top/discover_sysfs.py`. It starts pessimistic — the initial status at `src/xdna_top/discover_sysfs.py:18` is a CPU-only fallback, upgraded only when a busy-percent node is actually readable — and for power it walks hwmon and prefers the one whose name identifies the amdgpu driver, `src/xdna_top/discover_sysfs.py:55`, keeping the first readable candidate otherwise.\n",
+      "facts": [
+        {
+          "claim": "The NPU power read is rooted at DEBUGFS_ACCEL, resolved to a per-device directory before any node is opened, so a wrong device is never read under another device's identifier.",
+          "anchor": "src/xdna_top/npu_power.py:30",
+          "term": "DEBUGFS_ACCEL",
+          "kind": "symbol"
+        },
+        {
+          "claim": "When no accel directory resolves at all, the read returns unavailable with the reason debugfs_accel_absent rather than raising an exception at the caller.",
+          "anchor": "src/xdna_top/npu_power.py:115",
+          "term": "debugfs_accel_absent",
+          "kind": "symbol"
+        },
+        {
+          "claim": "A directory that exists but whose nodes cannot be read is its own reason, debugfs_nodes_unreadable — the ordinary unprivileged case, since debugfs is root-only.",
+          "anchor": "src/xdna_top/npu_power.py:123",
+          "term": "debugfs_nodes_unreadable",
+          "kind": "symbol"
+        },
+        {
+          "claim": "A node that read but carried nothing parsable is a third distinct reason, debugfs_nodes_unparsable, so present-but-useless data is never reported as available.",
+          "anchor": "src/xdna_top/npu_power.py:130",
+          "term": "debugfs_nodes_unparsable",
+          "kind": "symbol"
+        },
+        {
+          "claim": "The active DPM level is the bracketed token: the parser marks a state active when the opening bracket group matched, m.group(\"lb\") == \"[\", or the closing one did.",
+          "anchor": "src/xdna_top/npu_power.py:84",
+          "term": "m.group(\"lb\") == \"[\"",
+          "kind": "quote"
+        },
+        {
+          "claim": "iGPU discovery starts pessimistic: the initial status is the CPU-only fallback string, and it is upgraded only once a busy-percent node has actually been read.",
+          "anchor": "src/xdna_top/discover_sysfs.py:18",
+          "term": "CPU-only fallback",
+          "kind": "quote"
+        },
+        {
+          "claim": "For power, hwmon is walked and the entry whose name is amdgpu wins — name == \"amdgpu\" overrides an earlier candidate, otherwise the first readable one is kept.",
+          "anchor": "src/xdna_top/discover_sysfs.py:55",
+          "term": "name == \"amdgpu\"",
+          "kind": "quote"
+        }
+      ]
+    },
+    {
+      "slug": "xdna-record-export",
+      "root": "/home/namastex/prod/xdna-top",
+      "title": "The record stream's schema and the Prometheus exporter's naming rule",
+      "question": "This project can both record telemetry to a file and serve it to Prometheus. For the recorder: what identifies an event and how is a line written? For the exporter: how is it wired to the metrics registry and is there any naming rule I have to know about before adding a metric? path:line citations please.",
+      "answer": "**Recording.** Every event carries two identifying constants: a schema version, `src/xdna_top/record.py:22`, and a kind discriminator, `src/xdna_top/record.py:23`. Lines are JSONL — one event serialised and newline-terminated at `src/xdna_top/record.py:227` — and the writer flushes per line, so a recording that is killed mid-run keeps everything already emitted.\n\n**Exporting.** The exporter is built on the Prometheus client library, importing the registry type and the HTTP server at `src/xdna_top/exporter.py:13`, and it registers a single custom collector — `src/xdna_top/exporter.py:106` — which reads the hardware at scrape time rather than on a timer.\n\n**The naming rule you need before adding a metric** is stated in a comment at `src/xdna_top/exporter.py:62`: counter families are declared without the `_total` suffix, because the client library appends it. Declaring it yourself produces a doubled suffix.\n",
+      "facts": [
+        {
+          "claim": "Every recorded event carries an explicit schema version constant, RECORD_SCHEMA_VERSION, so a reader can tell which layout it is parsing without guessing from the fields.",
+          "anchor": "src/xdna_top/record.py:22",
+          "term": "RECORD_SCHEMA_VERSION",
+          "kind": "symbol"
+        },
+        {
+          "claim": "Events are discriminated by the RECORD_KIND constant rather than by shape, so a telemetry event and a mark event can share one stream unambiguously.",
+          "anchor": "src/xdna_top/record.py:23",
+          "term": "RECORD_KIND",
+          "kind": "symbol"
+        },
+        {
+          "claim": "The stream is JSONL: one event per line, produced by json.dumps(event) with a trailing newline, which is what lets a killed run keep everything already written.",
+          "anchor": "src/xdna_top/record.py:227",
+          "term": "json.dumps(event)",
+          "kind": "quote"
+        },
+        {
+          "claim": "The exporter is built on the Prometheus client library, importing start_http_server together with the registry type it registers its collector into.",
+          "anchor": "src/xdna_top/exporter.py:13",
+          "term": "start_http_server",
+          "kind": "symbol"
+        },
+        {
+          "claim": "A single custom collector, XdnaCollector, is registered into the registry, and it reads the hardware at scrape time rather than on a background timer.",
+          "anchor": "src/xdna_top/exporter.py:106",
+          "term": "XdnaCollector",
+          "kind": "symbol"
+        },
+        {
+          "claim": "There is a naming rule to know before adding a metric: counter families are named WITHOUT _total because the client library appends that suffix itself.",
+          "anchor": "src/xdna_top/exporter.py:62",
+          "term": "named WITHOUT _total",
+          "kind": "quote"
+        }
+      ]
+    },
+    {
+      "slug": "genie-desktop-pty",
+      "root": "/home/namastex/prod/genie-desktop",
+      "title": "How terminal sessions are tracked, resized and killed",
+      "question": "In this desktop app, terminal sessions are backed by real PTY processes. Where are the live sessions tracked, how is a resize applied, how is a process shut down and with what timeout, and is there anything special about the environment a PTY is given? Cite path:line for each answer.",
+      "answer": "**Tracking.** Live sessions are held in a module-level map keyed by session id, `src/main/services/ptyManager.ts:38`. Everything else in the module looks up through it, so there is one registry rather than per-window state.\n\n**Resize.** A resize is an explicit call taking columns and rows for a session id — `src/main/services/ptyManager.ts:695` — not a side effect of a render.\n\n**Shutdown.** Termination is graceful-then-forced, on a fixed budget: the timeout constant is `src/main/services/ptyManager.ts:708`, and the kill helper takes it as its default so a caller can override per call rather than editing the constant (`src/main/services/ptyManager.ts:727`).\n\n**Environment.** The PTY environment is not the parent's verbatim. A reserved-key set at `src/main/services/ptyManager.ts:127` names the variables that are managed by the app and must not be inherited or overridden by a caller-supplied environment.\n",
+      "facts": [
+        {
+          "claim": "Live PTY sessions live in one module-level registry keyed by session id — new Map<string, PtyRecord>() at module scope — rather than being tracked per window.",
+          "anchor": "src/main/services/ptyManager.ts:38",
+          "term": "new Map<string, PtyRecord>()",
+          "kind": "quote"
+        },
+        {
+          "claim": "Resizing is an explicit operation on a session id: resizePty takes the column and row counts, so geometry changes are not a side effect of rendering.",
+          "anchor": "src/main/services/ptyManager.ts:695",
+          "term": "resizePty",
+          "kind": "symbol"
+        },
+        {
+          "claim": "Shutdown is graceful-then-forced on a fixed budget, GRACEFUL_KILL_TIMEOUT_MS, which is 3000 milliseconds.",
+          "anchor": "src/main/services/ptyManager.ts:708",
+          "term": "GRACEFUL_KILL_TIMEOUT_MS",
+          "kind": "symbol"
+        },
+        {
+          "claim": "The kill helper gracefulKillProc takes that budget as a default parameter, so an individual caller can shorten or lengthen it without editing the shared constant.",
+          "anchor": "src/main/services/ptyManager.ts:727",
+          "term": "gracefulKillProc",
+          "kind": "symbol"
+        },
+        {
+          "claim": "A PTY does not simply inherit the parent environment: RESERVED_ENV_KEYS names the variables the app manages itself and that a caller-supplied environment must not set.",
+          "anchor": "src/main/services/ptyManager.ts:127",
+          "term": "RESERVED_ENV_KEYS",
+          "kind": "symbol"
+        }
+      ]
+    },
+    {
+      "slug": "genie-desktop-rtk",
+      "root": "/home/namastex/prod/genie-desktop",
+      "title": "How the rtk binary is located and how its download is bounded",
+      "question": "This app integrates an external CLI called rtk. How does it find the binary on a machine, what happens on Windows versus everywhere else, and what timeouts and retry limits bound the download and unpack path? Answer with path:line citations.",
+      "answer": "**Locating the binary.** Lookup is delegated to the platform's own resolver, chosen at `src/main/services/RtkService.ts:180`: `where.exe` on Windows and `which` everywhere else. That is the PATH branch; a managed installation is probed before it, and only a binary that answered `--version` is accepted from either.\n\n**Bounding the install path.** Three separate timeouts, deliberately different because they bound different things:\n\n- the metadata/API call — `src/main/services/RtkService.ts:32`;\n- the body download, which is far longer because it is a real transfer — `src/main/services/RtkService.ts:33`;\n- the unpack — `src/main/services/RtkService.ts:34`.\n\n**Retries** are bounded too: the attempt ceiling is `src/main/services/RtkService.ts:357`, so a flapping network fails in bounded time instead of spinning.\n",
+      "facts": [
+        {
+          "claim": "Binary lookup is delegated to the platform resolver: findCmd is where.exe on Windows and which everywhere else, so no bespoke PATH walking is done.",
+          "anchor": "src/main/services/RtkService.ts:180",
+          "term": "findCmd",
+          "kind": "symbol"
+        },
+        {
+          "claim": "The metadata call is bounded separately from the transfer by FETCH_API_TIMEOUT_MS, which is 60 seconds.",
+          "anchor": "src/main/services/RtkService.ts:32",
+          "term": "FETCH_API_TIMEOUT_MS",
+          "kind": "symbol"
+        },
+        {
+          "claim": "The body download gets its own, much longer budget, FETCH_BODY_TIMEOUT_MS at 300 seconds, because it bounds a real transfer rather than an API round trip.",
+          "anchor": "src/main/services/RtkService.ts:33",
+          "term": "FETCH_BODY_TIMEOUT_MS",
+          "kind": "symbol"
+        },
+        {
+          "claim": "Unpacking is bounded independently of both by TAR_TIMEOUT_MS at 120 seconds, so a corrupt archive cannot hang the install indefinitely.",
+          "anchor": "src/main/services/RtkService.ts:34",
+          "term": "TAR_TIMEOUT_MS",
+          "kind": "symbol"
+        },
+        {
+          "claim": "Retries are bounded as well: MAX_ATTEMPTS is 3, so a flapping network fails in bounded time rather than spinning against the endpoint.",
+          "anchor": "src/main/services/RtkService.ts:357",
+          "term": "MAX_ATTEMPTS",
+          "kind": "symbol"
+        }
+      ]
+    },
+    {
+      "slug": "fde-station-enroll",
+      "root": "/home/namastex/prod/fde-station",
+      "title": "What channel enrolment writes to a machine, and with what permissions",
+      "question": "Enrolling a machine onto this project's apt channel writes several files. Which script owns that, what are the destination paths it writes, how is the apt source tied to the keyring, and what permissions does the credential file get? I care about the permission specifically. Cite path:line.",
+      "answer": "Enrolment is owned by `channel/enroll.sh`, and it writes three destinations, all named as constants near the top so nothing downstream guesses a path:\n\n- the keyring destination, `channel/enroll.sh:27`;\n- the deb822 source, `channel/enroll.sh:28`;\n- the credential file, `channel/enroll.sh:29`.\n\n**The source is tied to the keyring explicitly**, not to a trusted-keys directory: the emitted stanza carries a Signed-By line pointing at that same keyring constant, `channel/enroll.sh:88`. That is what makes the source verify against one key rather than every key apt happens to trust.\n\n**The credential file is narrowed after it is written** — `channel/enroll.sh:98` — so the token is not left world-readable. The suite and component the source points at default at `channel/enroll.sh:23` and `channel/enroll.sh:24` and are overridable from the environment.\n",
+      "facts": [
+        {
+          "claim": "The keyring destination is a named constant, KEYRING_DEST, declared once near the top of the script so no downstream step guesses where the key landed.",
+          "anchor": "channel/enroll.sh:27",
+          "term": "KEYRING_DEST",
+          "kind": "symbol"
+        },
+        {
+          "claim": "The deb822 apt source path is likewise a constant, SOURCES_DEST, rather than being spelled out at each use site.",
+          "anchor": "channel/enroll.sh:28",
+          "term": "SOURCES_DEST",
+          "kind": "symbol"
+        },
+        {
+          "claim": "The credential file destination is AUTH_DEST, an apt auth.conf.d fragment, kept separate from the source stanza so the token never sits in a world-readable file.",
+          "anchor": "channel/enroll.sh:29",
+          "term": "AUTH_DEST",
+          "kind": "symbol"
+        },
+        {
+          "claim": "The emitted source stanza binds verification to that one key: it writes a Signed-By: $KEYRING_DEST line rather than relying on apt's ambient trusted keys.",
+          "anchor": "channel/enroll.sh:88",
+          "term": "Signed-By: $KEYRING_DEST",
+          "kind": "quote"
+        },
+        {
+          "claim": "The credential file is narrowed immediately after it is written — chmod 600 on the auth destination — so the token is not left readable by every user on the machine.",
+          "anchor": "channel/enroll.sh:98",
+          "term": "chmod 600",
+          "kind": "quote"
+        },
+        {
+          "claim": "The suite the source points at defaults through SUITE, overridable from the environment rather than hardcoded into the emitted stanza.",
+          "anchor": "channel/enroll.sh:23",
+          "term": "SUITE",
+          "kind": "symbol"
+        }
+      ]
+    },
+    {
+      "slug": "fde-station-publish",
+      "root": "/home/namastex/prod/fde-station",
+      "title": "How the apt channel is published: repo, retention, and index layout",
+      "question": "On the publishing side of this project's apt channel: where do packages get published to, how many old versions are kept, what identity does the repository advertise in its release metadata, and where in the tree does the distribution index live? Cite path:line for each.",
+      "answer": "Publishing is `channel/publish.sh`, and the answers are all environment-overridable defaults declared together.\n\n**Destination.** The repository slug defaults at `channel/publish.sh:52`, so a fork publishes elsewhere by setting one variable rather than editing the script.\n\n**Retention.** Old versions are pruned to a fixed depth, defaulted at `channel/publish.sh:56`. It is deliberately small: this is a channel, not an archive.\n\n**Advertised identity.** The release metadata's origin is set at `channel/publish.sh:59` — this is what apt shows and what a pin can match on.\n\n**Architecture and layout.** The indexed architecture is fixed at `channel/publish.sh:64`, with a comment explaining that arch-all packages are indexed under the host arch tree, and the distribution directory the indexes are written into is derived at `channel/publish.sh:175` from the suite.\n",
+      "facts": [
+        {
+          "claim": "The publish destination is an environment-overridable default, REPO_SLUG, so a fork redirects publishing by setting one variable instead of editing the script.",
+          "anchor": "channel/publish.sh:52",
+          "term": "REPO_SLUG",
+          "kind": "symbol"
+        },
+        {
+          "claim": "Retention is bounded by KEEP, a small default: the channel prunes old versions rather than accumulating them, because it is a channel and not an archive.",
+          "anchor": "channel/publish.sh:56",
+          "term": "KEEP",
+          "kind": "symbol"
+        },
+        {
+          "claim": "The release metadata advertises an ORIGIN, which is the identity apt displays and the field an apt pin can match against.",
+          "anchor": "channel/publish.sh:59",
+          "term": "ORIGIN",
+          "kind": "symbol"
+        },
+        {
+          "claim": "One architecture is indexed, set by ARCH, and the line carries the reason: arch-all packages are indexed under the host arch tree rather than a separate one.",
+          "anchor": "channel/publish.sh:64",
+          "term": "ARCH",
+          "kind": "symbol"
+        },
+        {
+          "claim": "The distribution index directory is derived from the suite rather than hardcoded: DIST_DIR is built from the suite name at publish time.",
+          "anchor": "channel/publish.sh:175",
+          "term": "DIST_DIR",
+          "kind": "symbol"
+        }
+      ]
+    }
+  ]
+}

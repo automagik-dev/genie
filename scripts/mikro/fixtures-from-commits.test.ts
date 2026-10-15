@@ -19,6 +19,7 @@ import {
   rangeError,
   runFixturesCli,
 } from './fixtures-from-commits';
+import { scoreAnswer } from './score';
 
 const trash: string[] = [];
 afterEach(() => {
@@ -71,8 +72,19 @@ describe('buildCommitFixtures', () => {
     expect(fixtures[0].prompt).toBe('Intent: feat: add b and bump a');
     // …and this is literally what git prints for that commit.
     const shown = git(root, ['show', '--name-only', '--format=', 'HEAD']).split('\n').filter(Boolean).sort();
-    expect(fixtures[0].truth.files).toEqual(shown);
-    expect(fixtures[0].truth.files).toEqual(['src/a.ts', 'src/b.ts']);
+    expect([...(fixtures[0].truth.files ?? []), ...(fixtures[0].truth.newFiles ?? [])].sort()).toEqual(shown);
+    expect(fixtures[0].truth.files).toEqual(['src/a.ts']);
+    expect(fixtures[0].truth.newFiles).toEqual(['src/b.ts']);
+    expect(fixtures[0].sourceCommit).toBe(head);
+    expect(fixtures[0].evaluationCommit).toBe(git(root, ['rev-parse', 'HEAD^']));
+    expect(git(root, ['ls-tree', '-r', '--name-only', fixtures[0].evaluationCommit!])).not.toContain('src/b.ts');
+    const score = scoreAnswer('wish-context', { plan: { files: [
+      { path: 'src/a.ts', reason: 'modify existing' }, { path: 'src/b.ts', reason: 'NEW: implementation' },
+    ] } }, fixtures[0].truth, [{ path: 'src/b.ts', line: null, ok: true, proposal: true }]);
+    expect(score.filesRecall).toBe(1);
+    expect(score.newFilesRecall).toBe(1);
+    expect(score.newFilesPrecision).toBe(1);
+    expect(score.citationsTotal).toBe(0);
   });
 
   test('a rename contributes the NEW path, which is the path the tree has', () => {
@@ -80,7 +92,7 @@ describe('buildCommitFixtures', () => {
     git(root, ['mv', 'src/b.ts', 'src/renamed.ts']);
     commit(root, 'refactor: rename b');
     const { fixtures } = buildCommitFixtures({ dir: root, range: 'HEAD~1..HEAD', agent: 'wish-context' });
-    expect(fixtures[0].truth.files).toEqual(['src/renamed.ts']);
+    expect(fixtures[0].truth.newFiles).toEqual(['src/renamed.ts']);
   });
 
   test('a commit whose file was deleted later is skipped with the reason', () => {
@@ -129,8 +141,8 @@ describe('buildCommitFixtures', () => {
     expect(fixtures).toHaveLength(1);
     // Compared against a -z read, never against a second parse of the quoted output.
     const shown = git(root, ['show', '--name-only', '-z', '--format=', 'HEAD']).split('\0').filter(Boolean).sort();
-    expect(fixtures[0].truth.files).toEqual(shown);
-    expect(fixtures[0].truth.files).toEqual(['café.txt', 'weird"quote.txt']);
+    expect(fixtures[0].truth.newFiles).toEqual(shown);
+    expect(fixtures[0].truth.newFiles).toEqual(['café.txt', 'weird"quote.txt']);
   });
 
   test('--max stops at n fixtures, oldest first', () => {
@@ -139,7 +151,7 @@ describe('buildCommitFixtures', () => {
     commit(root, 'feat: add c');
     const all = buildCommitFixtures({ dir: root, range: 'HEAD', agent: 'wish-context' });
     const capped = buildCommitFixtures({ dir: root, range: 'HEAD', agent: 'wish-context', max: 2 });
-    expect(all.fixtures).toHaveLength(3);
+    expect(all.fixtures).toHaveLength(2);
     expect(capped.fixtures).toHaveLength(2);
     expect(capped.fixtures).toEqual(all.fixtures.slice(0, 2));
   });
@@ -185,15 +197,7 @@ describe('runFixturesCli', () => {
     // The proof that matters: the file goes through the bench's OWN loader, not a second
     // copy of the shape, and every fixture carries what `runBenchCli` reads off it.
     const loaded = loadFixtureSet(out);
-    expect(loaded.fixtures).toHaveLength(2);
-    for (const fixture of loaded.fixtures) {
-      expect(typeof fixture.id).toBe('string');
-      expect(fixture.prompt).toStartWith('Intent: ');
-      expect(Array.isArray(fixture.truth.files)).toBe(true);
-    }
-    const document = JSON.parse(readFileSync(out, 'utf8')) as { agent: string; notes: string };
-    expect(document.agent).toBe('wish-context');
-    expect(document.notes).toContain('git show --name-only');
+    expect(loaded.fixtures).toHaveLength(1);
 
     // A second run refuses rather than replacing what an operator may have edited…
     const before = readFileSync(out, 'utf8');

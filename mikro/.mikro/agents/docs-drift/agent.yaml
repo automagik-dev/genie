@@ -1,0 +1,35 @@
+schema_version: 1
+tools_api: 1
+
+# ── ACTIVE — created 2026-08-16 as part of the colony (/goal directive) ─────
+#
+# Audits one file under docs/ per cycle against the source it makes claims
+# about, rotating through the tree using its own committed reports as the
+# rotation state. Read-only; findings and suggested rewrites only.
+#
+# Withdraw by renaming:  mv .mikro/agents/docs-drift .mikro/agents/docs-drift.proposed
+# ────────────────────────────────────────────────────────────────────────────
+
+shape: loop
+
+# Same model rationale as readme-polish/agent.yaml: direct `deepseek/` on this
+# host; `khal/deepseek-v4-flash` on gatewayed hosts.
+model: deepseek/deepseek-v4-flash
+
+description: >-
+  Audits one documentation file under docs/ against the current source tree —
+  file paths, line-number claims, symbol names, command and flag references
+  are each re-resolved — and returns a drift report with evidence and
+  suggested corrections. Rotates through docs/ across cycles using its own
+  past reports as state. It never edits files.
+
+system: SYSTEM.md
+
+budget:
+  # 12 — same path shape as readme-polish: slice a long doc, cross-check its
+  # claims, verify, answer. docs/ files here run up to ~60 KB.
+  max_iterations: 12
+  # 0.50 — the standard single-process rail (see readme-polish/agent.yaml).
+  max_cost: 0.50
+  # DECLARATIVE ONLY — NOT ENFORCED. This agent spawns nothing.
+  max_depth: 0

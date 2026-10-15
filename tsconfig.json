@@ -12,6 +12,6 @@
     "forceConsistentCasingInFileNames": true,
     "types": ["bun"]
   },
-  "include": ["src/**/*"],
+  "include": ["src/**/*", "scripts/bench/**/*"],
   "exclude": ["node_modules", "dist"]
 }

@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 // Behavior guard: executes the body of .claude/workflows/wish.js end to end under fake stage agents,
@@ -49,7 +50,7 @@ type WishResult = {
   diff: { files: number; insertions: number; measured: boolean; band: string } | null;
   contract: Record<string, unknown> | null;
   gateCommand: { command: string; mode: string } | null;
-  scoutMikro: { agent: string; ok: boolean; notReported?: boolean };
+  scoutMikro: { agent: string; ok: boolean; notReported?: boolean } | null;
 };
 type WishBody = (...params: unknown[]) => Promise<WishResult>;
 
@@ -224,7 +225,7 @@ describe('wish.js read-back states', () => {
     const { result } = await clean(canned('pass'));
     expect({ ok: result.ok, state: result.state }).toEqual({ ok: true, state: 'merge-ready' });
     // The scout offload rides on the result so a run ledger can price it; absence is recorded, never dropped.
-    expect(result.scoutMikro.agent).toBe('wish-context');
+    expect(result.scoutMikro?.agent).toBe('wish-context');
   });
 
   test('(2) checks pending -> pr-open', async () => {
@@ -1197,3 +1198,47 @@ function briefSection(prompt: string): string {
   const end = prompt.indexOf('\n\n', start);
   return prompt.slice(start, end < 0 ? undefined : end);
 }
+
+describe('explicit offload treatments', () => {
+  for (const engine of ['rlm', 'pi'])
+    test(`both native stage prompts select ${engine}`, async () => {
+      const record = await clean(canned(), { offloadEngine: engine });
+      expect(record.result.ok).toBe(true);
+      for (const label of ['admit:scout', 'review:diff'])
+        expect(record.prompts[label][0]).toContain(`--engine ${engine}`);
+    });
+  test('off retains the native stages without an executable offload command', async () => {
+    const record = await clean(canned(), { offload: false });
+    expect(record.result.ok).toBe(true);
+    for (const label of ['admit:scout', 'review:diff']) {
+      expect(record.prompts[label][0]).toContain('Mikro offloads are disabled');
+      expect(record.prompts[label][0]).not.toContain('genie mikro call wish-context');
+      expect(record.prompts[label][0]).not.toContain('genie mikro call review-prep');
+    }
+    expect(record.result.report).toContain('Offload: wish-context — disabled by caller');
+    expect(record.result.report).toContain('Offload: review-prep — disabled by caller');
+    const scratch = mkdtempSync(join(tmpdir(), 'wish-offload-report-'));
+    try {
+      const fixture = JSON.parse(readFileSync(join(ROOT, 'src/fixtures/wish-run-record.json'), 'utf8'));
+      fixture.result = record.result;
+      const path = join(scratch, 'record.json');
+      writeFileSync(path, JSON.stringify(fixture));
+      const report = Bun.spawnSync([process.execPath, join(ROOT, 'src/genie.ts'), 'wish', 'report', '--record', path], {
+        cwd: scratch,
+        env: { ...process.env, GENIE_HOME: join(scratch, 'genie'), CLAUDE_CONFIG_DIR: join(scratch, 'claude') },
+      });
+      expect(report.exitCode).toBe(0);
+      expect(report.stdout.toString()).not.toContain('scout offload');
+      expect(report.stdout.toString()).not.toContain('review offload');
+    } finally {
+      rmSync(scratch, { recursive: true, force: true });
+    }
+  });
+  test('invalid controls refuse before stages dispatch', async () => {
+    for (const args of [{ offload: 'false' }, { offloadEngine: 'prime' }]) {
+      const record = await runWish({}, args);
+      expect(record.result.ok).toBe(false);
+      expect(record.prompts).toEqual({});
+    }
+  });
+});

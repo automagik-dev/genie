@@ -1,0 +1,7 @@
+{"type":"session","version":3,"id":"sess-lead-0001","timestamp":"2026-10-01T10:00:00.000Z","cwd":"/work/bench-task"}
+{"type":"model_change","id":"e00","parentId":null,"timestamp":"2026-10-01T10:00:00.100Z","provider":"example-provider","modelId":"model-requested"}
+{"type":"thinking_level_change","id":"e01","parentId":"e00","timestamp":"2026-10-01T10:00:00.200Z","thinkingLevel":"medium"}
+{"type":"message","id":"e02","parentId":"e01","timestamp":"2026-10-01T10:00:01.000Z","message":{"role":"user","content":[{"type":"text","text":"Fix the failing parser test."}]}}
+{"type":"message","id":"e03","parentId":"e02","timestamp":"2026-10-01T10:00:05.000Z","message":{"role":"assistant","content":[{"type":"toolCall","id":"call-1","name":"task","arguments":{"prompt":"Read the parser module."}}],"provider":"example-provider","model":"model-observed","responseId":"resp-lead-1","usage":{"input":1200,"output":300,"cacheRead":800,"cacheWrite":400,"reasoning":120,"totalTokens":2700},"stopReason":"toolUse"}}
+{"type":"message","id":"e04","parentId":"e03","timestamp":"2026-10-01T10:00:20.000Z","message":{"role":"toolResult","toolCallId":"call-1","toolName":"task","content":[{"type":"text","text":"The parser reads tokens lazily."}],"isError":false}}
+{"type":"message","id":"e05","parentId":"e04","timestamp":"2026-10-01T10:00:25.000Z","message":{"role":"assistant","content":[{"type":"text","text":"Fixed."}],"provider":"example-provider","model":"model-observed","usage":{"input":1600,"output":0,"cacheRead":1200,"cacheWrite":0,"totalTokens":2800},"stopReason":"stop"}}
