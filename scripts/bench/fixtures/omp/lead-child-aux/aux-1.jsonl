@@ -1,0 +1,3 @@
+{"type":"session","version":3,"id":"sess-aux-0001","timestamp":"2026-10-01T10:00:02.000Z","cwd":"/work/bench-task","parentSession":"sess-lead-0001","role":"auxiliary"}
+{"type":"message","id":"x01","parentId":null,"timestamp":"2026-10-01T10:00:02.100Z","message":{"role":"user","content":[{"type":"text","text":"Title this conversation."}]}}
+{"type":"message","id":"x02","parentId":"x01","timestamp":"2026-10-01T10:00:03.000Z","message":{"role":"assistant","content":[{"type":"text","text":"Parser test fix"}],"provider":"example-provider","model":"model-small","usage":{"input":60,"output":5,"cacheRead":0,"cacheWrite":0,"totalTokens":65},"stopReason":"stop"}}

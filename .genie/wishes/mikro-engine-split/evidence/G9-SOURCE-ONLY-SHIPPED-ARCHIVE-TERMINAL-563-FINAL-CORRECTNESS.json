@@ -1,0 +1,910 @@
+{
+  "reviewer": {
+    "identity": "Independent read-only correctness reviewer; openai-codex/gpt-6.1-sol:high",
+    "reviewDate": "2026-10-10",
+    "timestampPrecision": "Date only; no clock command executed.",
+    "independentOfImplementation": true,
+    "assignment": "Whole G1–G9 source/evidence review against the original frozen forty-row correctness matrix",
+    "readOnly": true,
+    "executedBuildsTestsLintFormattersProbesNetworkInferenceProvisioning": false,
+    "mutatedFilesGitStateTaskState": false
+  },
+  "sourceCandidateSha256": "7241a0a39d2a270093e6ae0d1af905f9603b3092eff373795146f493ff8e29e9",
+  "originalCriteriaSha256": "4c1c29f61bd7389197eff5d421c26e47d9d4f67003cfb3a101c1953b78eae868",
+  "sourceIdentity": {
+    "checkout": "/home/genie/.local/share/mikro-engine-split/experiments-g8/final-local-smokes/history-only-reword-6qjyzwas/tree",
+    "manifest": ".genie/wishes/mikro-engine-split/evidence/G9-SOURCE-ONLY-SHIPPED-ARCHIVE-TERMINAL-563-FINAL-CANDIDATE-MANIFEST.json",
+    "fileCount": 2480,
+    "algorithm": "SHA-256 over UTF-8 json.dumps(records,sort_keys=True,separators=(comma,colon),ensure_ascii=False), records lexicographically sorted by relative path. Each record covers path/kind/permission mode/sha256(file bytes or symlink target UTF-8). Deleted tracked entries retain explicit null mode/hash. Existing gitlink entries cover index mode160000, exact gitlinkCommit and SHA256 of UTF8 gitlink:commit; not external checkout bytes.",
+    "privateIntegrationHead": "40ddcadbe9ae5690bafae23f523179bf91a8e4eb",
+    "originalPublishedHead": "553eebab32c33a667a7c96634c4b7f488a223fcc",
+    "currentDevBase": "fa8469e0e1beb953823bb2619ed0a39fe581dba7",
+    "originalMikroHead": "62894e49314bad07382492ac074ea96df6776f61",
+    "rootVersion": "6.261009.1",
+    "mikroVersion": "1.260907.1",
+    "docsGitlink": "ea8c0230e6ddcabe302ca6419ab2c99f2d15174c",
+    "inclusions": "Historical inventory plus cached/index objects and nonignored new paths, new authority/commitlint/pricing helpers, generated Mikro distribution, executed ignored dist/genie.js, exact symlink target/modes, docs gitlink and four explicit absent obsolete-test records.",
+    "exclusions": "Git metadata, dependencies, private operational state and ignored release outputs; release outputs are separately candidate-bound. Exactly ten enumerated future evidence files are excluded to avoid cyclic hashes, not source/runtime/configuration/experiment directories.",
+    "excludedFutureEvidence": [
+      "G9-SOURCE-ONLY-SHIPPED-ARCHIVE-TERMINAL-563-DOCS-GATE.json",
+      "G9-SOURCE-ONLY-SHIPPED-ARCHIVE-TERMINAL-563-FINAL-CANDIDATE-MANIFEST.json",
+      "G9-SOURCE-ONLY-SHIPPED-ARCHIVE-TERMINAL-563-FINAL-CONTINUITY.json",
+      "G9-SOURCE-ONLY-SHIPPED-ARCHIVE-TERMINAL-563-FINAL-CORRECTNESS.json",
+      "G9-SOURCE-ONLY-SHIPPED-ARCHIVE-TERMINAL-563-FINAL-QUALITY.json",
+      "G9-SOURCE-ONLY-SHIPPED-ARCHIVE-TERMINAL-563-FOUR-RELEASE-PAYLOADS.json",
+      "G9-SOURCE-ONLY-SHIPPED-ARCHIVE-TERMINAL-563-PUBLICATION.json",
+      "G9-SOURCE-ONLY-SHIPPED-ARCHIVE-TERMINAL-563-SUPPLEMENTAL-GATE.json",
+      "G9-SOURCE-ONLY-SHIPPED-ARCHIVE-TERMINAL-563-WHOLE-GENIE-GATE.json",
+      "G9-SOURCE-ONLY-SHIPPED-ARCHIVE-TERMINAL-563-WHOLE-MIKRO-INSTALL-GATE.json"
+    ],
+    "commitCorrespondence": "This verdict binds the uncommitted manifested candidate, not old published553 or private HEAD40dd alone. Subsequent normal-hook exact-path commit/current-dev graph merge must preserve every reviewed source/runtime record, original628 ancestry, symlink targets and gitlink OID. Only enumerated future metadata and a declared publication-only WISH append preserving the reviewed prefix may differ. Remote correspondence has not yet been demonstrated.",
+    "identityVerificationLimit": "Consumed the coordinator's complete manifest, current byte/mode continuity and candidate-bound gate receipts. Did not independently recompute hashes or execute Git/validation commands."
+  },
+  "criteriaVerbatim": [
+    "1. Bind the complete current candidate before reading implementation. Required proof: exact committed SHA and a sorted bytes-plus-mode manifest covering the delivered source, configuration, lockfiles, generated dist, experiment executables/manifests and relevant untracked artifacts; provide algorithm, exclusions, file count and digest, and explain untracked/generated inclusion. Exclusions cannot remove shipped behavior or evidence essential to acceptance. Establish the relationship between any uncommitted snapshot and the eventual committed PR. PASS: the same identity is used by both final reviewers and all applicable validation. FIX-FIRST: delivered code/artifacts differ from the reviewed snapshot. BLOCKED: identity, exclusions or correspondence are unavailable. A path, branch name or bare digest is insufficient.",
+    "2. Preserve complete approved scope and independent authorship. Required proof: G1–G9 traceability to the signed design digest f473c5dfff23221fabbcb2aec89880e3199f572ba4dd098ab4be8258a82b79f2 and this matrix, plus independent implementation and separate quality reviewers. Phase B findings must distinguish code reads, attributable reused outputs and unresolved hypotheses. PASS: all obligations remain represented and reviews assess the same candidate. FIX-FIRST: silent scope reduction, fabricated completion or author self-certification substitutes for independent review. BLOCKED: governing artifact or review independence cannot be established.",
+    "3. Trace producers through consuming dispatch. Required proof: every introduced engine value, typed completion/timeout failure, cancellation signal, final-tool result, workflow option/event, usage record, snapshot and JEV answer crossing a boundary is followed to its actual receiving switch/router/filter/loop and final consumer. PASS: explicit handling or a correct existing catch-all preserves the intended behavior, failure and usage semantics. FIX-FIRST: a patch-introduced value is dropped, misclassified, ignored or silently falls back. BLOCKED: a necessary consuming implementation is unavailable. Export/type declarations alone do not prove integration.",
+    "4. Preserve the imported source graph and initial tree. Required proof: Mikro 62894e49314bad07382492ac074ea96df6776f61 is an ancestor, import is the required non-squash two-parent integration, and the initial imported mikro/ tree equals the clean source tree; relate it to Genie base edf9c7024b1a4417b79b6c13f5e9386c92742bf0. PASS: graph and tree receipts agree. FIX-FIRST: squashed/copied import, incorrect source or imported WIP. BLOCKED: original tree/import receipts are unavailable.",
+    "5. Preserve original checkouts, unrelated WIP and operator state. Required proof: before/after original Mikro HEAD, index identity, dirty/untracked file inventories and byte hashes, specifically installer/CLI/CHANGELOG WIP; original Genie work and operator settings/auth/key/helper inventories remain unchanged except explicitly assigned additions. Receipts must be secret-safe. PASS: exact preservation is demonstrated. FIX-FIRST: unauthorized changes, deletion or git-state movement. BLOCKED: preservation cannot be established from attributable before/after evidence. Production brain runtime, main and production installation are outside mutation scope.",
+    "6. Maintain independent package discovery, ownership and release boundaries. Required proof: Mikro remains npm/package-lock with Node >=22.19.0 and independent Node ambient types; Genie remains Bun/bun.lock. Root discovery exclusions cover only the independently gated subtree and preserve the original root test set. Review legacy-catalog collection/retirement authority and nested standalone-update guard through consuming paths; the guard rejects before owner/journal/fetch/reset/clean mutation while legitimate standalone behavior remains supported. PASS: subtree history/skills are outside Genie retirement authority, both package contracts work, and Genie runtime has no Mikro dependency or payload addition. FIX-FIRST: exclusion hides root regressions, authority crosses into imported content, nested updates mutate it, or release bundling changes. BLOCKED: boundary inventory or owning behavior proof is missing.",
+    "7. Use the exact compatible SDK family. Required proof: package manifest, lock resolution and actual compiled imports of coding-agent, pi-ai and directly imported agent-core are 1.0.2, with no incompatible duplicate provider identity; actual package-local callsites are migrated. Built-in deepseek/deepseek-flash resolves from the pinned catalog. PASS: dependency and execution identities agree. FIX-FIRST: incorrect pin, stale APIs or incompatible resolved family. BLOCKED: installed resolution/compiled identity is not attributable.",
+    "8. Preserve provider configuration and truthful stop semantics. Required proof: success responses and configured custom-provider auth, sampling/cache/output controls remain effective; actual error, aborted and length scenarios yield LLMCompletionError with the correct stopReason, secret-safe message and reported usage. Trace usage through SDK/runtime/footer consumers. PASS: failures cannot become empty success or valid structured answers, and reported usage is retained once. FIX-FIRST: false success, lost/doubled usage, credential disclosure or provider behavior regression. BLOCKED: actual provider-failure boundary evidence is missing.",
+    "9. Bound ordinary transport retries without hidden replacement behavior. Required proof: owning tests and actual boundary evidence for default maxRetries=3, explicit zero, caller propagation and termination; preserve attempts and available usage rather than concealing retry costs. PASS: configured controls govern execution and no new unapproved retry layer appears. FIX-FIRST: zero is replaced by the default, retries escape bounds or callers ignore the option. BLOCKED: effective attempts/options cannot be established.",
+    "10. Handle FINAL values safely and honestly. Required proof: actual compiled RLM/parser behavior for bare safe identifiers, quoted literals, missing variables, ellipsis and arbitrary expressions. PASS: safe identifiers resolve existing variables, quoted values remain literal, arbitrary expressions are not evaluated, and missing/ellipsis values receive repair feedback rather than successful finalization. FIX-FIRST: unsafe evaluation or a false final answer. BLOCKED: parser-to-runtime behavior lacks attributable proof.",
+    "11. Recover timeouts without replay or stale-child corruption. Required proof: real Python/bridge timeout with an observable side effect executed exactly once; typed REPLTimeoutError; terminate/wait/detach old child, reject stale bridge replies, restore only saved initial context/tools, visibly report lost user variables, and exercise subsequent allowed-turn behavior. Failed restart and exhausted deadline must terminate. PASS: a fresh live namespace continues only when allowed, without replay. FIX-FIRST: duplicated side effects, retained dead/stale namespace, silent state loss or restart outside limits. BLOCKED: actual subprocess/bridge evidence is unavailable.",
+    "12. Finalize inside every declared budget. Required proof: actual call-count receipts and owning behavior tests for last-turn schema finalization, failed validation, maxIterations, token/cost caps and deadline; trace LLMCompletionError usage once. PASS: final turn is included in the cap and returns only a schema-valid final or truthful terminal failure, with no extra forced-final completion. FIX-FIRST: an additional model turn, overspent budget, discarded failure usage or invalid answer marked successful. BLOCKED: measured calls/limits are absent.",
+    "13. Enforce explicit engine precedence and clean cutover. Required proof: compiled MCP and SDK behavior for rlm|pi|prime|prime-sdk; omitted engine uses RLM, explicit call overrides agent then default, including generic query; obsolete backend keys and unknown/empty/non-string values fail before billing. Trace all repository callers and effective-engine compatibility when discovery degrades. PASS: no shape heuristic, alias or silent fallback remains. FIX-FIRST: precedence/rejection differs, a stale caller bypasses the selector or a value silently routes incorrectly. BLOCKED: active-caller inventory or compiled selector proof is missing. Prime support remains compatible but is neither re-pinned nor scored.",
+    "14. Keep Pi resources and tools hermetic/read-only. Required proof: real SDK session using isolated ModelRuntime/SettingsManager/SessionManager/ResourceLoader and only scoped read/grep/glob/git/emit_done; adversarial out-of-root, symlink, mutation, ambient resource/instruction/plugin and git-configuration probes. Git operations disable external diff/textconv/fsmonitor/pager/hooks and config-environment injection; containment follows realpaths. PASS: these boundaries hold through actual tool dispatch. FIX-FIRST: any escape, ambient credential/resource loading or mutation-capable path. BLOCKED: dependency-backed adversarial execution evidence is missing.",
+    "15. Implement meaningful Pi finalization and lifecycle limits. Required proof: real tool loop exercising a valid final, missing/invalid final, final schema precedence and both validations, repeated finals, stop-after-turn, usage/limits/progress, cancellation/deadline and disposal. PASS: first accepted final wins; no copied-last-paragraph/REPL fallback; terminal errors and actual usage remain truthful; cleanup completes. FIX-FIRST: invalid/missing answer succeeds, later final overwrites accepted data, execution ignores limits or resources survive cancellation. BLOCKED: actual loop/lifecycle evidence is missing.",
+    "16. Preserve outward MCP and SDK contracts. Required proof: compiled MCP and Genie caller execution through both engines, including failure paths, structuredContent {answer, session_id}, priced footer, history, progress heartbeat and classification. Optional cancellation, if added, reaches every affected backend without obsolete aliases. PASS: all existing consumers accept the unchanged envelope and accounting exactly once. FIX-FIRST: dropped result/session/progress/failure data or incorrect pricing/history. BLOCKED: consumer-boundary evidence is unavailable.",
+    "17. Forward real treatments through every caller. Required proof: call/bench flag parsing and actual MCP arguments; actual saved wish.js sends offloadEngine rlm|pi to both scout and review, offload=false invokes neither while native stages remain, omission retains current RLM behavior. Invalid controls fail before billing. PASS: benchmark metadata matches actual execution and native stage models are not silently changed. FIX-FIRST: decorative treatment labels, one offload ignoring the selector, off still billing, or invalid input reaching inference. BLOCKED: observed arguments/workflow dispatch are missing.",
+    "18. Separate proposal authorization from citation evidence. Required proof: owning consumer tests and actual verifier behavior for top-level plan.files NEW declarations, missing paths without line requirements, tracked nearest ancestors and containment; reject untracked/ignored existing paths, traversal and symlink escapes. Exercise a NEW declaration and ordinary citation to the same missing path in one result, plus evidence deduplication. PASS: NEW authorizes a proposal only, never fabricates existing-file/citation evidence. FIX-FIRST: declaration leakage validates an ordinary citation or escapes repository authority. BLOCKED: consuming verifier proof is missing.",
+    "19. Produce honest parent-tree fixtures and separate scores. Required proof: actual fixture-generator CLI output binds source/evaluation/parent commits, repository/tree hashes and added-file provenance; runtime sees the parent tree with implementation absent. Score NEW, files and citations independently, and exercise failure answers after success. PASS: no answer leakage or stale-success inheritance. FIX-FIRST: added implementation remains available, provenance is wrong, or failure retains previous successful scores. BLOCKED: parent identities or actual generation/evaluation evidence are missing.",
+    "20. Cut over repository defaults without changing operator configuration. Required proof: all active repository agent defaults and root .mikro/mikro.yaml use built-in deepseek/deepseek-flash; obsolete root deepseek-api and Pro configuration are removed while immutable historical baseline artifacts and operator-owned auth/settings remain untouched. A compiled generic mikro_query using repository configuration without a model override must actually resolve and call Flash. PASS: owning behavioral regressions and real query agree. FIX-FIRST: stale/shadowing provider config, prohibited calls or operator-state mutation. BLOCKED: no-model-override execution/provenance is missing.",
+    "21. Provision distinct keys explicitly and additively. Required proof: explicit origin/project/credential references; actual supported CPA additive/idempotent operation; distinct assigned Genie/brain project keys; private directory 0700 and files 0600; unrelated keys and operator state preserved. Endpoints remain disabled until configured and credentials do not appear in argv/logs/source/manifests/commits/chat. PASS: project isolation and permissions are demonstrated. FIX-FIRST: shared/wrong key, destructive provision, unsafe permissions or secret disclosure. BLOCKED: sanctioned provisioning/authentication or safe preservation evidence is unavailable.",
+    "22. Authenticate catalog and inference with invocation-scoped project credentials. Required proof: actual project-key catalog and real calls for assigned projects, advertised model IDs/provenance retained, and concurrent/sequential SDK callers cannot inherit another project's credentials through global mutation. PASS: only authorized advertised identities are used, no invented aliases or Pro/Claude calls. FIX-FIRST: wrong attribution, ambient/global credential leakage or fabricated catalog identities. BLOCKED: actual catalog/call/credential-scope proof is missing.",
+    "23. Capture only authorized, source-linked aggregates. Required proof: actual manual juice usage/analyze, project-key viewer login, in-memory cookie and /key-overview, /key-analysis and /key-analysis/latency; attributable version/session/logout evidence; sanitized snapshots preserve URL/query/project/key epoch/returned range/timezone/fetch time/hash. Exercise credential/cookie/body failure redaction. PASS: responses are project-scoped, capabilities distinguish aggregate access from unavailable request/payload export, unknown cost/time remains unknown, and aggregate spend is not canonical runtime billing. FIX-FIRST: admin escalation, request/conversation export, invented IDs/zero costs, secret disclosure or duplicate billing. BLOCKED: authorized viewer session or actual snapshots are unavailable.",
+    "24. Make exactly one explicit, bounded manual extraction request. Required proof: configured full endpoint/model/key reference and actual CLI-to-extractWithJev wiring; official {state,model,questions} payload, bounded sanitized source-linked candidate IDs, cancellation, Choice with abstention, and optional Noul/Score only within the same requested call. PASS: one fetch, no retries/translation/cache/generation/routing/background mutation. FIX-FIRST: extra inference, unsupported payload or missing manual wiring. BLOCKED: sanctioned endpoint/authentication or actual request evidence is unavailable.",
+    "25. Validate typed answers and preserve observed provenance. Required proof: actual configured extraction plus owning invalid/unavailable-response cases for model/types/probabilities/usage, local candidate mapping and source span/abstention; source snapshot/hash/query/range/timezone metadata survives as applicable to the supplied source. PASS: answers and usage are observed, source reattachment is local and exact, invalid transport/schema is an explicit error. FIX-FIRST: fabricated/empty successful extraction, unmapped selections or lost source/usage. BLOCKED: real response or sanctioned access cannot be obtained. The scope's expired AWS SSO description is not itself current proof of an unreachable endpoint; require exact attempted sanctioned discovery/auth sources and current failure evidence, with no silent public-cloud substitution.",
+    "26. Keep ordinary runs free of instrumentation inference. Required proof: trace ordinary model, MCP and workflow paths and attributable call/event observations; extraction is reachable only by the explicit configured manual action. PASS: ordinary runs perform no JEV/Keeper extraction or extra instrumentation model call. FIX-FIRST: automatic extraction/inference/retries or source mutation. BLOCKED: call-boundary evidence is missing.",
+    "27. Prove every named actual runtime surface. Required proof: original bounded provider/REPL/final/citation failures reproduced at their actual boundaries, then attributable repaired compiled execution through MCP and Genie; real Python/bridge, Pi SDK/tools, generic query, fixture CLI, configured Juice/JEV and installed CLI/MCP surfaces as required above. PASS: no source-only substitute, permanent scaffold, fake fallback or stale dist. FIX-FIRST: demonstrated failure or reachable omitted surface. BLOCKED: an exact external prerequisite prevents the required real execution. Unit mocks and source-text assertions cannot replace these proofs.",
+    "28. Freeze fixture, arm and runtime identities before outcomes. Required proof: four Genie/brain existing/new-directory fixtures match the original FROZEN-FIXTURES.json bytes; pre-outcome manifests identify every Flash arm, separately available curated candidate IDs and catalog exclusions, source/parent trees, launcher/runtime/artifact/schema/prompt/pricing hashes, repetitions and concurrency=1. Candidate cells are reported separately from Flash. PASS: outcome-independent identities and equivalent paired conditions are auditable. FIX-FIRST: post-outcome cohort selection, changed fixture bytes, answer leakage, unapproved models or scored Prime. BLOCKED: original freeze identity/timing or arm definitions are missing. Do not infer arm identities merely from the requested total.",
+    "29. Complete all required fixture runs without survivor filtering. Required proof: all 36 Flash runs across the frozen four-fixture/three-arm/three-repetition matrix, and every separately frozen available curated candidate cell with three repetitions on matched upgraded RLM/Pi conditions. Preserve every attempt, failure, retry and unknown; explain unavailable candidates from the pre-outcome catalog, not unfavorable outcomes. PASS: complete immutable run records match the freeze. FIX-FIRST: missing reachable cells, substitutions, discarded failures or fabricated results. BLOCKED: exact required service access/records are unavailable. Availability exclusions cannot silently shrink the fixed Flash obligation.",
+    "30. Report measured outcomes and honest selection statistics. Required proof: per-cell verified success and file/NEW/citation metrics, run and all-attempt latency p50/p90, cost per verified success, cost coverage, cap share and repetition dispersion; methods and attempt denominators are explicit, and unknown usage is never zero. Selection requires verified-success parity in each repository/model cell and no real-workflow SHIP/repair regression. PASS: claims are supported at the measured scope; ties/insufficient evidence remain inconclusive. FIX-FIRST: speed-only recommendation, pooled success hiding a failing cell, unpriced cost claim or omitted attempts. BLOCKED: required outcome/accounting inputs are unavailable. No automatic routing or promotion follows from a recommendation.",
+    "31. Prove actual native workflow identity before scoring. Required proof: unscored actual DSH-loader/non-Claude-route smoke and experiment-local observer, then each scored run binds real workflow UUID, seq, childId, native persisted own-suffix assistant/message and assistant/attempt usage, tool/call events and lifecycle timestamps. Use the actual saved wish.js, not a surrogate. PASS: observed identities join to durable native records and only own-run events are counted. FIX-FIRST: synthetic IDs, DSH success journals alone, wrong sessions, inherited/forked double counting or consumer redesign. BLOCKED: native persistence/identity/observer evidence is inaccessible.",
+    "32. Complete the 18 genuine wish variants with isolation. Required proof: two bounded objectives × offload-rlm/offload-pi/offload-off × three repetitions, each using independent repository/common-directory/state roots; actual native models obey the no-Pro/no-Claude rule, outcomes/SHIP/repair counts and both offload treatments are observed. PASS: all genuine runs, failures and treatment identities are retained. FIX-FIRST: surrogate pipeline, reused contaminated state, decorative treatment, missing reachable runs or forbidden calls. BLOCKED: exact native launcher/model access or actual run receipts are unavailable.",
+    "33. Establish full accounting before completing workflow comparison or appending reports. Required proof: measured native stage tokens/tools/durations and priced offloads, explicit ownership of assistant/attempt/message/tool events, parent/fork exclusion, and compatibility with unchanged capture/export/wish-report consumers. Required top-level fields must be completely measured; missing fields remain unknown, not synthetic workflow IDs or token zeros. Keeper aggregate spend is contextual, never an extra canonical charge. PASS: fully measured compatible records only are appended, each once, and all required comparison accounting is complete. FIX-FIRST: fabricated/partial append, duplicate billing, existing-consumer redesign or implementation-caused accounting loss. BLOCKED: exact unavailable native accounting prevents completion even when all 18 runs have genuine outcomes. Preserved partial receipts are useful evidence but do not satisfy this criterion.",
+    "34. Keep delivered code, documentation and generated artifacts coherent. Required proof: affected schema/provider/runtime/CLI/monorepo docs and changelogs match the implemented contract; generated dist is built from the pinned source, obsolete selectors/callers/shims and throwaway smokes are removed while durable proofs and required experiment execution remain. PASS: no scaffold, fake fallback or obsolete active path remains. FIX-FIRST: shipped/runtime mismatch, misleading behavior documentation or unfinished implementation. Nonblocking prose/style nits do not invalidate correctness. BLOCKED: artifact/source correspondence is unavailable.",
+    "35. Preserve both complete aggregate gates and actual install/release proof. Required attributable coordinator outputs: npm --prefix mikro run deps:ci, build, check and test; isolated standalone scripts/smoke-install-update.sh; bun install --frozen-lockfile and the complete bun run check under the existing host lock. Include command/cwd/environment corrections, exit status, pass/fail/skip totals and artifact identity. Retain existing release verification, actual CLI/MCP smokes and original Genie binary/tarball payload contract; Mikro CI independently covers npm lock/build/tests/install contract. PASS: every required gate and actual artifact surface passes at the candidate. FIX-FIRST: genuine failed gate, narrowed replacement, source suppression or changed Genie release payload. BLOCKED: missing/stale/non-attributable full gate or artifact proof. Only documented inherited NO_COLOR/TMPDIR corrections are acceptable; reviewer executes nothing in this assignment.",
+    "36. Obtain independent, current reviews after bounded repairs. Required proof: final implementation review and separate security/maintainability/performance quality review cover the complete scope at the same identity; dispositions of reproduced blockers and repair budgets B=2 plus quality cap=1 are retained. Relevant repairs invalidate prior reviews/gates and require current attributable reassessment. PASS: independent source/feature reviews have no blocking gaps and limitations are explicit. FIX-FIRST: unresolved reproduced blockers or relevant repair not reassessed. BLOCKED: independent current review/evidence is missing. Prior SHIP language is evidence to inspect, not a substitute for this review.",
+    "37. Deliver a current, merge-ready dev PR without promotion. Required proof: exact committed scope, pushed head, PR targeting Genie dev, current live base ref, head SHA and three-dot file scope, merge-cleanliness against that live base, and required remote CI checks attached to the current head. Review current inbound threads/dispositions without inferring resolution from comments. Reconcile local manifest/compiled artifacts/gates/reviews with the remote candidate; refresh identity after validation and invalidate evidence when relevant bytes/head change. PASS: current remote and local identities agree, required CI is green, no merge/main promotion/production install occurred, and wish remains IN_PROGRESS pending authorized merge/QA. FIX-FIRST: wrong target, extra/unreviewed files, stale head greens presented as current, conflict, unauthorized promotion or false SHIPPED status. BLOCKED: absent PR, inaccessible/currently incomplete required CI or missing current base/head readback. Neither a PR number nor a worker notification proves delivery.",
+    "38. Record exact unreachable prerequisites without waiving obligations. For every unexercised required behavior, identify the criterion, exact missing endpoint/permission/native event or field/environment artifact, sanctioned discovery/access paths attempted, attributable current failure, why remaining reachable work cannot supply the proof, and which claim remains unverified. Complete all reachable adapter/source work and preserve real partial receipts. G9 permits truthful exercised-proof-or-exact-unreachable-prerequisite reporting; it does not convert an unreachable prerequisite into a successful runtime proof, measured accounting, completed comparison or whole-wish SHIP. A precise blocker can satisfy G9's disclosure clause while G8 criterion 33 remains BLOCKED. A vague environment claim, an old expired-token statement or an untried reachable source is insufficient.",
+    "39. Issue separate source, comparison and whole-delivery dispositions. Source/feature SHIP requires candidate-bound implementation, consumer compatibility, preservation, required compiled/installed behavioral proof, complete applicable gates and independent review to pass. If these pass but criteria 29–33 remain unresolved solely because full experiment/accounting evidence is unavailable, only 'conditional source SHIP — comparison and whole delivery BLOCKED on [exact criterion/prerequisite]' is permissible; it cannot authorize a whole-scope SHIP/green publication claim. If a required source-feature integration such as actual JEV execution is itself unproved, limit any favorable assessment to inspected source and explicitly mark full feature validation BLOCKED. Comparison SHIP requires complete matched runs, real identities, full accounting and honest statistics; inability to prove performance superiority is an inconclusive result, not permission to lower verified-success parity. Whole-delivery SHIP requires all G1–G9 obligations and current dev-PR remote evidence to pass. A draft/source-reviewable PR, if present, is not the specified whole-delivery merge-ready result.",
+    "40. Apply final aggregate triggers without hiding mixed results. SHIP: every applicable criterion for the named verdict scope passes, with no blocking defect or required missing proof. FIX-FIRST: a confirmed implementation, compatibility, isolation, preservation, accounting or delivery violation; a failed required gate; fabricated evidence; or a knowingly omitted reachable obligation. BLOCKED: exact prerequisites/evidence are unavailable so a valid complete assessment cannot be made, including unresolved full accounting. When both kinds occur, lead with FIX-FIRST for confirmed repairable defects and separately enumerate external blockers; never use BLOCKED to erase known bugs. An exact unreachable-prerequisite record is an honest incomplete outcome, not completion. Any later identity change invalidates the affected verdict until re-pinned and reassessed."
+  ],
+  "evidenceReferenceConvention": {
+    "T": "sourceIdentity.checkout",
+    "E": "T/.genie/wishes/mikro-engine-split/evidence",
+    "CURRENT": "G9-SOURCE-ONLY-SHIPPED-ARCHIVE-TERMINAL-563-",
+    "HISTORICAL435": "G9-SOURCE-ONLY-RECEIVING-PROVENANCE-435-",
+    "semantics": "Paths are relative to T unless prefixed E. CURRENT and HISTORICAL435 expand filenames, not identities; historical evidence is explicitly historical. All execution results below were reused from attributable coordinator receipts, not executed by this reviewer."
+  },
+  "assessments": [
+    {
+      "number": 1,
+      "group": "Identity",
+      "status": "PASS",
+      "scope": "Current source identity binding",
+      "codeAndConsumers": [
+        "E/CURRENTFINAL-CANDIDATE-MANIFEST.json:1-17,14954-15016,15097-15125",
+        "E/CURRENTFINAL-CONTINUITY.json",
+        "E/CURRENTPUBLICATION.json:1-18"
+      ],
+      "evidence": "The 2480-record manifest binds delivered source/configuration/locks/new helpers, generated SDK and executed root bundle, exact symlink and gitlink identities. Post-validation continuity reports zero record drift. Current publication receipt still waits for both current original-matrix source reviews.",
+      "limitation": "PASS is the permitted uncommitted source-identity fallback, not a claim that the eventual commit/remote already matches it. That required correspondence remains criterion37 BLOCKED. Did not recompute the digest."
+    },
+    {
+      "number": 2,
+      "group": "Identity and approved scope",
+      "status": "PASS",
+      "scope": "Traceability and this review's independence",
+      "codeAndConsumers": [
+        "E/CURRENTFROZEN-CONTRACT.json",
+        "E/CURRENTFINAL-CANDIDATE-MANIFEST.json:14970-15016",
+        " .genie/wishes/mikro-engine-split/WISH.md",
+        "local://mikro-g9-final-correctness-criteria.txt"
+      ],
+      "evidence": "Signed design body f473c5dfff23221fabbcb2aec89880e3199f572ba4dd098ab4be8258a82b79f2 and original matrix hash are retained. All forty original rows are assessed. G1 shipped/proven-archive policy and G2 empty-terminal repair have explicit owner approvals; other limits and immutable paid cohorts are not reduced. This reviewer authored no implementation.",
+      "limitation": "The separate final quality review is not supplied as completed evidence in this assessment; joint review completion is criterion36 BLOCKED. No historical approval is substituted."
+    },
+    {
+      "number": 3,
+      "group": "Cross-boundary correctness",
+      "status": "PASS",
+      "codeAndConsumers": [
+        "mikro/src/mcp/server.ts:879-895,973-998,1042-1045",
+        "mikro/src/mcp/backends/pi.ts:142-214",
+        "mikro/src/sdk/agent.ts:375-610",
+        "mikro/src/repl.ts:140-200,629-755",
+        "mikro/src/ipc.ts:11-43",
+        "mikro/python/llm_bridge.py:58-110",
+        "mikro/src/rlm.ts:1000-1090,1230-1290",
+        " .claude/workflows/wish.js:862-866,2115-2167",
+        "mikro/src/jev.ts:153-252",
+        "mikro/src/juice.ts:274-343"
+      ],
+      "evidence": "Engine values reach explicit dispatch; provider terminal errors reach SDK/RLM/MCP failure classification; failed child IPC uses ok:false and a Node-owned execution marker rather than answer text; stale-generation/cancellation checks precede bridge replies; Pi accepted-final admission blocks later tools; complete versus partial usage reaches the unchanged Genie parser; manual snapshots/JEV answers reach validated local consumers.",
+      "limitation": "This is a source/consumer assessment plus current owning and compiled evidence, not a claim that every paid historical attempt has complete accounting."
+    },
+    {
+      "number": 4,
+      "group": "G1",
+      "status": "PASS",
+      "codeAndConsumers": [
+        "E/G1-IMPORT-RECEIPT.json",
+        "E/G9-SOURCE-ONLY-AUTHORIZED-HISTORY-REWORD-MAP.json",
+        "scripts/git-history-ownership.ts:12-43"
+      ],
+      "evidence": "Original import receipt records import7846e1d7ff2f88ec58ae35ee0224ad367a0bc8001, two parents edf9c7024b1a4417b79b6c13f5e9386c92742bf0 and62894e49314bad07382492ac074ea96df6776f61, equal initial subtree, and ancestry. Authorized message-only replay preserves trees and both import parents without rewriting foreign history.",
+      "limitation": "Receipts establish historical import/replay, not future graph/publication correspondence; criterion37 remains open."
+    },
+    {
+      "number": 5,
+      "group": "G1",
+      "status": "BLOCKED",
+      "codeAndConsumers": [
+        "E/PRESERVATION-BEFORE.json",
+        "E/CURRENTPRESERVATION.json",
+        "E/G9-RECEIPT3-FINAL-OPERATOR-REFERENCES.json"
+      ],
+      "evidence": "Current evidence preserves original Mikro628 HEAD/index, nine recorded installer/CLI/CHANGELOG/generated/test WIP hashes, original settings and original Genie553 HEAD. Rediscovered gate-env.sh matches its separately recorded before hash15fa26c639dc5d7b81313be54ada4f0a8ce4c5035b29288684a86a8eaa2c77fd.",
+      "limitation": "The original broader Genie dirty/untracked/index/auth/key/helper inventory was never captured. Current subset and independently recovered helper cannot reconstruct that missing before state or prove complete original preservation. No unauthorized mutation was demonstrated, and no false PASS is awarded."
+    },
+    {
+      "number": 6,
+      "group": "G1",
+      "status": "PASS",
+      "codeAndConsumers": [
+        "mikro/package.json:1-48",
+        "mikro/package-lock.json:1-34",
+        "mikro/tsconfig.json",
+        "package.json",
+        "bunfig.toml",
+        "tsconfig.json",
+        "scripts/git-history-ownership.ts:45-109,125-262",
+        "scripts/legacy-skills-catalog.ts:72-158,240-280",
+        "src/lib/legacy-skills.ts:1-250",
+        "mikro/bin/install-state.mjs:179-185,273-294",
+        "scripts/commitlint.ts:30-71",
+        " .github/workflows/mikro-ci.yml:1-39"
+      ],
+      "evidence": "Mikro independently uses npm lock/Node>=22.19.0/Node types; root remains Bun and retains its root tests. All-ref import ownership validation is separate from retirement eligibility. Only owned shipped roots and explicitly proven exact Genie archive roots reach generated catalog entries, which the real retirement classifier consumes. Nested update refusal runs before ownership/recovery/mutation. Fresh standalone install/update and complete gates pass; four Genie releases contain no Mikro.",
+      "limitation": "Catalog --check is explicitly additive/SUPERSET, not proof of exact historical set equality. Owner-authorized shipped/proven-archive semantics replace the old all-ref retirement default, not the original matrix."
+    },
+    {
+      "number": 7,
+      "group": "G2",
+      "status": "PASS",
+      "codeAndConsumers": [
+        "mikro/package.json:24-39",
+        "mikro/package-lock.json:11-16",
+        "mikro/src/llm.ts",
+        "mikro/src/mcp/backends/pi.ts:1-12,107-142",
+        "mikro/src/sdk/rlm-driver.ts",
+        "mikro/dist/src/llm.js",
+        "mikro/dist/src/mcp/backends/pi.js"
+      ],
+      "evidence": "Direct coding-agent/pi-ai/agent-core are exactly1.0.2 in manifest and lock; fresh authoritative npm deps:ci/build/check/full Node execution exercises their migrated compiled APIs. Built-in DeepSeek Flash resolves and real generic/configured calls are retained in WAVE3/Juice evidence.",
+      "limitation": "Prime remains compatibility-only and unscored. Fresh dependency installation retains five audit vulnerabilities and allowScripts/deprecation warnings; no audit all-clear is claimed."
+    },
+    {
+      "number": 8,
+      "group": "G2",
+      "status": "PASS",
+      "codeAndConsumers": [
+        "mikro/src/llm.ts:407-425,555-610,740-865",
+        "mikro/src/sdk/rlm-driver.ts:190-418",
+        "mikro/src/sdk/agent.ts:375-610",
+        "mikro/src/repl.ts:629-755",
+        "mikro/python/llm_bridge.py:58-110",
+        "mikro/src/rlm.ts:1000-1090,1253-1283",
+        "mikro/src/mcp/backends/legacy.ts:110-154",
+        "mikro/src/mcp/server.ts:973-998",
+        "scripts/mikro/call.ts:44-90",
+        "mikro/tests/llm-completion.test.ts:76-220",
+        "mikro/tests/backend-contract.test.ts"
+      ],
+      "evidence": "Current compiled child failure→real Python→RLM→MCP→unchanged Genie parser proof reaches the three-empty-root terminal: isError:true; observed44in/7out and unrounded5.799999999999999e-5 subtotal; full totals null and parseFooter null. Complete55in/14out control remains priced and parser-compatible. Source propagates usageComplete:false from the empty branch to Legacy and partial formatter. Provider length/error/aborted and auth/control/redaction cases are also exercised by current full owner suite.",
+      "limitation": "Reported subtotals are SDK nominal estimates, not complete provider invoices. Conservative false-only coverage remains intentional after a failed child, including repaired answers; no historical totals are reconstructed."
+    },
+    {
+      "number": 9,
+      "group": "G2",
+      "status": "PASS",
+      "codeAndConsumers": [
+        "mikro/src/llm.ts",
+        "mikro/src/mcp/backends/pi.ts:113-139",
+        "mikro/src/sdk/rlm-driver.ts:190-418",
+        "scripts/mikro/call.ts:1190-1500",
+        "mikro/tests/llm-completion.test.ts:121-146"
+      ],
+      "evidence": "Default transport maxRetries3 and explicit0 are preserved with nullish rather than truthy defaulting; real local429 owner fixture observes four attempts at default and one additional rejected attempt with zero. MCP/caller/Pi stream options forward the selected control. Pi's separate automatic retry/compaction layers are disabled.",
+      "limitation": "SDK transport attempts constitute one logical reported model call; undisclosed transport billing is not claimed measured. Existing caller validation attempts remain distinct retained records."
+    },
+    {
+      "number": 10,
+      "group": "G3",
+      "status": "PASS",
+      "codeAndConsumers": [
+        "mikro/src/parser.ts:10-15,60-86",
+        "mikro/src/rlm.ts:1000-1090,1090-1230",
+        "mikro/python/repl_server.py",
+        "mikro/tests/parser.test.ts",
+        "mikro/tests/rlm-stop-protocol.test.ts",
+        "E/WAVE3-LIVE-VERIFICATION.json:1549-1572"
+      ],
+      "evidence": "Parser discriminates safe identifiers, quoted literals and invalid/ellipsis values; RLM resolves identifier values through the REPL without eval of arbitrary expressions and sends missing/invalid final feedback through normal allowed turns. Actual Python public-entry evidence distinguishes FINAL(answer) variable from quoted literal; current compiled tests cover repair/failure cases.",
+      "limitation": "Literal expression text is not Python evaluation. No out-of-cap extra repair completion is authorized."
+    },
+    {
+      "number": 11,
+      "group": "G3",
+      "status": "PASS",
+      "codeAndConsumers": [
+        "mikro/src/repl.ts:310-451,451-490,629-755",
+        "mikro/src/rlm.ts:1050-1230",
+        "mikro/tests/repl-tool-bridge.test.ts",
+        "mikro/tests/rlm-stop-protocol.test.ts",
+        "E/WAVE3-LIVE-VERIFICATION.json:1549-1572"
+      ],
+      "evidence": "Real Python recovery receipt records typed timeout, namespace lost, original context/tools restored, one side effect, successful next turn and double-stop cleanup. Generation is retired synchronously, pending work rejected, old child exited, bridge handlers check generation/abort before sending. Current compiled owners exercise stale/caught/batched/cancel paths and failure handling.",
+      "limitation": "Continuation is only within remaining permitted turns/deadline and restores initial state, not arbitrary user variables. No replay or broad new retry policy is introduced."
+    },
+    {
+      "number": 12,
+      "group": "G3",
+      "status": "PASS",
+      "codeAndConsumers": [
+        "mikro/src/rlm.ts:920-1000,1230-1320",
+        "mikro/src/sdk/rlm-driver.ts:190-418",
+        "mikro/tests/validate-loop.test.ts",
+        "mikro/tests/rlm-stop-protocol.test.ts",
+        "mikro/tests/backend-contract.test.ts",
+        "E/G8-RECEIPT3-SDK-COVERAGE-DIAGNOSIS.json"
+      ],
+      "evidence": "Finalization and schema feedback share the normal bounded turn loop; exhaustion without accepted final throws RLMRunError with retained known usage and no extra forced-final completion. Current full compiled validation/stop/budget tests and actual cap/final receipts preserve once-only failures and model-turn counts. Three-empty terminal remains a truthful designed failure.",
+      "limitation": "Historical capped paid runs remain failed with partial/unknown totals; fresh source checks do not rescore them or prove historical full billing."
+    },
+    {
+      "number": 13,
+      "group": "G4",
+      "status": "PASS",
+      "codeAndConsumers": [
+        "mikro/src/mcp/server.ts:879-895",
+        "mikro/src/sdk/agent-spec.ts",
+        "mikro/src/mcp/agents.ts",
+        "scripts/mikro/call.ts",
+        " .claude/workflows/wish.js:862-866",
+        "mikro/tests/mcp-agents.test.ts",
+        "mikro/tests/sdk-agent-spec.test.ts",
+        "mikro/tests/backend-contract.test.ts"
+      ],
+      "evidence": "Explicit rlm/pi/prime/prime-sdk dispatch, call→agent→RLM precedence and generic-query behavior are preserved. Empty/nonstring/unknown values and obsolete backend controls are rejected before inference. Actual repository callers forward engine, not a task-shape heuristic.",
+      "limitation": "Prime paths are preserved, not repinned or compared. Actual caller discovery degradation does not grant a legacy alias."
+    },
+    {
+      "number": 14,
+      "group": "G4",
+      "status": "PASS",
+      "codeAndConsumers": [
+        "mikro/src/mcp/backends/pi.ts:87-142",
+        "mikro/src/mcp/backends/pi-tools.ts:1-275",
+        "mikro/tests/pi-backend.test.ts",
+        "E/HISTORICAL435BOUNDARY-PROOF.json:641-704",
+        "E/CURRENTWHOLE-MIKRO-INSTALL-GATE.json"
+      ],
+      "evidence": "Fresh ModelRuntime plus in-memory session/settings and fixed ResourceLoader prevent ambient discovery. Only scoped read/grep/glob/git/emit_done execute. Tool implementations use realpath containment, disable Git external diff/textconv/fsmonitor/pager/hooks/config injection and reject out-of-root/symlink/mutation paths. Current full SDK owners include real dispatch/adversarial checks.",
+      "limitation": "Hermetic scope does not permit arbitrary declared plugins. Historical real-file proof is retained as history; current complete owner outputs and current code establish final-source coverage."
+    },
+    {
+      "number": 15,
+      "group": "G4",
+      "status": "PASS",
+      "codeAndConsumers": [
+        "mikro/src/mcp/backends/pi.ts:76-214",
+        "mikro/tests/pi-backend.test.ts",
+        "E/HISTORICAL435BOUNDARY-PROOF.json:641-704",
+        "E/CURRENTBOUNDARY-PROOF.json:171-187",
+        "E/CURRENTWHOLE-MIKRO-INSTALL-GATE.json"
+      ],
+      "evidence": "Original model arguments are checked against both output and VALIDATE schemas before emit_done executes. First accepted final cannot be replaced. beforeToolCall now denies all later tools after acceptance, as well as failure/cancel/budget. Real SDK owner observes an initial file open with zero additional post-final opens. finishTurn stops within limits; provider failures/usage and finally abort/dispose are retained.",
+      "limitation": "Progress labels alone do not prove tool-body execution; actual open observer and complete compiled tests provide that proof. Historical435 counts are not current gate totals."
+    },
+    {
+      "number": 16,
+      "group": "G4",
+      "status": "PASS",
+      "codeAndConsumers": [
+        "mikro/src/mcp/server.ts:740-1010",
+        "mikro/src/mcp/backend.ts",
+        "mikro/src/mcp/backends/legacy.ts:110-154",
+        "mikro/src/mcp/backends/pi.ts:142-214",
+        "scripts/mikro/call.ts:44-90,1190-1500",
+        "mikro/tests/backend-contract.test.ts"
+      ],
+      "evidence": "Both engines preserve answer/session_id envelope, history/progress/heartbeat and failure routing. Complete footer stays numeric and compatible; partial footer deliberately cannot match the unchanged numeric parser, so known subtotals cannot masquerade as a complete bill. Actual current stdio and Genie parser negative/positive controls close that consumer boundary.",
+      "limitation": "Partial usage is not appended as a fully measured report or silently treated as zero. Supported optional cancellation reaches the active backends."
+    },
+    {
+      "number": 17,
+      "group": "G5",
+      "status": "PASS",
+      "codeAndConsumers": [
+        "scripts/mikro/call.ts:1190-1500",
+        "scripts/mikro/bench.ts:190-390",
+        " .claude/workflows/wish.js:195-208,862-866,2115-2167",
+        "scripts/wish-workflow-behavior.test.ts:1204-1241",
+        "E/G8-RECEIPT3-NATIVE-18-COMPLETE.json"
+      ],
+      "evidence": "Call/bench pass actual engine arguments; saved wish embeds offloadEngine in both scout and review prompts, offload=false omits both actual offloads while native stages remain, omission keeps RLM and invalid controls refuse before stages. Genuine native runs retain the treatments and native Flash route evidence.",
+      "limitation": "Treatment forwarding is proven; it does not establish complete offload accounting or business-success parity for those eighteen runs."
+    },
+    {
+      "number": 18,
+      "group": "G5",
+      "status": "PASS",
+      "codeAndConsumers": [
+        "scripts/mikro/call.ts:120-428,1430-1500",
+        "scripts/mikro/trusted-source.ts",
+        "scripts/mikro/trusted-source.adversarial.test.ts",
+        "scripts/mikro/call.test.ts"
+      ],
+      "evidence": "Only top-level plan.files NEW entries receive proposal-specific missing-path treatment; ordinary citations still require tracked existing files and real lines. Proposal ancestor and realpath containment checks reject ignored/untracked existing objects, traversal/symlink escapes. Dual NEW/ordinary missing-path and evidence-dedup cases are covered by current root owner suite and retained actual verifier proofs.",
+      "limitation": "NEW is proposal authorization, never evidence that an implementation already exists or that an ordinary citation is valid."
+    },
+    {
+      "number": 19,
+      "group": "G5",
+      "status": "PASS",
+      "codeAndConsumers": [
+        "scripts/mikro/fixtures-from-commits.ts:1-320",
+        "scripts/mikro/bench.ts:190-330",
+        "scripts/mikro/score.ts:1-160",
+        "scripts/mikro/fixtures-from-commits.test.ts",
+        "scripts/mikro/score.test.ts",
+        "E/G5-CORRECTNESS-REPAIR3-ALIAS-PROGRAM-SMOKE.json"
+      ],
+      "evidence": "Fixture generator derives source/parent/evaluation provenance and added paths mechanically. Bench runs a parent-tree checkout, installs only the validated runtime overlay, restores it afterward and scores files/NEW/citations independently. Failed attempts do not inherit prior answers/scores. Actual alias smoke reaches real execution boundary, observes NEW truth and cleanup and refuses configuration symlinks.",
+      "limitation": "Alias smoke intentionally stops before inference; it is not credited as a model-answer or ledger-serialization proof. Historical paid parent-tree runs retain their original identities."
+    },
+    {
+      "number": 20,
+      "group": "G5",
+      "status": "PASS",
+      "codeAndConsumers": [
+        " .mikro/mikro.yaml",
+        " .mikro/agents/wish-context/agent.yaml",
+        " .mikro/agents/review-prep/agent.yaml",
+        "mikro/src/mcp/server.ts",
+        "E/WAVE3-LIVE-VERIFICATION.json",
+        "E/JUICE-CONFIGURED-LIVE-VERIFICATION.json",
+        "E/CURRENTPRESERVATION.json"
+      ],
+      "evidence": "Active repository defaults use built-in DeepSeek Flash and obsolete root deepseek-api/Pro configuration is absent. Actual compiled generic no-model-override evidence resolves/calls repository Flash; owning defaults tests pass. Immutable old baseline artifacts and recorded operator settings/auth references are preserved.",
+      "limitation": "Recorded operator subset preservation is not complete original Genie preservation; row5 stays BLOCKED. No prohibited Pro/Claude call is credited."
+    },
+    {
+      "number": 21,
+      "group": "G6",
+      "status": "PASS",
+      "codeAndConsumers": [
+        "mikro/src/juice.ts:34-100,136-175",
+        "mikro/src/cli.ts:1046-1200",
+        "mikro/tests/juice.test.ts",
+        "E/WAVE3-LIVE-VERIFICATION.json:53-112"
+      ],
+      "evidence": "Explicit CPA provisioning uses a supported additive PATCH and reference-only credentials. Actual receipt records distinct assigned Genie/brain keys, count15→17 with all preexisting keys retained, directory0700/files0600 and key files outside repositories. Failure before required directory creation is retained; successful explicit provisioning follows with no secret printed.",
+      "limitation": "This proves the named provisioning/key boundary and recorded unrelated keys, not the absent complete original Genie auth/key inventory under row5."
+    },
+    {
+      "number": 22,
+      "group": "G6",
+      "status": "PASS",
+      "codeAndConsumers": [
+        "mikro/src/juice.ts:82-100,167-217",
+        "mikro/src/llm.ts",
+        "mikro/src/custom-providers.ts",
+        "mikro/tests/llm-completion.test.ts:167-199",
+        "E/JUICE-CONFIGURED-LIVE-VERIFICATION.json",
+        "E/WAVE3-LIVE-VERIFICATION.json:77-112"
+      ],
+      "evidence": "Each project authenticates its catalog and actual explicit Flash inference using its referenced private key. Equal provider IDs in concurrent configurations stay in fresh invocation ModelRuntime instances rather than mutating global auth. Advertised exact model/provenance is retained; real configured project calls return expected readiness text and measured token usage.",
+      "limitation": "SDK nominal rates/quotes are not project gateway invoices or proof of cost completeness. No invented provider/model alias or global credential mutation is required."
+    },
+    {
+      "number": 23,
+      "group": "G6",
+      "status": "PASS",
+      "codeAndConsumers": [
+        "mikro/src/juice.ts:220-343",
+        "mikro/src/cli.ts:1046-1200",
+        "mikro/tests/juice.test.ts",
+        "E/WAVE3-LIVE-VERIFICATION.json:305-1487"
+      ],
+      "evidence": "Actual authorized manual aggregate snapshots for both projects retain endpoint/query/project/key epoch/returned range/timezone/fetch-time/hash. Viewer cookie stays in memory and logout executes in finally. Sanitization removes credentials/body fields; unsupported costs/latencies remain null. Capabilities distinguish aggregate access from unavailable request/payload export; aggregate spend is not fed into runtime billing.",
+      "limitation": "Logout attribution consists of the observed successful CLI return plus its finally consumer path, not an independent server-side logout audit. Snapshot hashes are sanitized-content provenance, not raw invoice proof."
+    },
+    {
+      "number": 24,
+      "group": "G7",
+      "status": "PASS",
+      "codeAndConsumers": [
+        "mikro/src/jev.ts:153-227",
+        "mikro/src/cli.ts:1046-1200",
+        "mikro/tests/jev.test.ts",
+        "E/WAVE3-LIVE-VERIFICATION.json:1489-1511"
+      ],
+      "evidence": "Actual configured compiled CLI performs exactly one explicit request to https://api.typesafe.ai/v1/systemone with requested jev-1.13.0 and TYPESAFE_API_KEY reference. The wire envelope is {state,model,questions}; bounded source-linked Choice candidates include abstain, optional Noul/Score stay in the same request; redirects error and no retry loop exists.",
+      "limitation": "The real call is the authorized public endpoint and public README source, not local-service or Keeper-body execution. No new reviewer request was performed."
+    },
+    {
+      "number": 25,
+      "group": "G7",
+      "status": "PASS",
+      "codeAndConsumers": [
+        "mikro/src/jev.ts:75-151,228-252",
+        "mikro/tests/jev.test.ts",
+        "E/WAVE3-LIVE-VERIFICATION.json:1489-1548"
+      ],
+      "evidence": "Real observed response is jev-1.13.0 Choice rlm-definition, probabilities0.84/0.16, confidence0.69 and usage393input/37output. Source snapshot content hash300833bc241f16ac40ef83d6d06937f8ce284e755e2bb8e88d4df220530a7767, public README span and exact local candidate are preserved. Response validation rejects wrong model/types/distribution/usage and maps abstention explicitly.",
+      "limitation": "Do not repeat the old expired-AWS-SSO description as a present JEV blocker: sanctioned configured execution succeeded. Query/range/timezone are not invented for this README-only source."
+    },
+    {
+      "number": 26,
+      "group": "G7",
+      "status": "PASS",
+      "codeAndConsumers": [
+        "mikro/src/cli.ts:1046-1203",
+        "mikro/src/jev.ts:153-252",
+        "mikro/src/rlm.ts",
+        "mikro/src/mcp/server.ts",
+        " .claude/workflows/wish.js",
+        "E/CURRENTBOUNDARY-PROOF.json",
+        "E/G8-RECEIPT3-ENGINE-108-COMPLETE.json"
+      ],
+      "evidence": "JEV/Juice commands dispatch only from explicit manual CLI actions; ordinary runtime/MCP/workflow paths do not invoke extraction. Current repair diagnostics record zero JEV/external inference and paid records preserve actual runtime calls without extra instrumentation inference.",
+      "limitation": "Explicit prior manual JEV call is separately recorded, not falsely counted as an ordinary-run model call."
+    },
+    {
+      "number": 27,
+      "group": "G8 actual surfaces",
+      "status": "PASS",
+      "scope": "Named compiled/installed source-feature boundaries, not comparison completion",
+      "codeAndConsumers": [
+        "E/CURRENTBOUNDARY-PROOF.json",
+        "E/HISTORICAL435BOUNDARY-PROOF.json:579-704",
+        "E/WAVE3-LIVE-VERIFICATION.json",
+        "E/JUICE-CONFIGURED-LIVE-VERIFICATION.json",
+        "E/G5-CORRECTNESS-REPAIR3-ALIAS-PROGRAM-SMOKE.json",
+        "E/CURRENTWHOLE-MIKRO-INSTALL-GATE.json",
+        "E/CURRENTWHOLE-GENIE-GATE.json"
+      ],
+      "evidence": "Read actual original failure and current repair evidence: real local provider/Node/Python/RLM/MCP/unchanged parser terminal behavior; actual SDK Pi final/tool observer; real Python timeout; generic Flash query; actual fixture/verifier/alias CLI; configured Juice/JEV and isolated installed CLI update. Final candidate complete builds/gates include current owners and generated artifacts.",
+      "limitation": "Historical paid calls and WAVE3 integrations are reusable evidence of their recorded surfaces, not newly executed final-candidate paid comparisons. Missing original preservation and comparison accounting remain separately BLOCKED. Owning563 command names historical llm-finish-reason artifact; final manifest and full current Node gate contain renamed llm-completion source/generated owner, so the full current gate, not that filename alone, provides final-source coverage."
+    },
+    {
+      "number": 28,
+      "group": "G8 freeze",
+      "status": "PASS",
+      "codeAndConsumers": [
+        "scripts/mikro/engine-experiment.ts:291-385,394-429,655-678",
+        "E/FROZEN-FIXTURES.json",
+        "E/G8-RECEIPT3-ENGINE-INPUT-FREEZE.json:1-79",
+        "E/G8-RECEIPT3-ENGINE-108-COMPLETE.json"
+      ],
+      "evidence": "Original four fixture identities and explicit arms remain bound; receipt3 freeze distinguishes36 Flash and72 separately available curated cells, three repetitions, concurrency1, profile/runtime/launcher/pricing/prompt and independent parent-tree seals. It records owner-authorized preservation of the original defective cohort and a distinct complete pre-outcome replacement freeze; cells are not selectively resampled.",
+      "limitation": "This is the historical pre-outcome paid identity, not a new freeze of current source. No regrade/refreeze/rerun is authorized or performed here; current source repairs do not alter historical treatment bytes."
+    },
+    {
+      "number": 29,
+      "group": "G8 run coverage",
+      "status": "PASS",
+      "scope": "Execution and retention only",
+      "codeAndConsumers": [
+        "scripts/mikro/engine-experiment.ts:739-907,1262-1403",
+        "E/G8-RECEIPT3-ENGINE-108-COMPLETE.json",
+        "E/G8-RECEIPT3-ENGINE-INPUT-FREEZE.json",
+        "E/G8-RECEIPT3-FINAL-PAIRED-REPORT.json"
+      ],
+      "evidence": "Retained completed cohort has108 exact frozen logical records:36 required Flash plus72 separately frozen available curated candidate records, with every attempt/failure/unknown retained. The canonical scored-cohort hash is b4bd38ee49eb678406a18d72f436144f3e435f8812ca80d1d84148e2f1bb8728. No survivor filtering or selectively repaired rerun is credited.",
+      "limitation": "All108 executed does not mean108 successful or complete accounting: seven logical records have incomplete SDK nominal totals. Criteria30/33 and comparison verdict remain BLOCKED."
+    },
+    {
+      "number": 30,
+      "group": "G8 statistics and selection",
+      "status": "BLOCKED",
+      "codeAndConsumers": [
+        "scripts/mikro/engine-experiment.ts:908-1033,1085-1203",
+        "E/G8-RECEIPT3-FINAL-PAIRED-REPORT.json:1-67",
+        "E/G8-RECEIPT3-SDK-COVERAGE-DIAGNOSIS.json",
+        "E/G8-RECEIPT3-NATIVE-OBSERVATIONS.json:645-650"
+      ],
+      "evidence": "Report preserves attempts, separate cell/group metrics, latency/cost coverage and unknown totals; final report exits1, complete:false, parity:false, recommendation:null and selection 'no recommendation: native comparison incomplete'. Seven exact engine accounting blockers plus three native offload accounting gaps are enumerated rather than replaced by zeros.",
+      "limitation": "Required complete accounting and native nonregression inputs are unavailable. Three fixed-order repetitions, frozen environment failures, genuine refusals and pr-open without verified business success prevent a broad speed/cost or SHIP recommendation. Current source repair cannot retrospectively measure historical missing usage."
+    },
+    {
+      "number": 31,
+      "group": "G8 native identity",
+      "status": "PASS",
+      "scope": "Actual workflow/native identity and own-suffix observation",
+      "codeAndConsumers": [
+        " .genie/wishes/mikro-engine-split/experiments/native-workflow-observer.mjs",
+        " .genie/wishes/mikro-engine-split/experiments/native-session-accounting.mjs:1-96",
+        "E/G8-RECEIPT3-ENGINE-INPUT-FREEZE.json",
+        "E/G8-RECEIPT3-NATIVE-18-COMPLETE.json:1-29,130-809",
+        "E/G8-RECEIPT3-NATIVE-OBSERVATIONS.json"
+      ],
+      "evidence": "Unscored actual loader/non-Claude smoke and observer precede the scored native jobs. All18 retain real unique workflow run IDs/parent sessions, saved wish procedure, durable native seq/child/turn/tool/lifecycle evidence. Accounting explicitly cuts inherited session prefix, excludes seed marker from billing and requires persisted turn/served-route evidence rather than synthetic journal totals.",
+      "limitation": "PASS is native identity/ownership evidence, not complete joined offload accounting. Exact three incomplete cells fail offload reconciliation/usage proof under criterion33; generic report text about native identity/coverage is not treated as evidence that all workflow IDs are synthetic."
+    },
+    {
+      "number": 32,
+      "group": "G8 native execution coverage",
+      "status": "PASS",
+      "scope": "Genuine execution, isolation and retained outcomes",
+      "codeAndConsumers": [
+        " .claude/workflows/wish.js",
+        " .genie/wishes/mikro-engine-split/experiments/native-workflow-observer.mjs",
+        "E/G8-RECEIPT3-ENGINE-INPUT-FREEZE.json:73-79",
+        "E/G8-RECEIPT3-NATIVE-18-COMPLETE.json:1-29,130-809"
+      ],
+      "evidence": "Same original18 ordered cells/arguments/treatments run the genuine saved procedure over independent repository/common-directory/state roots: two objectives×rlm/pi/off×three. Real native served routes are Flash, not Pro/Claude. All refusals/missed/Repair/pr-open outcomes and repair counts remain recorded; run job exits2 because comparison/accounting is incomplete, not because absent runs were declared complete.",
+      "limitation": "No native adoption/SHIP is inferred: businessOk remains false for the retained outcomes, including two pr-open results. Execution coverage is distinct from success parity and full accounting."
+    },
+    {
+      "number": 33,
+      "group": "G8 full accounting",
+      "status": "BLOCKED",
+      "codeAndConsumers": [
+        " .genie/wishes/mikro-engine-split/experiments/native-session-accounting.mjs:1-96,183-243",
+        "scripts/mikro/engine-experiment.ts:739-907,1037-1095",
+        "src/term-commands/wish.ts:24-34,112-158",
+        "src/lib/metrics-capture.ts:74-112",
+        "src/lib/metrics-export.ts:86-170",
+        "E/G8-RECEIPT3-NATIVE-18-COMPLETE.json:252-256,331-335,559-563",
+        "E/G8-RECEIPT3-FINAL-PAIRED-REPORT.json"
+      ],
+      "evidence": "Fifteen native runs have complete reconciled accounting. g8-genie-existing-offload-pi-r1/r3 have caller-attempt versus actual-SDK one-to-one mismatches. g8-brain-existing-offload-rlm-r3 has incomplete SDK usage/cost for101d0e9a-d0b6-4b3a-a985-0b8a796e8119 and49b0da77-b88f-4d3b-80cf-644bdb032818. Projection correctly refuses complete report output. Seven engine totals also remain incomplete. No partial canonical wish-report append or Keeper double charge is evidenced.",
+      "limitation": "Actual18 outcomes cannot supply missing historical offload calls/totals. Fully measured top-level compatible accounting, full workflow comparison and once-only complete append are not established. Incoming authorized metrics pricing/capture/export changes are real upstream behavior, not a license to retrofit the immutable cohort."
+    },
+    {
+      "number": 34,
+      "group": "G9 coherence",
+      "status": "PASS",
+      "codeAndConsumers": [
+        "mikro/CHANGELOG.md",
+        "mikro/README.md",
+        "scripts/mikro/README.md",
+        " .claude/rules/skills-installer.md",
+        " .claude/rules/release-pipeline.md",
+        "README.md",
+        "CLAUDE.md",
+        "mikro/src/ipc.ts",
+        "mikro/dist/src/ipc.d.ts",
+        "mikro/src/output.ts",
+        "mikro/dist/src/output.d.ts",
+        "E/CURRENTDOCS-GATE.json",
+        "E/CURRENTFINAL-CANDIDATE-MANIFEST.json"
+      ],
+      "evidence": "Docs/changelogs describe engine cutover, manual operations, partial coverage and authorized shipped/proven-archive retirement. Current manifest includes rebuilt SDK and root distribution and explicit obsolete-test absences. Durable experiment/proof artifacts remain while throwaway probes are removed. Hydrated exactEA docs root and physical retired-term search are attributable.",
+      "limitation": "Markdown checker prints linting4 but summary0files/0issues: not proof all four files were analyzed.44 link entries include configured ignored URLs, not44 independently verified live links. Generated owning filename rename is accounted for by final manifest/full gate rather than blindly crediting historical command text."
+    },
+    {
+      "number": 35,
+      "group": "G9 aggregate/install/release gates",
+      "status": "PASS",
+      "scope": "Current required aggregate/install/release surfaces represented by coordinator receipts",
+      "codeAndConsumers": [
+        "E/CURRENTWHOLE-GENIE-GATE.json",
+        "E/CURRENTWHOLE-MIKRO-INSTALL-GATE.json",
+        "E/CURRENTFOUR-RELEASE-PAYLOADS.json",
+        "E/CURRENTSUPPLEMENTAL-GATE.json",
+        "E/CURRENTDOCS-GATE.json",
+        " .github/workflows/mikro-ci.yml:1-39",
+        "scripts/build-binary.sh",
+        "scripts/release-payload-version.ts"
+      ],
+      "evidence": "Fresh frozen root install and full bun run check exit0 with3294pass/2skip/0fail,19664assertions,3296tests/158files. Fresh npm deps:ci/build/check/full Node plus isolated standalone update exit0 with1244pass/0fail/218suites/0skip/cancel/todo. Four newly built/stamped/extracted releases pass payload/mode/version/no-Mikro/no-link/no-test/root0700/size checks; glibc and musl binaries actually return6.261009.1. Standalone loader50/0; unchanged full V5 lifecycle succeeds in hermetic real Docker environment.",
+      "limitation": "Retain stock-host supplemental exit1 on new matchingPID2660981 with attributionUNKNOWN, and unprivileged namespace denial; do not claim the host run green. Docker changes environment, not oracle/stages/timeout, and establishes isolated lifecycle behavior, not host attribution. Existing root live skips are not live-provider proof; ARM/Mach releases are compile/stage/extract/hash-only, not executed. npm vulnerabilities and doctor/Knip warnings remain. No checks executed by reviewer."
+    },
+    {
+      "number": 36,
+      "group": "G9 independent final reviews",
+      "status": "BLOCKED",
+      "codeAndConsumers": [
+        "E/CURRENTFROZEN-CONTRACT.json",
+        "E/CURRENTFINAL-CANDIDATE-MANIFEST.json:14970-15016",
+        "E/HISTORICAL435FINAL-CORRECTNESS.json",
+        "E/HISTORICAL435FINAL-QUALITY.json",
+        "E/CURRENTBOUNDARY-PROOF.json",
+        "E/CURRENTPUBLICATION.json:1-5"
+      ],
+      "evidence": "This full40 review reassesses current consumer closures at7241a0a39; prior435 SOURCE FIX-FIRST empty-terminal verdicts and owner-authorized G1C5/B5Q6/cap6, G2C6/B6Q5/cap5 and unchanged G4C3/B3Q3/cap3 dispositions are retained. Reproduced G1 shared/proven root, child-terminal and Pi post-final bugs are addressed and current gates refreshed.",
+      "limitation": "Separate current original22 security/maintainability/performance quality review is not available as a completed result here. This reviewer cannot certify its own separate quality counterpart or infer both SHIP from historical verdicts. Main coordinator must combine the independent current results."
+    },
+    {
+      "number": 37,
+      "group": "G9 remote delivery",
+      "status": "BLOCKED",
+      "codeAndConsumers": [
+        "E/CURRENTPUBLICATION.json:1-18",
+        "E/CURRENTLIVE-BASE-INTEGRATION.json:1-18,334-349",
+        "E/CURRENTFINAL-CONTINUITY.json",
+        " .genie/wishes/mikro-engine-split/WISH.md"
+      ],
+      "evidence": "Current source is a manifested uncommitted private candidate composed with devfa846. Publication receipt explicitly WAITING_FOR_BOTH_CURRENT_ORIGINAL_MATRIX_SOURCE_SHIP. PR3139 remains old published553; normal-hook exact source commit/current-dev graph merge, approved own force-with-lease and new-head remote CI/mergeability/readback are pending. Local historical merge-tree is not remote proof.",
+      "limitation": "No final source commit/push/live current-head green CI or merge readiness has been observed. Old red Socket/Darwin/commitlint and inbound pricing thread are old-head evidence, not current-byte proof or automatic resolution. No merge/main/production install is authorized by this verdict."
+    },
+    {
+      "number": 38,
+      "group": "G8/G9 blocker disclosure",
+      "status": "PASS",
+      "scope": "Honest disclosure, not successful execution/accounting",
+      "codeAndConsumers": [
+        "E/CURRENTPRESERVATION.json",
+        "E/G8-RECEIPT3-SDK-COVERAGE-DIAGNOSIS.json",
+        "E/G8-RECEIPT3-NATIVE-18-COMPLETE.json",
+        "E/G8-RECEIPT3-FINAL-PAIRED-REPORT.json",
+        "E/CURRENTSUPPLEMENTAL-GATE.json",
+        "E/CURRENTPUBLICATION.json"
+      ],
+      "evidence": "Exact missing original-before inventory, seven engine-total gaps, three native offload reconciliation/usage gaps, stock-host unknown process attribution/namespace denial and pending current independent-quality/publication/remote readback are named and real partial outputs retained. Actual configured JEV success replaces the stale expired-SSO blocker; it is not silently unexercised. Source adapters and current actual required local proof are supplied without authorized-cohort changes.",
+      "limitation": "Missing historical-before/accounting evidence cannot be repaired by present file reads or inventing usage. Current paid inference/resampling/refreeze/regrade/admin access is not authorized. Disclosure does not pass criteria5/30/33/36/37 or waive full wish requirements."
+    },
+    {
+      "number": 39,
+      "group": "G8/G9 separate verdicts",
+      "status": "PASS",
+      "scope": "Disposition separation",
+      "codeAndConsumers": [
+        "E/G8-RECEIPT3-FINAL-PAIRED-REPORT.json",
+        "E/CURRENTPRESERVATION.json",
+        "E/CURRENTPUBLICATION.json",
+        "local://mikro-shipped-archive-terminal-563-final-review-brief.md"
+      ],
+      "evidence": "Bounded inspected-source quality is SHIP with no confirmed current source defect. Full original source/feature acceptance is BLOCKED, not unconditionally SHIP, because complete preservation and paired independent acceptance remain unavailable. Comparison, wholeWish and delivery are separately BLOCKED. Actual configured JEV proof is present; it is not the current blocker.",
+      "limitation": "The favorable sourceQualityVerdict is a source-only independent assessment, not the original row39 unconditional source/feature or whole-delivery SHIP. It cannot authorize a whole-scope green publication, adoption, merge or paid comparison claim."
+    },
+    {
+      "number": 40,
+      "group": "G8/G9 aggregate triggers",
+      "status": "PASS",
+      "scope": "Correct trigger application",
+      "codeAndConsumers": [
+        "E/CURRENTBOUNDARY-PROOF.json",
+        "E/CURRENTWHOLE-GENIE-GATE.json",
+        "E/CURRENTWHOLE-MIKRO-INSTALL-GATE.json",
+        "E/CURRENTPRESERVATION.json",
+        "E/G8-RECEIPT3-FINAL-PAIRED-REPORT.json",
+        "E/CURRENTPUBLICATION.json"
+      ],
+      "evidence": "No current patch-introduced blocking implementation defect is confirmed after full source/consumer review and attributable current boundaries. Unknown host-process attribution is not fabricated into a source bug or erased. Exact required missing original-preservation/accounting/review/remote evidence drives wider BLOCKED verdicts; current source and historical defective cohorts are not conflated.",
+      "limitation": "Any source/runtime/configuration/fixture/manifest identity change invalidates affected source/gate verdicts until reassessed. No whole-wish completion is asserted."
+    }
+  ],
+  "sourceQualityVerdict": "SHIP",
+  "sourceQualityVerdictScope": "Bounded whole G1–G9 inspected-source/consumer correctness assessment of manifested7241a0a39, using current attributable compiled/installed/full-gate evidence. No confirmed current source defect. This is not unconditional original-matrix source/feature acceptance or permission to claim all G1–G9 complete.",
+  "sourceFeatureAcceptanceVerdict": "BLOCKED",
+  "featureRuntimeVerdict": {
+    "verdict": "BLOCKED",
+    "reason": "Named local compiled/installed/provider/Python/Pi/generic-query/fixture/Juice/JEV surfaces are evidenced, but complete original preservation, complete integrated accounting/nonregression and joint final independent acceptance are not established.",
+    "namedRuntimeSurfaceAssessment": "PASS",
+    "unverified": "Complete original matrix feature/runtime acceptance, not the successful manual JEV call."
+  },
+  "comparisonVerdict": {
+    "verdict": "BLOCKED",
+    "engineRunsExecuted": 108,
+    "flashRunsExecuted": 36,
+    "curatedRunsExecuted": 72,
+    "nativeRunsExecuted": 18,
+    "nativeCompleteAccountingRuns": 15,
+    "engineIncompleteAccountingLogicalRuns": 7,
+    "parity": false,
+    "recommendation": null,
+    "reason": "Immutable seven engine full-total gaps and three native offload reconciliation/usage gaps remain; actual outcomes are retained and insufficient/confounded. Complete execution is not complete accounting or verified workflow-success parity."
+  },
+  "wholeWishVerdict": {
+    "verdict": "BLOCKED",
+    "blockingCriteria": [
+      5,
+      30,
+      33,
+      36,
+      37
+    ],
+    "reason": "Original whole-preservation-before scope remains missing; complete comparison accounting, paired current final review and current exact dev-PR delivery proof are unavailable. Source-only favorable review cannot satisfy the frozen whole wish."
+  },
+  "deliveryVerdict": {
+    "verdict": "BLOCKED",
+    "pr": 3139,
+    "lastPublishedHead": "553eebab32c33a667a7c96634c4b7f488a223fcc",
+    "candidatePublished": false,
+    "reason": "Final normal-hook exact candidate/source-ancestry/dev-graph correspondence and current-head remote CI/mergeability/readback are pending after both independent current SOURCE reviews.",
+    "authorizationLimits": "Only owner-approved own-branch force-with-lease against553 is contemplated; no merge/main promotion, production installation, foreign history rewrite or paid rerun is authorized."
+  },
+  "confirmedFindings": [],
+  "historicalBlockingDefectDispositions": [
+    {
+      "group": "G1",
+      "criterion": 6,
+      "status": "Closed in current inspected source/attributable evidence",
+      "path": "scripts/git-history-ownership.ts",
+      "lines": "70-104",
+      "consumer": "collectCatalog → generated legacy-skills catalog → classifyLegacySkillEntry",
+      "trigger": "Previously the mutable traversal stack consumed declared proof roots, and older ownership/ref approaches admitted foreign skills or erased legitimate shared/archive Genie authority.",
+      "impact": "Incorrect retirement ownership or loss of valid retirement evidence.",
+      "provenance": "CURRENTBOUNDARY-PROOF retains real owning RED33pass/3fail, final36pass/0fail200assertions, actual Git collector/classifier refusal controls and current40name/95description SUPERSET check. Current code copies proof roots before traversal and separates ownership from retirement eligibility."
+    },
+    {
+      "group": "G2",
+      "criteria": [
+        3,
+        8,
+        16
+      ],
+      "status": "Closed in current inspected source/attributable evidence",
+      "path": "mikro/src/rlm.ts",
+      "lines": "1253-1283",
+      "consumer": "RLMResult.usageComplete → LegacyMikroBackend → MCP partial formatter → unchanged Genie parseFooter",
+      "trigger": "Missing-usage child followed by three truly empty root responses previously returned the designed empty-terminal result without its coverage marker.",
+      "impact": "Known partial subtotal could be presented as complete numeric accounting.",
+      "provenance": "Current saved4600 MJS real compiled Node/Python/RLM/MCP/Genie parser boundary passes; partial44in7out/5.799999999999999e-5 subtotal/fullnull/parsernull and complete55in14out numeric control retained. Current source sets false-only marker on the empty branch."
+    },
+    {
+      "group": "G4",
+      "criterion": 15,
+      "status": "Closed in current inspected source/attributable evidence",
+      "path": "mikro/src/mcp/backends/pi.ts",
+      "lines": "183-198",
+      "consumer": "Installed SDK beforeToolCall admission preceding scoped tool execution",
+      "trigger": "A real tool batch accepted emit_done and then attempted an allowed read before turn completion.",
+      "impact": "Additional tool body work after accepted final.",
+      "provenance": "Historical435 actual file-work negative/positive controls and permanent passthrough open observer retained; final full current SDK suite reruns owner regression. Current beforeToolCall blocks all later work once answer is accepted."
+    }
+  ],
+  "hypothesesAndNonFindings": [
+    {
+      "subject": "Stock-host supplemental new process",
+      "classification": "Unresolved attribution, not a confirmed patch defect",
+      "evidence": "CURRENTSUPPLEMENTAL-GATE host exit1 reports new matchingPID2660981; process was already gone at inspection, attributionUNKNOWN. Full unchanged lifecycle later passes in isolated real Docker.",
+      "claimNotMade": "Neither source-caused process leak nor foreign-process explanation is proven."
+    },
+    {
+      "subject": "Inbound old553 unknown custom-pricing thread",
+      "classification": "Old-head evidence; no current patch-introduced defect confirmed",
+      "code": "mikro/src/custom-providers.ts, mikro/src/llm.ts, mikro/src/mcp/backends/pi.ts:110-112",
+      "reason": "Configuration-declared missing rates and zero-price conventions already exist in imported Mikro source; Pi explicitly refuses missing declared input/output pricing before inference. Did not turn pre-existing inbound behavior into a new current-patch finding or claim thread resolution without remote readback."
+    },
+    {
+      "subject": "Historical owning command name",
+      "classification": "Evidence attribution limitation, not a demonstrated stale shipped artifact",
+      "evidence": "CURRENTBOUNDARY-PROOF currentSdkOwning command names dist/tests/llm-finish-reason.test.js; final current manifest instead binds llm-completion source/generated artifacts and complete current Node gate executes them.",
+      "claimNotMade": "Did not credit the old filename alone as final-candidate proof or report a missing current source file as a production defect."
+    }
+  ],
+  "reusedCommandsAndResults": [
+    {
+      "evidence": "E/CURRENTWHOLE-GENIE-GATE.json",
+      "commands": [
+        "bun install --frozen-lockfile",
+        "flock /var/tmp/genie-full-check.lock bun run check"
+      ],
+      "result": "exit0;3294pass2skip0fail;3296tests158files19664assertions; full typecheck/Biome/Knip/skills/wishes/complexity/DSH chain",
+      "environment": "Receipt records isolated HOME/GENIE_HOME/XDG_CONFIG_HOME, TMPDIR outside fixture HOME, Git configuration isolation, preserved PATH and existing host lock.",
+      "limits": "Doctor complexity26 and three Knip hints retained; two fact live skips not live execution."
+    },
+    {
+      "evidence": "E/CURRENTWHOLE-MIKRO-INSTALL-GATE.json",
+      "commands": [
+        "npm run deps:ci",
+        "npm run check",
+        "npm run build",
+        "npm test",
+        "bash scripts/smoke-install-update.sh"
+      ],
+      "result": "exit0;1244pass0fail218suites0skip/cancel/todo; real isolated installed1.260907.1 dirty-refusal/forced-update/cleanup",
+      "limits": "921.55s wall includes lock wait; Node test212495.856ms.5audit vulnerabilities/allowScripts/deprecations retained. No production installation."
+    },
+    {
+      "evidence": "E/CURRENTBOUNDARY-PROOF.json",
+      "commands": [
+        "Actual saved4600 MJS compiled Node/real Python/RLM/MCP/Genie parser diagnostic",
+        "Actual standalone Git collector/catalog/retirement classifier proof",
+        "Owning SDK/authority suites recorded in receipt"
+      ],
+      "result": "Real partial/complete empty-terminal controls pass; source/self/stale/prefixed archive proof refuses; shipped/proven archive/shared Genie preserved; namespace/oracle setup failure retained separately; final authority36/0 and targeted SDK80/0 recorded.",
+      "limits": "No external model or JEV calls; targeted SDK command filename correspondence limitation retained; final complete current Node suite is authoritative current-source coverage."
+    },
+    {
+      "evidence": "E/CURRENTSUPPLEMENTAL-GATE.json",
+      "commands": [
+        "bun run --cwd plugins/dsh-workflow-loader test",
+        "V5_E2E_BUILD=1 bash tests/e2e/v5-lifecycle.sh",
+        "Recorded unshare prerequisite attempt",
+        "Recorded real hermetic Docker run of unchanged whole stock V5 script"
+      ],
+      "result": "Loader50pass0fail167assertions. Stock host lifecycle exit1 at process audit; unshare exit1 permission denied; full real isolated Docker lifecycle exit0 and all stages reached.",
+      "limits": "Host attributionUNKNOWN remains. No narrowed oracle/timeouts/stages, fake PID result or host-green claim."
+    },
+    {
+      "evidence": "E/CURRENTDOCS-GATE.json",
+      "commands": [
+        "Recorded current hydrated exactEA markdown/link commands",
+        "Recorded exact CI retired-term search against physical docs root"
+      ],
+      "result": "Actual exit0; retired terms no matches;44 link entries with ignored URL markers",
+      "limits": "Markdown printed linting4 but summary0files/0issues; not credited as comprehensive lint. External ignored links not falsely verified."
+    },
+    {
+      "evidence": "E/CURRENTFOUR-RELEASE-PAYLOADS.json",
+      "commands": [
+        "bash scripts/build-binary.sh for linux-x64-glibc,linux-x64-musl,linux-arm64,darwin-arm64",
+        "Recorded extracted byte-kind-mode/version/payload inspections",
+        "Current glibc binary --version",
+        "Current musl Docker binary --version"
+      ],
+      "result": "All4 newly built/stamped/staged/extracted/hashed; payload noMikro/noLinks/noTests/root0700/≤80MB/emptycompat verified; glibc and musl actual6.261009.1 exit0",
+      "limits": "ARM/Mach not executed. Short builder output directly delivered; no invented retained artifact URL. No signing/upload/promotion."
+    },
+    {
+      "evidence": "E/WAVE3-LIVE-VERIFICATION.json; E/JUICE-CONFIGURED-LIVE-VERIFICATION.json",
+      "commands": [
+        "Prior explicit compiled Juice provisioning/catalog/usage/analyze/configured inference",
+        "Prior explicit compiled JEV extraction"
+      ],
+      "result": "Distinct private project keys/catalogs/actual calls and sanitized authorized aggregates; one successful real JEV request with modeljev-1.13.0 and393/37observedtokens",
+      "limits": "Historical attributable integration proof, not new reviewer execution, invoices, local JEV-service proof or Keeper request-body export."
+    },
+    {
+      "evidence": "E/G8-RECEIPT3-ENGINE-108-COMPLETE.json; E/G8-RECEIPT3-NATIVE-18-COMPLETE.json; E/G8-RECEIPT3-FINAL-PAIRED-REPORT.json",
+      "commands": [
+        "Recorded entire frozen engine cohort once, serially",
+        "Recorded same18 genuine native saved-wish runs",
+        "bun scripts/mikro/engine-experiment.ts --manifest /home/genie/.local/share/mikro-engine-split/experiments-g8/frozen-inputs/engine-manifest-receipt3.json --report-only"
+      ],
+      "result": "108engine+18native actually executed; native jobexit2; report-onlyexit1 completefalse/parityfalse/recommendationnull",
+      "limits": "Seven engine full-total and three native offload-accounting gaps; no selective rerun/refreeze/regrade/canonical partial append."
+    }
+  ],
+  "coverage": {
+    "matrix": "All original40 rows copied verbatim and assessed; no reduced source matrix substituted.",
+    "groups": [
+      "G1 history/package/preservation/retirement/CI ownership",
+      "G2 exact SDK/providers/typed failures/retries/accounting",
+      "G3 parser/finalization/REPL timeout recovery/budgets",
+      "G4 selector/Pi read-only resources/tools/final/lifecycle/MCP",
+      "G5 call/bench/wish forwarding/proposals/citations/fixtures/defaults",
+      "G6 CPA explicit provisioning/project credentials/Keeper sanitized snapshots",
+      "G7 real manual JEV payload/typed provenance/ordinary-run exclusion",
+      "G8 immutable108+18 identities/execution/statistics/native ownership/accounting blockers",
+      "G9 current full gates/installed/release/docs/independent-review/remote delivery"
+    ],
+    "currentDevIntegration": "Read source/evidence integration mapping and affected preload/doctor/metrics pricing/export/capture/usage/Phoenix consumers, rootversion6.261009.1, exactEA docs gitlink, source installer policy and fresh release inputs. Incoming derived metrics populations/values can change; no universal no-table byte-identity claim or historical paid rewrite is made.",
+    "testTopology": "Reviewed behavior-owning source and downstream consumers, real red/green boundary receipts and complete current owner/full outputs; did not rely on test counts/source text alone. Historical failing tests/semantic negative controls and excluded setup failures remain distinguished.",
+    "readOnlyMethod": "Static read/grep/glob of candidate, complete source patch and named attributable evidence; no new runs or file/task/Git mutations."
+  },
+  "limitations": [
+    "Complete original Genie preservation-before inventory is unavailable; row5 and wholeWish stay BLOCKED.",
+    "No completed separate current original22 quality verdict was consumed; paired acceptance remains BLOCKED until coordinator combines independent results.",
+    "No final source commit/push/current-head remote CI/base/head/three-dot/mergeability readback exists in the consumed current publication record.",
+    "Paid108+18 remain historical immutable incomplete/confounded outcomes; source repairs cannot retroactively measure missing bills or establish native business success.",
+    "SDK nominal receipts and rounded footers are not complete provider/gateway invoices; known partial subtotal is not zero or full total.",
+    "Stock-host lifecycle process attribution remainsUNKNOWN despite isolated whole-script success.",
+    "Docs markdown/link output has explicit coverage/ignored-link limitations; no vacuous exactEA docs claim from an empty directory.",
+    "LinuxARM64/DarwinARM64 releases were compiled/staged/extracted/hashed but not actually executed.",
+    "Current manifest/continuity/gate execution was coordinator-provided and read-only reused, not independently rerun/rehashed by this reviewer.",
+    "This SHIP applies only to the bounded inspected-source quality scope. It does not certify all forty acceptance rows PASS, authorize whole-wish/publication completion, waive caps, or permit paid/admin/provisioning/merge scope expansion."
+  ],
+  "summary": "No confirmed current patch-introduced source defect was found in the whole G1–G9 source/consumer review. The current G1 authority, G2 failed-child/empty-terminal partial-usage and G4 accepted-final tool-admission closures are supported by actual boundaries and fresh complete gates. Bounded source quality is SHIP; original full source/feature acceptance, comparison, wholeWish and delivery remain BLOCKED on the explicitly preserved original-before/accounting/paired-review/current-remote evidence gaps.",
+  "confidence": 0.88
+}

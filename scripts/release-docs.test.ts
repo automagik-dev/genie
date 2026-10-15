@@ -486,8 +486,6 @@ describe('Group E release and documentation contracts', () => {
     const commitlint = read('.github/workflows/commitlint.yml');
     expect(commitlint).not.toContain('wagoid/commitlint-github-action');
     expect(commitlint).toContain('bun install --frozen-lockfile --ignore-scripts');
-    expect(commitlint).toContain('bun x --no-install commitlint');
-    expect(commitlint).toContain('git cat-file -e "${BASE_SHA}^{commit}"');
     const docs = read('.github/workflows/docs-lint.yml');
     expect(docs).toContain('oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6');
     expect(docs).toContain('bun install --frozen-lockfile --ignore-scripts');

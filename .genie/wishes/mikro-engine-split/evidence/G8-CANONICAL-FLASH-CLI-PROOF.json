@@ -1,0 +1,868 @@
+{
+  "schemaVersion": 1,
+  "scope": "unscored actual compiled Genie canonical CLI; independent tiny real repository, not frozen graded fixtures or native workflows",
+  "recordedAt": "2026-10-06T04:07:04.214245Z",
+  "actualProcessExitCode": 0,
+  "receipts": [
+    {
+      "id": "canonical-rlm",
+      "scored": false,
+      "nativeWorkflowCredit": false,
+      "startedAt": "2026-10-06T04:04:40.336Z",
+      "completedAt": "2026-10-06T04:05:49.887Z",
+      "command": [
+        "/usr/local/bin/bun",
+        "/home/genie/orca/workspaces/genie/mikro-engine-split/dist/genie.js",
+        "mikro",
+        "call",
+        "wish-context",
+        "--engine",
+        "rlm",
+        "--agents-dir",
+        "/home/genie/.local/share/mikro-engine-split/experiments-g8/caller-trust/genie-existing-flash-control-rlm-patched/.mikro/agents",
+        "--dir",
+        "/home/genie/.local/share/mikro-engine-split/experiments-g8/canonical-cli-smoke/repository",
+        "--prompt",
+        "Intent: verify the marker's syntax without executing it",
+        "--timeout-ms",
+        "600000",
+        "--retries",
+        "1",
+        "--boundary",
+        "none",
+        "--no-phoenix",
+        "--no-ledger"
+      ],
+      "actualExitCode": 0,
+      "signal": null,
+      "processError": null,
+      "ok": true,
+      "parsed": {
+        "ok": true,
+        "agent": "wish-context",
+        "runId": "e9e9c306-de60-4f5d-872c-efc8d2b858b0",
+        "traceId": "e9e9c306-de60-4f5d-872c-efc8d2b858b0",
+        "dir": "/home/genie/.local/share/mikro-engine-split/experiments-g8/canonical-cli-smoke/repository",
+        "answer": {
+          "intent": "verify the marker's syntax without executing it",
+          "facts": [
+            {
+              "claim": "marker.mjs is a single-line ES module exporting a marker constant; it is the only source file in the repo",
+              "evidence": "marker.mjs:1"
+            },
+            {
+              "claim": "package.json declares the repo as the g8-canonical-cli-smoke fixture",
+              "evidence": "package.json:2"
+            },
+            {
+              "claim": "package.json defines a check script running node --check marker.mjs, which parses the module and reports syntax errors without executing it",
+              "evidence": "package.json:4"
+            },
+            {
+              "claim": "The whole repo is two tracked files, marker.mjs and package.json, both added in the single commit 18a2400",
+              "evidence": "package.json:4"
+            }
+          ],
+          "related": [
+            {
+              "kind": "commit",
+              "ref": "18a2400",
+              "why": "created this isolated fixture (marker.mjs + package.json) that the intent targets"
+            }
+          ],
+          "plan": {
+            "approach": "Run the existing node --check marker.mjs check script (via npm run check); Node's --check mode parses the module and reports SyntaxError without executing it, so the declared script already satisfies the intent.",
+            "files": [
+              {
+                "path": "marker.mjs",
+                "reason": "the marker module whose syntax is being verified (verified)"
+              },
+              {
+                "path": "package.json",
+                "reason": "holds the check script node --check marker.mjs (verified)"
+              }
+            ],
+            "validationCommand": "npm run check",
+            "focusedTest": "marker.mjs"
+          },
+          "estimate": {
+            "files": 2,
+            "insertions": 0
+          },
+          "gotchas": [],
+          "open_questions": [
+            "No dedicated test file exists; is the existing npm run check script sufficient, or should a syntax-check test be added?",
+            "Should the syntax check be wired into CI, and is node --check (parse-only, no execution) the intended verification method?"
+          ],
+          "injection_attempts": []
+        },
+        "elapsedMs": 69300,
+        "costUsd": 0.02,
+        "tags": {
+          "engine": "rlm"
+        },
+        "boundary": "none",
+        "egress": null,
+        "agentSource": "flag",
+        "attempts": [
+          {
+            "attempt": 0,
+            "ok": false,
+            "errors": [
+              "schema: plan.focusedTest \u2014 String must contain at least 1 character(s)"
+            ],
+            "footer": {
+              "label": "agent=wish-context",
+              "model": "deepseek/deepseek-flash",
+              "iterations": 10,
+              "tokensIn": 9141,
+              "tokensOut": 6112,
+              "cost": 0.01,
+              "seconds": 28.8,
+              "budgetHit": null,
+              "validationFailed": false,
+              "sessionId": "sess_f797ff70c72429ab"
+            },
+            "citations": [],
+            "elapsedMs": 34948,
+            "rawChars": 2114
+          },
+          {
+            "attempt": 1,
+            "ok": true,
+            "errors": [],
+            "footer": {
+              "label": "agent=wish-context",
+              "model": "deepseek/deepseek-flash",
+              "iterations": 8,
+              "tokensIn": 10537,
+              "tokensOut": 6041,
+              "cost": 0.01,
+              "seconds": 27.7,
+              "budgetHit": null,
+              "validationFailed": false,
+              "sessionId": "sess_5f7051476a6f54b9"
+            },
+            "citations": [
+              {
+                "path": "marker.mjs",
+                "line": 1,
+                "ok": true
+              },
+              {
+                "path": "package.json",
+                "line": 2,
+                "ok": true
+              },
+              {
+                "path": "package.json",
+                "line": 4,
+                "ok": true
+              },
+              {
+                "path": "marker.mjs",
+                "line": null,
+                "ok": true
+              },
+              {
+                "path": "package.json",
+                "line": null,
+                "ok": true
+              }
+            ],
+            "elapsedMs": 34334,
+            "rawChars": 2081
+          }
+        ]
+      },
+      "stdoutPath": "/home/genie/.local/share/mikro-engine-split/experiments-g8/canonical-cli-smoke/rlm-stdout.json",
+      "stderrPath": "/home/genie/.local/share/mikro-engine-split/experiments-g8/canonical-cli-smoke/rlm-stderr.txt",
+      "sdkReceiptDirectory": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipts/unscored/canonical-rlm",
+      "sourceProfilePath": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-profiles/engine/genie-existing-flash-control-rlm-patched/profile.json",
+      "sourceProfileSha256": "3e6277460a764e02f62640302bdd9cd31520c9d325258d0dd19ce82e0ad20e3f",
+      "sdkAttempts": [
+        {
+          "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipts/unscored/canonical-rlm/b18e10cd-d812-413b-9f73-ed1288aec2a7.result.json",
+          "sha256": "358bb58b0e49224d133f266fd10fe524c1935993782abe39ce0a3b374708443a",
+          "value": {
+            "version": 1,
+            "id": "b18e10cd-d812-413b-9f73-ed1288aec2a7",
+            "sessionId": "sess_5f7051476a6f54b9",
+            "startedAt": "2026-10-06T04:05:22.068Z",
+            "finishedAt": "2026-10-06T04:05:49.823Z",
+            "binding": {
+              "profileSha256": "3e6277460a764e02f62640302bdd9cd31520c9d325258d0dd19ce82e0ad20e3f",
+              "artifactRoot": "/home/genie/orca/workspaces/genie/mikro-engine-split/mikro",
+              "node": "/home/genie/.hermes/node/bin/node",
+              "nodeVersion": "v26.7.0",
+              "generation": "new",
+              "engine": "rlm",
+              "agent": "wish-context",
+              "toolName": "mikro_wish-context",
+              "maxIterations": 16,
+              "budgetBinding": {
+                "maxDepth": 0,
+                "loadedMaxDepth": null,
+                "maxDepthSource": "agent.spec.budget.maxDepth",
+                "method": "programmatic-after-applyAgent"
+              },
+              "provider": "deepseek",
+              "model": "deepseek-flash",
+              "api": "openai-completions",
+              "baseUrl": "https://api.deepseek.com",
+              "effectiveConfigSha256": "abea8b3e9a3aed26bf728f188595db8232da6e767955bdeb1f0dfbf5369c2ef0",
+              "systemSha256": "2f861a74c6bce3d4587e656a13a5b3cc6244c48ad0ff8b8fd4bdd6ffe490a61a",
+              "sdkNominalRates": {
+                "input": 0.3,
+                "output": 1.2,
+                "cacheRead": 0.006,
+                "cacheWrite": 0
+              },
+              "provenance": {
+                "sourceCommit": "0fe62de3e2292fe1cc3eeb7f80068c0ee17918c7",
+                "version": "1.260907.1",
+                "dependencies": {
+                  "@earendil-works/pi-ai": "1.0.2",
+                  "@earendil-works/pi-coding-agent": "1.0.2",
+                  "@earendil-works/pi-agent-core": "1.0.2",
+                  "typebox": "1.3.27"
+                },
+                "rates": {
+                  "kind": "sdk-nominal-estimate-not-invoice",
+                  "source": "/home/genie/orca/workspaces/genie/mikro-engine-split/mikro/node_modules/@earendil-works/pi-ai/dist/providers/data/deepseek.json",
+                  "evidence": [
+                    {
+                      "path": "/home/genie/orca/workspaces/genie/mikro-engine-split/mikro/node_modules/@earendil-works/pi-ai/dist/providers/data/deepseek.json",
+                      "kind": "file",
+                      "sha256": "10a296fb3e898f7715c80890c8af0af4f5fd58f22dbcd6612fdc5d762157ccdc"
+                    }
+                  ],
+                  "notes": "Selected resolved model cost metadata; nominal only, no invoice/accounting claim."
+                },
+                "confounds": [
+                  "Old and new controls are different physical source/dist/dependency installations, not an engine-only causal comparison; selected version labels are not chronological upgrade proof.",
+                  "Old SDK pi-ai 0.80.10 vs new pi-ai/pi-agent-core/pi-coding-agent 1.0.2 and typebox 1.3.27; schema, provider capability, context, pricing and runtime defaults may differ.",
+                  "Historical old provider deepseek-api is an explicit narrow public definition at api.deepseek.com/v1: context128000/max16000/reasoningtrue/text/input0.3/output1.2/cache0. New provider deepseek is the installed built-in SDK definition, not an alias or metadata rewrite.",
+                  "Only historical external agent.yaml model binding changes provider spelling; canonical source YAML hash and actual historical YAML hash are separately recorded. SYSTEM.md/EVIDENCE.md and every other YAML byte are unchanged.",
+                  "Cost is SDK nominal estimate, not actual provider or gateway billing. No availability, served tier or verified success is established by preparation."
+                ]
+              },
+              "modelCapabilities": {
+                "reasoning": true,
+                "input": [
+                  "text",
+                  "image"
+                ],
+                "contextWindow": 1000000,
+                "maxTokens": 384000,
+                "thinkingLevelMap": {
+                  "minimal": null,
+                  "low": "low",
+                  "medium": null,
+                  "high": "high",
+                  "max": "max"
+                },
+                "compat": {
+                  "supportsStore": false,
+                  "supportsDeveloperRole": false,
+                  "maxTokensField": "max_tokens",
+                  "requiresReasoningContentOnAssistantMessages": true,
+                  "thinkingFormat": "deepseek",
+                  "supportsStrictMode": true
+                }
+              },
+              "modelOptions": {
+                "thinkingLevel": "low",
+                "temperature": null,
+                "cache": {
+                  "enabled": false,
+                  "strategy": "full",
+                  "retention": "long"
+                },
+                "outputSchemaSha256": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+                "packSchemaSha256": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b"
+              }
+            },
+            "failed": false,
+            "observed": {
+              "kind": "returned",
+              "iterations": 8,
+              "budgetHit": null,
+              "validationFailed": false,
+              "usage": {
+                "inputTokens": 10537,
+                "outputTokens": 6041,
+                "totalCost": 0.010818875999999998
+              },
+              "usageComplete": true
+            },
+            "costKind": "sdk-nominal-estimate-not-invoice",
+            "requestOptions": null,
+            "tierEvents": []
+          }
+        },
+        {
+          "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipts/unscored/canonical-rlm/b594455d-eb5f-4efb-8cd1-174ed421aa3f.result.json",
+          "sha256": "504827a4ffd61999db1db62f1e9506edc662d3f9df053d2823738fd2cf85a64f",
+          "value": {
+            "version": 1,
+            "id": "b594455d-eb5f-4efb-8cd1-174ed421aa3f",
+            "sessionId": "sess_f797ff70c72429ab",
+            "startedAt": "2026-10-06T04:04:46.660Z",
+            "finishedAt": "2026-10-06T04:05:15.494Z",
+            "binding": {
+              "profileSha256": "3e6277460a764e02f62640302bdd9cd31520c9d325258d0dd19ce82e0ad20e3f",
+              "artifactRoot": "/home/genie/orca/workspaces/genie/mikro-engine-split/mikro",
+              "node": "/home/genie/.hermes/node/bin/node",
+              "nodeVersion": "v26.7.0",
+              "generation": "new",
+              "engine": "rlm",
+              "agent": "wish-context",
+              "toolName": "mikro_wish-context",
+              "maxIterations": 16,
+              "budgetBinding": {
+                "maxDepth": 0,
+                "loadedMaxDepth": null,
+                "maxDepthSource": "agent.spec.budget.maxDepth",
+                "method": "programmatic-after-applyAgent"
+              },
+              "provider": "deepseek",
+              "model": "deepseek-flash",
+              "api": "openai-completions",
+              "baseUrl": "https://api.deepseek.com",
+              "effectiveConfigSha256": "abea8b3e9a3aed26bf728f188595db8232da6e767955bdeb1f0dfbf5369c2ef0",
+              "systemSha256": "2f861a74c6bce3d4587e656a13a5b3cc6244c48ad0ff8b8fd4bdd6ffe490a61a",
+              "sdkNominalRates": {
+                "input": 0.3,
+                "output": 1.2,
+                "cacheRead": 0.006,
+                "cacheWrite": 0
+              },
+              "provenance": {
+                "sourceCommit": "0fe62de3e2292fe1cc3eeb7f80068c0ee17918c7",
+                "version": "1.260907.1",
+                "dependencies": {
+                  "@earendil-works/pi-ai": "1.0.2",
+                  "@earendil-works/pi-coding-agent": "1.0.2",
+                  "@earendil-works/pi-agent-core": "1.0.2",
+                  "typebox": "1.3.27"
+                },
+                "rates": {
+                  "kind": "sdk-nominal-estimate-not-invoice",
+                  "source": "/home/genie/orca/workspaces/genie/mikro-engine-split/mikro/node_modules/@earendil-works/pi-ai/dist/providers/data/deepseek.json",
+                  "evidence": [
+                    {
+                      "path": "/home/genie/orca/workspaces/genie/mikro-engine-split/mikro/node_modules/@earendil-works/pi-ai/dist/providers/data/deepseek.json",
+                      "kind": "file",
+                      "sha256": "10a296fb3e898f7715c80890c8af0af4f5fd58f22dbcd6612fdc5d762157ccdc"
+                    }
+                  ],
+                  "notes": "Selected resolved model cost metadata; nominal only, no invoice/accounting claim."
+                },
+                "confounds": [
+                  "Old and new controls are different physical source/dist/dependency installations, not an engine-only causal comparison; selected version labels are not chronological upgrade proof.",
+                  "Old SDK pi-ai 0.80.10 vs new pi-ai/pi-agent-core/pi-coding-agent 1.0.2 and typebox 1.3.27; schema, provider capability, context, pricing and runtime defaults may differ.",
+                  "Historical old provider deepseek-api is an explicit narrow public definition at api.deepseek.com/v1: context128000/max16000/reasoningtrue/text/input0.3/output1.2/cache0. New provider deepseek is the installed built-in SDK definition, not an alias or metadata rewrite.",
+                  "Only historical external agent.yaml model binding changes provider spelling; canonical source YAML hash and actual historical YAML hash are separately recorded. SYSTEM.md/EVIDENCE.md and every other YAML byte are unchanged.",
+                  "Cost is SDK nominal estimate, not actual provider or gateway billing. No availability, served tier or verified success is established by preparation."
+                ]
+              },
+              "modelCapabilities": {
+                "reasoning": true,
+                "input": [
+                  "text",
+                  "image"
+                ],
+                "contextWindow": 1000000,
+                "maxTokens": 384000,
+                "thinkingLevelMap": {
+                  "minimal": null,
+                  "low": "low",
+                  "medium": null,
+                  "high": "high",
+                  "max": "max"
+                },
+                "compat": {
+                  "supportsStore": false,
+                  "supportsDeveloperRole": false,
+                  "maxTokensField": "max_tokens",
+                  "requiresReasoningContentOnAssistantMessages": true,
+                  "thinkingFormat": "deepseek",
+                  "supportsStrictMode": true
+                }
+              },
+              "modelOptions": {
+                "thinkingLevel": "low",
+                "temperature": null,
+                "cache": {
+                  "enabled": false,
+                  "strategy": "full",
+                  "retention": "long"
+                },
+                "outputSchemaSha256": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+                "packSchemaSha256": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b"
+              }
+            },
+            "failed": false,
+            "observed": {
+              "kind": "returned",
+              "iterations": 10,
+              "budgetHit": null,
+              "validationFailed": false,
+              "usage": {
+                "inputTokens": 9141,
+                "outputTokens": 6112,
+                "totalCost": 0.010549788000000001
+              },
+              "usageComplete": true
+            },
+            "costKind": "sdk-nominal-estimate-not-invoice",
+            "requestOptions": null,
+            "tierEvents": []
+          }
+        }
+      ],
+      "actualCliStdoutSha256": "0a609466a141232e62ef0f0b89ef42849f3da5979f7f910de3d600ac83728db6",
+      "actualCliStderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "id": "canonical-pi",
+      "scored": false,
+      "nativeWorkflowCredit": false,
+      "startedAt": "2026-10-06T04:05:49.890Z",
+      "completedAt": "2026-10-06T04:06:22.026Z",
+      "command": [
+        "/usr/local/bin/bun",
+        "/home/genie/orca/workspaces/genie/mikro-engine-split/dist/genie.js",
+        "mikro",
+        "call",
+        "wish-context",
+        "--engine",
+        "pi",
+        "--agents-dir",
+        "/home/genie/.local/share/mikro-engine-split/experiments-g8/caller-trust/genie-existing-flash-control-pi/.mikro/agents",
+        "--dir",
+        "/home/genie/.local/share/mikro-engine-split/experiments-g8/canonical-cli-smoke/repository",
+        "--prompt",
+        "Intent: verify the marker's syntax without executing it",
+        "--timeout-ms",
+        "600000",
+        "--retries",
+        "1",
+        "--boundary",
+        "none",
+        "--no-phoenix",
+        "--no-ledger"
+      ],
+      "actualExitCode": 0,
+      "signal": null,
+      "processError": null,
+      "ok": true,
+      "parsed": {
+        "ok": true,
+        "agent": "wish-context",
+        "runId": "5da879d6-f216-4d7c-aaa7-805695fb5e09",
+        "traceId": "5da879d6-f216-4d7c-aaa7-805695fb5e09",
+        "dir": "/home/genie/.local/share/mikro-engine-split/experiments-g8/canonical-cli-smoke/repository",
+        "answer": {
+          "intent": "verify the marker's syntax without executing it",
+          "facts": [
+            {
+              "claim": "The marker is defined as the exported string constant 'g8-canonical-cli-smoke' in marker.mjs.",
+              "evidence": "marker.mjs:1"
+            },
+            {
+              "claim": "The repo already declares a syntax-only verification script 'check' that runs node --check marker.mjs, which parses without executing.",
+              "evidence": "package.json:4"
+            },
+            {
+              "claim": "The package itself is named 'g8-canonical-cli-smoke' and is marked private with no test files present.",
+              "evidence": "package.json:2"
+            },
+            {
+              "claim": "The repository contains only two tracked files, marker.mjs and package.json, and a single commit 'chore: create isolated canonical CLI smoke fixture'.",
+              "evidence": "package.json:1"
+            }
+          ],
+          "related": [
+            {
+              "kind": "commit",
+              "ref": "18a2400",
+              "why": "the only commit, which created this isolated smoke fixture and its marker"
+            }
+          ],
+          "plan": {
+            "approach": "Rely on the existing 'check' script that runs `node --check marker.mjs`; node --check parses and validates the module's syntax without evaluating it. No source change is strictly required unless the intent wants the check wired into a broader workflow, in which case only the script wiring changes.",
+            "files": [
+              {
+                "path": "marker.mjs",
+                "reason": "the marker whose syntax is being verified (verified)"
+              },
+              {
+                "path": "package.json",
+                "reason": "holds the existing syntax-only 'check' script (verified)"
+              }
+            ],
+            "validationCommand": "npm run check",
+            "focusedTest": "package.json"
+          },
+          "estimate": {
+            "files": 1,
+            "insertions": 5
+          },
+          "gotchas": [],
+          "open_questions": [
+            "Does the intent only want to confirm the existing `node --check` path works, or to add a new syntax-verification step (CI/hook)?",
+            "Should the check be exposed under a different script name or wired into a larger validation command?"
+          ],
+          "injection_attempts": []
+        },
+        "elapsedMs": 31875,
+        "costUsd": 0.0043,
+        "tags": {
+          "engine": "pi"
+        },
+        "boundary": "none",
+        "egress": null,
+        "agentSource": "flag",
+        "attempts": [
+          {
+            "attempt": 0,
+            "ok": false,
+            "errors": [
+              "tool error: mikro agent=wish-context failed: Pi run has no accepted emit_done final; assistant prose is not a final result\n\n---\nmikro \u00b7 agent=wish-context \u00b7 deepseek/deepseek-flash \u00b7 4 iterations \u00b7 1,669 in / 1,779 out \u00b7 $0.0027 \u00b7 11.1s \u00b7 session sess_6aeb07ff3335a709",
+              "no JSON object in the answer"
+            ],
+            "footer": {
+              "label": "agent=wish-context",
+              "model": "deepseek/deepseek-flash",
+              "iterations": 4,
+              "tokensIn": 1669,
+              "tokensOut": 1779,
+              "cost": 0.0027,
+              "seconds": 11.1,
+              "budgetHit": null,
+              "validationFailed": false,
+              "sessionId": "sess_6aeb07ff3335a709"
+            },
+            "citations": [],
+            "elapsedMs": 17313,
+            "rawChars": 256
+          },
+          {
+            "attempt": 1,
+            "ok": true,
+            "errors": [],
+            "footer": {
+              "label": "agent=wish-context",
+              "model": "deepseek/deepseek-flash",
+              "iterations": 4,
+              "tokensIn": 856,
+              "tokensOut": 1017,
+              "cost": 0.0016,
+              "seconds": 8.5,
+              "budgetHit": null,
+              "validationFailed": false,
+              "sessionId": "sess_d91c7832ba0a4ec1"
+            },
+            "citations": [
+              {
+                "path": "marker.mjs",
+                "line": 1,
+                "ok": true
+              },
+              {
+                "path": "package.json",
+                "line": 4,
+                "ok": true
+              },
+              {
+                "path": "package.json",
+                "line": 2,
+                "ok": true
+              },
+              {
+                "path": "package.json",
+                "line": 1,
+                "ok": true
+              },
+              {
+                "path": "marker.mjs",
+                "line": null,
+                "ok": true
+              },
+              {
+                "path": "package.json",
+                "line": null,
+                "ok": true
+              }
+            ],
+            "elapsedMs": 14551,
+            "rawChars": 2061
+          }
+        ]
+      },
+      "stdoutPath": "/home/genie/.local/share/mikro-engine-split/experiments-g8/canonical-cli-smoke/pi-stdout.json",
+      "stderrPath": "/home/genie/.local/share/mikro-engine-split/experiments-g8/canonical-cli-smoke/pi-stderr.txt",
+      "sdkReceiptDirectory": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipts/unscored/canonical-pi",
+      "sourceProfilePath": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-profiles/engine/genie-existing-flash-control-pi/profile.json",
+      "sourceProfileSha256": "303933d69268d050bfb193155c7055b3bb1fc05a64d85e8c7b0f5e44e9af2ef7",
+      "sdkAttempts": [
+        {
+          "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipts/unscored/canonical-pi/090a13c9-bd9a-4c05-82a4-a1b82fa84c84.result.json",
+          "sha256": "2be5a38b80210cc9773df54cf59b94107cccb49b1e461a8595f79f8ff77996cb",
+          "value": {
+            "version": 1,
+            "id": "090a13c9-bd9a-4c05-82a4-a1b82fa84c84",
+            "sessionId": "sess_6aeb07ff3335a709",
+            "startedAt": "2026-10-06T04:05:56.363Z",
+            "finishedAt": "2026-10-06T04:06:07.433Z",
+            "binding": {
+              "profileSha256": "303933d69268d050bfb193155c7055b3bb1fc05a64d85e8c7b0f5e44e9af2ef7",
+              "artifactRoot": "/home/genie/orca/workspaces/genie/mikro-engine-split/mikro",
+              "node": "/home/genie/.hermes/node/bin/node",
+              "nodeVersion": "v26.7.0",
+              "generation": "new",
+              "engine": "pi",
+              "agent": "wish-context",
+              "toolName": "mikro_wish-context",
+              "maxIterations": 16,
+              "budgetBinding": {
+                "maxDepth": 0,
+                "loadedMaxDepth": null,
+                "maxDepthSource": "agent.spec.budget.maxDepth",
+                "method": "programmatic-after-applyAgent"
+              },
+              "provider": "deepseek",
+              "model": "deepseek-flash",
+              "api": "openai-completions",
+              "baseUrl": "https://api.deepseek.com",
+              "effectiveConfigSha256": "abea8b3e9a3aed26bf728f188595db8232da6e767955bdeb1f0dfbf5369c2ef0",
+              "systemSha256": "2f861a74c6bce3d4587e656a13a5b3cc6244c48ad0ff8b8fd4bdd6ffe490a61a",
+              "sdkNominalRates": {
+                "input": 0.3,
+                "output": 1.2,
+                "cacheRead": 0.006,
+                "cacheWrite": 0
+              },
+              "provenance": {
+                "sourceCommit": "0fe62de3e2292fe1cc3eeb7f80068c0ee17918c7",
+                "version": "1.260907.1",
+                "dependencies": {
+                  "@earendil-works/pi-ai": "1.0.2",
+                  "@earendil-works/pi-coding-agent": "1.0.2",
+                  "@earendil-works/pi-agent-core": "1.0.2",
+                  "typebox": "1.3.27"
+                },
+                "rates": {
+                  "kind": "sdk-nominal-estimate-not-invoice",
+                  "source": "/home/genie/orca/workspaces/genie/mikro-engine-split/mikro/node_modules/@earendil-works/pi-ai/dist/providers/data/deepseek.json",
+                  "evidence": [
+                    {
+                      "path": "/home/genie/orca/workspaces/genie/mikro-engine-split/mikro/node_modules/@earendil-works/pi-ai/dist/providers/data/deepseek.json",
+                      "kind": "file",
+                      "sha256": "10a296fb3e898f7715c80890c8af0af4f5fd58f22dbcd6612fdc5d762157ccdc"
+                    }
+                  ],
+                  "notes": "Selected resolved model cost metadata; nominal only, no invoice/accounting claim."
+                },
+                "confounds": [
+                  "Old and new controls are different physical source/dist/dependency installations, not an engine-only causal comparison; selected version labels are not chronological upgrade proof.",
+                  "Old SDK pi-ai 0.80.10 vs new pi-ai/pi-agent-core/pi-coding-agent 1.0.2 and typebox 1.3.27; schema, provider capability, context, pricing and runtime defaults may differ.",
+                  "Historical old provider deepseek-api is an explicit narrow public definition at api.deepseek.com/v1: context128000/max16000/reasoningtrue/text/input0.3/output1.2/cache0. New provider deepseek is the installed built-in SDK definition, not an alias or metadata rewrite.",
+                  "Only historical external agent.yaml model binding changes provider spelling; canonical source YAML hash and actual historical YAML hash are separately recorded. SYSTEM.md/EVIDENCE.md and every other YAML byte are unchanged.",
+                  "Cost is SDK nominal estimate, not actual provider or gateway billing. No availability, served tier or verified success is established by preparation."
+                ]
+              },
+              "modelCapabilities": {
+                "reasoning": true,
+                "input": [
+                  "text",
+                  "image"
+                ],
+                "contextWindow": 1000000,
+                "maxTokens": 384000,
+                "thinkingLevelMap": {
+                  "minimal": null,
+                  "low": "low",
+                  "medium": null,
+                  "high": "high",
+                  "max": "max"
+                },
+                "compat": {
+                  "supportsStore": false,
+                  "supportsDeveloperRole": false,
+                  "maxTokensField": "max_tokens",
+                  "requiresReasoningContentOnAssistantMessages": true,
+                  "thinkingFormat": "deepseek",
+                  "supportsStrictMode": true
+                }
+              },
+              "modelOptions": {
+                "thinkingLevel": "low",
+                "temperature": null,
+                "cache": {
+                  "enabled": false,
+                  "strategy": "full",
+                  "retention": "long"
+                },
+                "outputSchemaSha256": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+                "packSchemaSha256": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b"
+              }
+            },
+            "failed": true,
+            "observed": {
+              "kind": "thrown",
+              "iterations": 4,
+              "usage": {
+                "inputTokens": 1669,
+                "outputTokens": 1779,
+                "cacheReadTokens": 17664,
+                "cacheWriteTokens": 0,
+                "totalCost": 0.0027414839999999998,
+                "llmCalls": 4,
+                "reasoningTokens": 912
+              },
+              "usageComplete": true,
+              "errorType": "BackendRunError",
+              "error": "Pi run has no accepted emit_done final; assistant prose is not a final result"
+            },
+            "costKind": "sdk-nominal-estimate-not-invoice",
+            "requestOptions": null,
+            "tierEvents": []
+          }
+        },
+        {
+          "path": "/home/genie/.local/share/mikro-engine-split/experiments-g8/engine-receipts/unscored/canonical-pi/6ab3529b-63b5-4b2f-b492-b1126b9d4177.result.json",
+          "sha256": "1aaf46095815cf19ea83d88fc92816053f65bee6378e7a76fc676823f5ca5a4f",
+          "value": {
+            "version": 1,
+            "id": "6ab3529b-63b5-4b2f-b492-b1126b9d4177",
+            "sessionId": "sess_d91c7832ba0a4ec1",
+            "startedAt": "2026-10-06T04:06:13.509Z",
+            "finishedAt": "2026-10-06T04:06:21.975Z",
+            "binding": {
+              "profileSha256": "303933d69268d050bfb193155c7055b3bb1fc05a64d85e8c7b0f5e44e9af2ef7",
+              "artifactRoot": "/home/genie/orca/workspaces/genie/mikro-engine-split/mikro",
+              "node": "/home/genie/.hermes/node/bin/node",
+              "nodeVersion": "v26.7.0",
+              "generation": "new",
+              "engine": "pi",
+              "agent": "wish-context",
+              "toolName": "mikro_wish-context",
+              "maxIterations": 16,
+              "budgetBinding": {
+                "maxDepth": 0,
+                "loadedMaxDepth": null,
+                "maxDepthSource": "agent.spec.budget.maxDepth",
+                "method": "programmatic-after-applyAgent"
+              },
+              "provider": "deepseek",
+              "model": "deepseek-flash",
+              "api": "openai-completions",
+              "baseUrl": "https://api.deepseek.com",
+              "effectiveConfigSha256": "abea8b3e9a3aed26bf728f188595db8232da6e767955bdeb1f0dfbf5369c2ef0",
+              "systemSha256": "2f861a74c6bce3d4587e656a13a5b3cc6244c48ad0ff8b8fd4bdd6ffe490a61a",
+              "sdkNominalRates": {
+                "input": 0.3,
+                "output": 1.2,
+                "cacheRead": 0.006,
+                "cacheWrite": 0
+              },
+              "provenance": {
+                "sourceCommit": "0fe62de3e2292fe1cc3eeb7f80068c0ee17918c7",
+                "version": "1.260907.1",
+                "dependencies": {
+                  "@earendil-works/pi-ai": "1.0.2",
+                  "@earendil-works/pi-coding-agent": "1.0.2",
+                  "@earendil-works/pi-agent-core": "1.0.2",
+                  "typebox": "1.3.27"
+                },
+                "rates": {
+                  "kind": "sdk-nominal-estimate-not-invoice",
+                  "source": "/home/genie/orca/workspaces/genie/mikro-engine-split/mikro/node_modules/@earendil-works/pi-ai/dist/providers/data/deepseek.json",
+                  "evidence": [
+                    {
+                      "path": "/home/genie/orca/workspaces/genie/mikro-engine-split/mikro/node_modules/@earendil-works/pi-ai/dist/providers/data/deepseek.json",
+                      "kind": "file",
+                      "sha256": "10a296fb3e898f7715c80890c8af0af4f5fd58f22dbcd6612fdc5d762157ccdc"
+                    }
+                  ],
+                  "notes": "Selected resolved model cost metadata; nominal only, no invoice/accounting claim."
+                },
+                "confounds": [
+                  "Old and new controls are different physical source/dist/dependency installations, not an engine-only causal comparison; selected version labels are not chronological upgrade proof.",
+                  "Old SDK pi-ai 0.80.10 vs new pi-ai/pi-agent-core/pi-coding-agent 1.0.2 and typebox 1.3.27; schema, provider capability, context, pricing and runtime defaults may differ.",
+                  "Historical old provider deepseek-api is an explicit narrow public definition at api.deepseek.com/v1: context128000/max16000/reasoningtrue/text/input0.3/output1.2/cache0. New provider deepseek is the installed built-in SDK definition, not an alias or metadata rewrite.",
+                  "Only historical external agent.yaml model binding changes provider spelling; canonical source YAML hash and actual historical YAML hash are separately recorded. SYSTEM.md/EVIDENCE.md and every other YAML byte are unchanged.",
+                  "Cost is SDK nominal estimate, not actual provider or gateway billing. No availability, served tier or verified success is established by preparation."
+                ]
+              },
+              "modelCapabilities": {
+                "reasoning": true,
+                "input": [
+                  "text",
+                  "image"
+                ],
+                "contextWindow": 1000000,
+                "maxTokens": 384000,
+                "thinkingLevelMap": {
+                  "minimal": null,
+                  "low": "low",
+                  "medium": null,
+                  "high": "high",
+                  "max": "max"
+                },
+                "compat": {
+                  "supportsStore": false,
+                  "supportsDeveloperRole": false,
+                  "maxTokensField": "max_tokens",
+                  "requiresReasoningContentOnAssistantMessages": true,
+                  "thinkingFormat": "deepseek",
+                  "supportsStrictMode": true
+                }
+              },
+              "modelOptions": {
+                "thinkingLevel": "low",
+                "temperature": null,
+                "cache": {
+                  "enabled": false,
+                  "strategy": "full",
+                  "retention": "long"
+                },
+                "outputSchemaSha256": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+                "packSchemaSha256": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b"
+              }
+            },
+            "failed": false,
+            "observed": {
+              "kind": "returned",
+              "iterations": 4,
+              "budgetHit": null,
+              "validationFailed": false,
+              "usage": {
+                "inputTokens": 856,
+                "outputTokens": 1017,
+                "cacheReadTokens": 17024,
+                "cacheWriteTokens": 0,
+                "totalCost": 0.0015793439999999999,
+                "llmCalls": 4,
+                "reasoningTokens": 251
+              },
+              "usageComplete": true
+            },
+            "costKind": "sdk-nominal-estimate-not-invoice",
+            "requestOptions": null,
+            "tierEvents": []
+          }
+        }
+      ],
+      "actualCliStdoutSha256": "9857fd01e749a040df9de6f5c34b617c77ee2831c2836f9334d15142c3277edb",
+      "actualCliStderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  ],
+  "allAttemptsRetained": true,
+  "sdkQuotesNotInvoice": true,
+  "scoredCells": 0,
+  "genuineNativeWorkflows": 0
+}

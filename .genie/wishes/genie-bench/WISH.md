@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | APPROVED |
+| **Status** | IN_PROGRESS |
 | **Slug** | `genie-bench` |
 | **Date** | 2026-10-09 |
 | **Author** | Felipe Rosa |
@@ -569,6 +569,34 @@ _The read-only reviewer returns evidence; the invoking orchestrator appends a ti
 - **Round 2** at `db59accc7`: SHIP. All findings resolved. The `SolverTask` reduction enforces design SC2 (the solver cannot read hidden grading).
 - **Carried, LOW:** a task with no reference solution passes P5 on the negative check alone. G8's README evidence section must list every such task, so the gap in verifier parity is disclosed.
 - **Design author:** the OMP coordinator was asked for a design-fidelity read on 2026-10-09 and had not answered when this was persisted. Its later findings reopen the plan through this section.
+
+### 2026-10-14 — execution, waves 1–4 (orchestrator)
+
+Each group was delivered by its own `/wish` run, cut from the then-current `dev`. Each got an independent read-only review of the exact commit, the full `bun run check` gate and CI on Linux and macOS. Every merge used `--match-head-commit` at the reviewed head.
+
+| Group | PR | Merge | Review | Validation |
+|-------|----|-------|--------|------------|
+| G1 contracts | #3153 | `e0975da` | SHIP (`wf_27f213f9-ae9`) | gate exit 0; CI 19/19 |
+| G2 ledger | #3154 | `2e858db` | SHIP (`wf_54cf379d-dd2`) | gate exit 0; CI 14/14 |
+| G9 environment | #3155 | `b5daee2` | SHIP (`wf_470c33f0-8b6`) | gate exit 0; CI 14/14 |
+| G5 capture | #3156 | `ac65071` | SHIP (`wf_7b7dd614-c6c`) | workflow gate invalid (see below); CI 14/14 incl. both Unit legs |
+| G4 supervisor | #3157 | `26c1cd9` | SHIP (`wf_238621d7-414`) | workflow gate invalid (see below); local `run.test.ts` 20 pass, typecheck and biome clean; CI 14/14 |
+| G3 manifest/schedule | #3159 | `e48f42d` | SHIP (`wf_85a4d6c2-96d`) | gate exit 0 (3393 tests); CI 14/14 |
+| G6 accounting | #3161 | `50edf30` | SHIP (`wf_064cc282-f1c`) | gate exit 0 (3428 tests); CI 14/14 |
+| G7 OMP adapter | #3162 | `217c6f5` | SHIP (`wf_c32985ff-b75`) | gate exit 0 (3445 pass, 4 skip); CI 14/14 |
+
+- **G3 needed three runs.**
+  - `wf_01f03959-d88` was blocked because its check and install commands froze empty: the scout quoted no evidence.
+  - `wf_d5d11493-9da` was refused with route `plan`: its estimate of 2400 insertions came from the first run's unreviewed 1265-line fixture.
+  - The third run, with a compact fixture, landed at 1002 insertions.
+- **Invalid gates on G4 and G5.** The two gates ran at the same time and both wrote `check.log` in the shared session scratch dir. Each read the same tail: an unrelated timing flake in `scripts/brainstorm-round-ledger.test.ts`, 6.3 s against the 5 s default under load, which passes alone in 3.1–3.7 s. Both runs ended `missed`. The orchestrator published both and took CI's full suite as the gate. #3158 (`2805c05`, independent review FIX-FIRST then SHIP) gives every gate its own `mktemp` log.
+- **G8 evidence so far:** `GENIE_BENCH_REAL_TMUX=1 bun test scripts/bench/adapters/omp.tmux.test.ts` passed 2 of 2 on the operator host (tmux 3.6) at `217c6f5`.
+- **G8 stays BLOCKED.**
+  - **P1/P3:** a real authenticated OMP client in a fresh native home on the operator host. Provisioning credentials into that home is an operator decision and was not taken autonomously.
+  - **P2:** the operator-authored eligibility pool does not exist.
+  - **P4:** `genie-omp` is not planned; it waits on its upstream OMP P0.
+  - **P5:** source-native container tooling and parity are unproven.
+- **Status:** the wish stays IN_PROGRESS, per Success Criteria and G8 Status.
 
 ---
 

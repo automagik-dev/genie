@@ -13,8 +13,8 @@
  *
  * The truth is MECHANICAL, and every rule below is one an operator can re-run by hand:
  *
- *   files   `git show --name-only` of the commit. Rename detection is git's default,
- *           so a renamed path appears once, as the NEW path — the path the tree has.
+ *   files   changed paths already present in the parent tree for wish-context;
+ *           all changed paths for review-prep. Added wish paths become newFiles.
  *   prompt  `Intent: <commit subject>` for wish-context;
  *           `Prepare the review of commit <sha> against <sha>^` for review-prep.
  *   id      the first 12 characters of the commit sha. Not `git rev-parse --short`,
@@ -24,11 +24,11 @@
  * What is SKIPPED, always with a reason, never silently:
  *
  *   - a merge commit: its `--name-only` set is a combined diff, not one author's change;
- *   - a root commit, for review-prep only: there is no `<sha>^` to review against;
+ *   - a root commit: neither agent has a parent tree to evaluate against;
  *   - a commit with no files (an empty or purely-metadata commit);
- *   - a commit ANY of whose files no longer exists at HEAD. The verifier scores the
- *     TREE, not the commit: `call.ts` drops a citation whose path is not there, so a
- *     fixture naming a deleted file would score an agent down for being right.
+ *   - a commit ANY of whose changed paths no longer exists at HEAD (the retained
+ *     generation eligibility rule). Wish evaluation uses the recorded parent
+ *     tree; review evaluation uses the recorded source tree.
  *
  * The output is byte-stable across runs of the same argv — no timestamps, no host
  * paths, commits oldest first and each file list sorted — so a rebuilt set is a real
@@ -132,7 +132,7 @@ export function buildCommitFixtures(options: {
       skipped.push({ sha: id, reason: 'merge commit: --name-only is a combined diff, not one change' });
       continue;
     }
-    if (parentCount === 0 && options.agent === 'review-prep') {
+    if (parentCount === 0) {
       skipped.push({ sha: id, reason: 'root commit: there is no <sha>^ to review it against' });
       continue;
     }
@@ -159,7 +159,23 @@ export function buildCommitFixtures(options: {
       skipped.push({ sha: id, reason: 'empty commit subject: there is no intent to state' });
       continue;
     }
-    fixtures.push({ id, prompt: commitPrompt(options.agent, id, subject), truth: { files } });
+    const parentCommit = parents.trim();
+    const parentTree = git(dir, ['ls-tree', '-r', '-z', '--name-only', parentCommit]);
+    if (!parentTree.ok) {
+      skipped.push({ sha: id, reason: `parent tree unreadable: ${parentTree.err}` });
+      continue;
+    }
+    const parentFiles = new Set(parentTree.out.split('\0').filter(Boolean));
+    const newFiles = files.filter((p) => !parentFiles.has(p));
+    fixtures.push({
+      id, prompt: commitPrompt(options.agent, id, subject),
+      sourceCommit: sha, parentCommit,
+      evaluationCommit: options.agent === 'wish-context' ? parentCommit : sha,
+      sourceTree: git(dir, ['rev-parse', `${sha}^{tree}`]).out.trim(),
+      parentTree: git(dir, ['rev-parse', `${parentCommit}^{tree}`]).out.trim(),
+      evaluationTree: git(dir, ['rev-parse', `${options.agent === 'wish-context' ? parentCommit : sha}^{tree}`]).out.trim(),
+      truth: options.agent === 'wish-context' ? { files: files.filter((p) => parentFiles.has(p)), newFiles } : { files },
+    });
   }
   return { fixtures, skipped };
 }
@@ -168,7 +184,7 @@ export function buildCommitFixtures(options: {
 export function fixtureSetDocument(args: { agent: CommitFixtureAgent; range: string; fixtures: Fixture[] }): string {
   const notes =
     args.agent === 'wish-context'
-      ? `Ground truth: files = git show --name-only of each commit in ${args.range} (renames: the new path); prompt = the commit subject. Built by genie mikro fixtures --from-commits. Commits whose files no longer exist at HEAD are skipped: the verifier scores the tree, not the commit.`
+      ? `Ground truth: changed paths = git show --name-only of each commit in ${args.range} (renames: the new path); files = changed paths present in its parent; newFiles = changed paths absent from its parent. Evaluation uses the recorded parent commit/tree, with added implementations absent; source commit/tree identify the change. Prompt = the commit subject. Built by genie mikro fixtures --from-commits. Merge commits, root commits and commits whose changed paths no longer exist at HEAD are skipped.`
       : `Ground truth: files = git show --name-only of each commit in ${args.range} (renames: the new path); prompt reviews the commit against its parent. Built by genie mikro fixtures --from-commits. Merge commits, root commits and commits whose files no longer exist at HEAD are skipped: the verifier scores the tree, not the commit.`;
   return `${JSON.stringify({ agent: args.agent, notes, fixtures: args.fixtures }, null, 2)}\n`;
 }
