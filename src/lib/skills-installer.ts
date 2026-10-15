@@ -973,40 +973,92 @@ function recordPlacedSkillDir(target: string, skill: string, previous: SkillsIns
 }
 
 /**
- * Whose directory this is, and — when it is genie's — whether it still holds
- * what genie put there.
- *
- * Byte-equality with the NEW delivered `SKILL.md` and the PREVIOUS recorded
- * digest are both proofs of an UNCHANGED genie dir. Neither can disprove
- * ownership: a genie skill dir that drifted locally AND changed upstream fails
- * both, and was therefore reported (and recorded) as "a foreign skill dir that
- * changed while this install ran" — a factually wrong sentence about the
- * operator's own host. Identity comes from the record; content only decides
- * `'genie'` vs `'modified'`.
+ * Whose directory this is — identity only, never content: a recorded
+ * `agentDir × inventory` pair, or a `SKILL.md` byte-equal to the delivered one.
+ * Reads at most one capped `SKILL.md`, so it is cheap enough for every dir the
+ * `$HOME` walk turns up.
  */
-function classifySkillDir(
+function isGenieSkillDir(
   target: string,
-  expectedSkillMd: Buffer | null,
+  deliveredSkillMd: Buffer | null,
   previous: SkillsInstallRecord | null,
   skill: string,
-): SkillDirOwnership {
+): boolean {
+  if (recordPlacedSkillDir(target, skill, previous)) return true;
   const actual = readProbeFile(join(target, 'SKILL.md'));
-  if (expectedSkillMd !== null && actual !== null && actual.equals(expectedSkillMd)) return 'genie';
-  const recorded = previous?.dirDigests?.[target];
-  if (recorded !== undefined && computeSkillDirDigest(target) === recorded) return 'genie';
-  return recordPlacedSkillDir(target, skill, previous) ? 'modified' : 'foreign';
+  return deliveredSkillMd !== null && actual !== null && actual.equals(deliveredSkillMd);
+}
+
+/** What the delivered tree holds for one skill, read once per snapshot and shared across homes. */
+interface DeliveredSkill {
+  /** The delivered `SKILL.md`; `null` when absent, unreadable or over the probe cap. */
+  skillMd: Buffer | null;
+  /** Whole-dir digest of `<sourceRoot>/<skill>`; `null` when unreadable. */
+  digest: string | null;
+}
+
+type DeliveredSkillReader = (skill: string) => DeliveredSkill;
+
+function deliveredSkillReader(sourceRoot: string): DeliveredSkillReader {
+  const cache = new Map<string, DeliveredSkill>();
+  return (skill) => {
+    let delivered = cache.get(skill);
+    if (delivered === undefined) {
+      const dir = join(sourceRoot, skill);
+      delivered = { skillMd: readProbeFile(join(dir, 'SKILL.md')), digest: computeSkillDirDigest(dir) };
+      cache.set(skill, delivered);
+    }
+    return delivered;
+  };
+}
+
+interface ClassifiedSkillDir {
+  ownership: SkillDirOwnership;
+  /** Whole-dir digest of the target as classified; `null` when unreadable. */
+  digest: string | null;
 }
 
 /**
- * Why `<home>/<skill>` must be backed up before `--copy` overwrites it, or
- * `null` when it is genie's own unchanged install and there is nothing to lose.
- * A file or a symlink at that name is not a collision — `--copy` writes
- * directories, so nothing this channel wrote can be either.
+ * Whose directory this is, and — when it is genie's — whether it still holds
+ * what genie put there.
+ *
+ * Only a WHOLE-DIR digest proves an UNCHANGED genie dir: the PREVIOUS recorded
+ * one, or the NEW delivered tree's. A byte-equal `SKILL.md` used to prove it
+ * too, so a note, a nested skill or another tool's files beside an unchanged
+ * `SKILL.md` were never snapshotted, and `--copy` deleted them on every update
+ * with no backup and no `skills:` line (issue #3146). That `SKILL.md` still
+ * answers WHOSE dir it is ({@link isGenieSkillDir}), never whether it holds
+ * nothing else.
+ *
+ * Neither digest can disprove ownership: a genie skill dir that drifted locally
+ * AND changed upstream fails both, and was therefore reported (and recorded) as
+ * "a foreign skill dir that changed while this install ran" — a factually wrong
+ * sentence about the operator's own host. Identity decides `'foreign'`; content
+ * only decides `'genie'` vs `'modified'`.
  */
-function collidingSkillDirKind(
+function classifySkillDir(
   target: string,
-  context: { sourceRoot: string; skill: string; previous: SkillsInstallRecord | null },
-): SkillsCollisionKind | null {
+  delivered: DeliveredSkill,
+  previous: SkillsInstallRecord | null,
+  skill: string,
+): ClassifiedSkillDir {
+  const digest = computeSkillDirDigest(target);
+  if (!isGenieSkillDir(target, delivered.skillMd, previous, skill)) return { ownership: 'foreign', digest };
+  const unchanged = digest !== null && (digest === previous?.dirDigests?.[target] || digest === delivered.digest);
+  return { ownership: unchanged ? 'genie' : 'modified', digest };
+}
+
+/**
+ * Why `<home>/<skill>` must be backed up before `--copy` overwrites it, with
+ * the digest that decided it, or `null` when it is genie's own unchanged
+ * install and there is nothing to lose. A file or a symlink at that name is not
+ * a collision — `--copy` writes directories, so nothing this channel wrote can
+ * be either.
+ */
+function collidingSkillDir(
+  target: string,
+  context: { readDelivered: DeliveredSkillReader; skill: string; previous: SkillsInstallRecord | null },
+): { kind: SkillsCollisionKind; digest: string | null } | null {
   if (!isSafeSkillName(context.skill)) return null;
   if (!isTraversalFreeAbsolutePath(target)) return null;
   let stat: Stats;
@@ -1016,9 +1068,13 @@ function collidingSkillDirKind(
     return null;
   }
   if (!stat.isDirectory() || stat.isSymbolicLink()) return null;
-  const expected = readProbeFile(join(context.sourceRoot, context.skill, 'SKILL.md'));
-  const ownership = classifySkillDir(target, expected, context.previous, context.skill);
-  return ownership === 'genie' ? null : ownership;
+  const { ownership, digest } = classifySkillDir(
+    target,
+    context.readDelivered(context.skill),
+    context.previous,
+    context.skill,
+  );
+  return ownership === 'genie' ? null : { kind: ownership, digest };
 }
 
 /**
@@ -1046,13 +1102,14 @@ export function snapshotSkillsCollisions(options: SkillsCollisionSnapshotOptions
   const collisions: StagedSkillsCollision[] = [];
   const failures: string[] = [];
   const backupHomes = options.backupHomes === undefined ? null : new Set(options.backupHomes);
+  const readDelivered = deliveredSkillReader(options.sourceRoot);
   let backupRoot: string | null = null;
   for (const home of options.homes) {
     for (const skill of options.inventory) {
       const target = join(home, skill);
-      const kind = collidingSkillDirKind(target, { sourceRoot: options.sourceRoot, skill, previous });
-      if (kind === null) continue;
-      const digest = computeSkillDirDigest(target);
+      const colliding = collidingSkillDir(target, { readDelivered, skill, previous });
+      if (colliding === null) continue;
+      const { kind, digest } = colliding;
       if (backupHomes !== null && !backupHomes.has(home)) {
         collisions.push({ dir: target, skill, kind, digest, backedUp: false });
         continue;
@@ -2222,7 +2279,16 @@ export function runSkillsInstall(options: SkillsInstallOptions): SkillsInstallOu
     };
   }
 
-  const snapshot = snapshotCollisionsSafely({ ...options, home, skillsRoot, inventory, previous, warnings, nowMs });
+  const snapshot = snapshotCollisionsSafely({
+    ...options,
+    home,
+    skillsRoot,
+    inventory,
+    previous,
+    selectedHomes: selection.homes,
+    warnings,
+    nowMs,
+  });
   // What the snapshot staged is judged — kept and reported, or discarded — by
   // re-digesting the originals after the spawn. It is therefore correct on
   // every exit path below, including the ones where the install never ran.
@@ -2322,7 +2388,8 @@ export function runSkillsInstall(options: SkillsInstallOptions): SkillsInstallOu
 /**
  * Every directory the install could conceivably overwrite: the known table
  * (whether or not those homes exist yet), the homes the previous record proves
- * the CLI wrote last time, and — because neither list can track a CLI whose
+ * the CLI wrote last time, the homes of the agents this run names on the CLI's
+ * command line, and — because none of those lists can track a CLI whose
  * registry names 77 agents and whose `--agent` list genie derives from product
  * detection — every `skills` directory the bounded `$HOME` walk finds.
  *
@@ -2338,6 +2405,7 @@ function collisionCandidateHomes(context: {
   genieHome: string;
   skillsRoot: string;
   previous: SkillsInstallRecord | null;
+  selectedHomes: readonly string[];
   nowMs?: () => number;
   scan?: Pick<SkillsHomeScanOptions, 'maxDepth' | 'maxDirs' | 'budgetMs'>;
 }): string[] {
@@ -2352,6 +2420,7 @@ function collisionCandidateHomes(context: {
   const candidates = [
     ...agentSkillHomes(context.home).map((entry) => entry.dir),
     ...(context.previous?.agentDirs ?? []),
+    ...context.selectedHomes,
     ...scan.dirs,
   ];
   for (const dir of candidates) {
@@ -2375,7 +2444,7 @@ function hasGenieOwnedSkill(
     const target = join(home, skill);
     if (!isDirectory(target)) continue;
     const expected = readProbeFile(join(context.skillsRoot, skill, 'SKILL.md'));
-    if (classifySkillDir(target, expected, context.previous, skill) !== 'foreign') return true;
+    if (isGenieSkillDir(target, expected, context.previous, skill)) return true;
   }
   return false;
 }
@@ -2389,6 +2458,11 @@ function hasGenieOwnedSkill(
  *  - every dir the previous record proves the CLI wrote last time (57 of them
  *    on the dogfood host, 53 outside the table — this is what keeps M1's
  *    `~/.openclaw` case backed up);
+ *  - the skills home of every agent this run names with `--agent` — genie
+ *    hands those to the CLI itself, so the first write into one is never a
+ *    surprise (issue #3147: a first install replaced the Hermes category
+ *    `~/.hermes/skills/research`, five skills, with no copy taken, and an agent
+ *    installed after genie lost its same-named dir on the next update);
  *  - any other discovered home that ALREADY carries a genie-owned skill dir, so
  *    a home genie delivered to before a record existed is covered too.
  *
@@ -2403,11 +2477,13 @@ function collisionBackupHomes(context: {
   skillsRoot: string;
   inventory: readonly string[];
   previous: SkillsInstallRecord | null;
+  selectedHomes: readonly string[];
   candidates: readonly string[];
 }): string[] {
   const homes = new Set<string>([
     ...agentSkillHomes(context.home).map((entry) => entry.dir),
     ...(context.previous?.agentDirs ?? []),
+    ...context.selectedHomes,
   ]);
   for (const dir of context.candidates) {
     if (homes.has(dir)) continue;
@@ -2559,6 +2635,8 @@ function snapshotCollisionsSafely(context: {
   skillsRoot: string;
   inventory: string[];
   previous: SkillsInstallRecord | null;
+  /** The skills homes of the agents this run names on the CLI's command line. */
+  selectedHomes: readonly string[];
   warnings: string[];
   now?: () => Date;
   nowMs?: () => number;

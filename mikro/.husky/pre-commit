@@ -1,0 +1,15 @@
+# Check if CI is red on current branch — block commits on broken branches
+branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
+if [ -n "$branch" ] && [ "${SKIP_CI_CHECK:-}" != "1" ] && command -v gh >/dev/null 2>&1; then
+  ci_status=$(gh run list --branch "$branch" --workflow ci.yml --limit 1 --json conclusion --jq '.[0].conclusion' 2>/dev/null || true)
+  if [ "$ci_status" = "failure" ]; then
+    echo "BLOCKED: CI is red on branch '$branch'."
+    echo "Fix the failing CI before committing more changes."
+    echo "Run: npm run check"
+    echo "To commit a CI fix, use: SKIP_CI_CHECK=1 git commit ..."
+    exit 1
+  fi
+fi
+
+# Full typecheck
+npm run check

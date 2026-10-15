@@ -1,0 +1,3 @@
+{"type":"session","version":3,"id":"sess-second-0002","timestamp":"2026-10-01T11:00:00.000Z","cwd":"/work/other-task"}
+{"type":"message","id":"s01","parentId":null,"timestamp":"2026-10-01T11:00:01.000Z","message":{"role":"user","content":[{"type":"text","text":"List the files."}]}}
+{"type":"message","id":"s02","parentId":"s01","timestamp":"2026-10-01T11:00:04.000Z","message":{"role":"assistant","content":[{"type":"text","text":"Three files."}],"provider":"example-provider","model":"model-observed","usage":{"input":300,"output":20,"cacheRead":0,"cacheWrite":100,"totalTokens":420},"stopReason":"stop"}}

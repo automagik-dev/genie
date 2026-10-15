@@ -223,6 +223,14 @@ describe('darwin tolerance is decided by test name, never by file', () => {
     expect(SCRIPT).toContain("also set the shell tool's OWN timeout parameter to its maximum");
     expect(SCRIPT).toContain('never as a background task, never through a monitor, wait or sleep loop');
   });
+
+  test('the gate writes its check log to its own mktemp file and reads it back at the printed path', () => {
+    // Runs wf_238621d7-414 and wf_7b7dd614-c6c (2026-10-14) ran concurrently and both gates wrote
+    // `check.log` in the session's shared scratch dir: one read the other's tail as its own verdict.
+    expect(SCRIPT).toContain('L=$(mktemp <your scratch dir>/gate-check.XXXXXX); echo LOG=$L;');
+    expect(SCRIPT).toContain('never a fixed name such as check.log');
+    expect(SCRIPT).toContain('always at the exact path the LOG= line printed');
+  });
 });
 
 describe('the gate answer becomes a pass only where the script allows it', () => {

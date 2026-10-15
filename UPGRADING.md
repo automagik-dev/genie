@@ -45,6 +45,29 @@ stub: any `genie orca …` call, `genie orca mirror` included, prints a retireme
 Release tarballs keep an empty `plugins/genie/` directory only so earlier binaries can still update; nothing reads
 it. An Orca install of the plugin keeps running the commit Orca pinned, so uninstall it from Orca yourself.
 
+### Standalone Mikro source runtime
+
+The history-preserving `mikro/` package is a separate Node/npm runtime, not a third
+signed-release surface. Genie release tarballs do not embed its source, binary,
+dependencies or Python runtime. `genie install` and `genie update` do not install
+or update it. Build and validate that package separately; see
+[Repository packages](README.md#repository-packages).
+
+Mikro requires Node 22.19 or newer and the pinned Pi SDK family 1.0.2. RLM remains
+the default engine. Agent configuration now uses `engine: rlm|pi|prime|prime-sdk`;
+the old `backend` field is rejected, not migrated or aliased. Back up a user-owned
+agent file before replacing its `backend` field with the intended `engine`.
+`genie mikro call <agent> --engine pi` overrides that agent's choice for one call.
+Pi needs native tools and `emit_done`, not a legacy RLM Python `TOOLS.md` pack;
+incompatible packs fail before a model request. The optional Prime integrations
+remain separate explicit choices, not automatic fallback.
+
+The built-in control reference is `deepseek/deepseek-flash`. An explicit project
+Juice provider uses its configured private origin, literal advertised model IDs
+and project-specific key-file reference; it is not an implicit replacement for
+the control or a source of canonical billing. Partial usage retains only its
+observed subtotal and has no complete numeric footer.
+
 ### mikro Phoenix spans are off until you configure them
 
 `genie mikro call` used to post every attempt to `http://127.0.0.1:6006`, project `cc-mikro`, whether or not a

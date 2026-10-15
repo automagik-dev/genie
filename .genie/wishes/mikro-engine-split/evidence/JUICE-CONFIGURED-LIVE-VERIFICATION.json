@@ -1,0 +1,69 @@
+{
+  "receipts": [
+    {
+      "project": "genie",
+      "loadedProjectConfig": true,
+      "sameLiteralProviderIdAcrossProjects": "juice",
+      "selectedModel": "deepseek-v4.1-flash-juiced",
+      "api": "openai-responses",
+      "boundKeyReference": "/home/genie/.local/share/mikro-engine-split/juice/genie.key",
+      "matchesExplicitProjectReference": true,
+      "distinctRuntime": true,
+      "text": "CONFIGURED_JUICE_GENIE_READY",
+      "expectedTextMatched": true,
+      "usage": {
+        "inputTokens": 46,
+        "outputTokens": 25,
+        "cacheReadTokens": 0,
+        "cacheWriteTokens": 0,
+        "totalCost": 4.3799999999999994e-05,
+        "llmCalls": 1,
+        "reasoningTokens": 10
+      },
+      "nominalSdkRates": {
+        "input": 0.3,
+        "output": 1.2,
+        "cacheRead": 0.006,
+        "cacheWrite": 0
+      },
+      "actualGatewayBill": null,
+      "maxRetries": 0
+    },
+    {
+      "project": "brain",
+      "loadedProjectConfig": true,
+      "sameLiteralProviderIdAcrossProjects": "juice",
+      "selectedModel": "deepseek-v4.1-flash-juiced",
+      "api": "openai-responses",
+      "boundKeyReference": "/home/genie/.local/share/mikro-engine-split/juice/brain.key",
+      "matchesExplicitProjectReference": true,
+      "distinctRuntime": true,
+      "text": "CONFIGURED_JUICE_BRAIN_READY",
+      "expectedTextMatched": true,
+      "usage": {
+        "inputTokens": 46,
+        "outputTokens": 46,
+        "cacheReadTokens": 0,
+        "cacheWriteTokens": 0,
+        "totalCost": 6.9e-05,
+        "llmCalls": 1,
+        "reasoningTokens": 31
+      },
+      "nominalSdkRates": {
+        "input": 0.3,
+        "output": 1.2,
+        "cacheRead": 0.006,
+        "cacheWrite": 0
+      },
+      "actualGatewayBill": null,
+      "maxRetries": 0
+    }
+  ],
+  "nominalSdkEstimateNotCanonicalGatewayBilling": true,
+  "operatorSettingsWritten": false,
+  "exitCode": 0,
+  "recordedAt": "2026-10-05T22:30:29.284042+00:00",
+  "sourceSeal": "WAVE3-REPAIR2-REVIEW-SNAPSHOT.json",
+  "relationToEarlierViewer": "WAVE3-LIVE-VERIFICATION.json viewer snapshots precede these additional explicitly configured calls; historical one-request aggregates are not current totals",
+  "productionFilesUnchanged": true
+}

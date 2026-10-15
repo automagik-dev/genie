@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
+  "name": "mikro",
+  "displayName": "mikro",
+  "version": "0.1.0",
+  "description": "Registers the mikro MCP server against the current project, so every agent.yaml microagent in the workspace becomes a callable tool.",
+  "author": {
+    "name": "Automagik",
+    "url": "https://github.com/automagik-dev/mikro"
+  },
+  "homepage": "https://github.com/automagik-dev/mikro/tree/main/plugins/claude-code",
+  "repository": "https://github.com/automagik-dev/mikro",
+  "license": "MIT",
+  "keywords": [
+    "mikro",
+    "mcp",
+    "microagent",
+    "offload"
+  ],
+  "skills": [
+    "./skills/offload-guidance",
+    "./skills/microagent-create"
+  ]
+}

@@ -22,6 +22,7 @@ import {
   type CheckResult,
   MINIMUM_BUN_VERSION,
   checkBudgets,
+  checkContextBudget,
   checkGlobalDbContamination,
   checkIndexLaneDrift,
   checkRetiredJsonMcpEntry,
@@ -214,6 +215,114 @@ describe('budget echo', () => {
     const genieHome = process.env.GENIE_HOME as string;
     await checkBudgets();
     expect(existsSync(join(genieHome, 'config.json'))).toBe(false);
+  });
+});
+
+describe('context budget', () => {
+  let configDir: string;
+
+  beforeEach(() => {
+    configDir = mkdtempSync(join(tmpdir(), 'genie-context-budget-'));
+  });
+
+  afterEach(() => {
+    rmSync(configDir, { recursive: true, force: true });
+  });
+
+  // The env object is injected whole, so a host-set CLAUDE_CODE_AUTO_COMPACT_WINDOW is never read.
+  function run(extra: NodeJS.ProcessEnv = {}) {
+    const results = checkContextBudget({ CLAUDE_CONFIG_DIR: configDir, ...extra });
+    expect(results).toHaveLength(1);
+    return results[0];
+  }
+
+  test('the env var wins over the settings key', () => {
+    writeFileSync(join(configDir, 'settings.json'), JSON.stringify({ autoCompactWindow: 250000 }));
+    const check = run({ CLAUDE_CODE_AUTO_COMPACT_WINDOW: '400000' });
+    expect(check.status).toBe('pass');
+    expect(check.name).toBe('context budget: auto-compact window 400000 (env CLAUDE_CODE_AUTO_COMPACT_WINDOW)');
+    expect(check.contextBudget).toEqual({ value: 400000, source: 'env' });
+  });
+
+  test('the settings key is read from the Claude config dir when the env var is unset', () => {
+    writeFileSync(join(configDir, 'settings.json'), JSON.stringify({ autoCompactWindow: 250000 }));
+    const check = run();
+    expect(check.status).toBe('pass');
+    expect(check.name).toBe('context budget: auto-compact window 250000 (settings.json autoCompactWindow)');
+    expect(check.contextBudget).toEqual({ value: 250000, source: 'settings' });
+  });
+
+  test('only a whole token count from 100000 to 1000000 is reported; anything Claude Code would drop is unknown', () => {
+    const settingsPath = join(configDir, 'settings.json');
+    for (const kept of [100000, 400000, 1000000]) {
+      writeFileSync(settingsPath, JSON.stringify({ autoCompactWindow: kept }));
+      expect(run().contextBudget).toEqual({ value: kept, source: 'settings' });
+    }
+    // The shorthands belong to /autocompact and the CLI flag; in settings.json Claude Code drops them.
+    for (const dropped of ['400k', '1M', 400, '400000', 99999, 1000001, 250000.5, 0, -1, true, null, [], {}]) {
+      writeFileSync(settingsPath, JSON.stringify({ autoCompactWindow: dropped }));
+      const check = run();
+      expect(check.status).toBe('pass');
+      expect(check.name).toContain('unknown');
+      expect(check.contextBudget).toEqual({ value: null, source: 'settings' });
+    }
+    expect(run({ CLAUDE_CODE_AUTO_COMPACT_WINDOW: '400000' }).contextBudget).toEqual({ value: 400000, source: 'env' });
+    for (const odd of ['400k', '400', '4e5', '0x61A80', '400000.5', ' 400000', '1000001']) {
+      expect(run({ CLAUDE_CODE_AUTO_COMPACT_WINDOW: odd }).contextBudget).toEqual({ value: null, source: 'env' });
+    }
+  });
+
+  test('per-model windows are counted, since each wins over the global key for its model', () => {
+    const settingsPath = join(configDir, 'settings.json');
+    writeFileSync(
+      settingsPath,
+      JSON.stringify({
+        autoCompactWindow: 400000,
+        modelSettings: {
+          opus: { autoCompactWindow: 300000 },
+          fable: { autoCompactWindow: 'auto' },
+          sonnet: {},
+          haiku: { autoCompactWindow: '300k' },
+          other: { autoCompactWindow: 50 },
+          broken: null,
+        },
+      }),
+    );
+    const withGlobal = run();
+    expect(withGlobal.status).toBe('pass');
+    expect(withGlobal.name).toContain('2 per-model override(s)');
+    expect(withGlobal.contextBudget).toEqual({ value: 400000, source: 'settings', perModelOverrides: 2 });
+    for (const shape of ['x', [1], 7, null]) {
+      writeFileSync(settingsPath, JSON.stringify({ autoCompactWindow: 400000, modelSettings: shape }));
+      expect(run().contextBudget).toEqual({ value: 400000, source: 'settings' });
+    }
+    writeFileSync(settingsPath, JSON.stringify({ modelSettings: { opus: { autoCompactWindow: 300000 } } }));
+    const onlyPerModel = run();
+    expect(onlyPerModel.name).toContain('400k recommended');
+    expect(onlyPerModel.contextBudget).toEqual({ value: null, source: 'default', perModelOverrides: 1 });
+  });
+
+  test('neither set: the Claude Code default applies and 400k is the recommendation', () => {
+    const absent = run();
+    writeFileSync(join(configDir, 'settings.json'), JSON.stringify({ model: 'opus' }));
+    const keyless = run();
+    for (const check of [absent, keyless]) {
+      expect(check.status).toBe('pass');
+      expect(check.name).toStartWith('context budget:');
+      expect(check.name).toContain('Claude Code default applies');
+      expect(check.name).toContain('400k');
+      expect(check.contextBudget).toEqual({ value: null, source: 'default' });
+    }
+  });
+
+  test('malformed settings are reported as unknown, still a pass, and nothing is written', () => {
+    const settingsPath = join(configDir, 'settings.json');
+    writeFileSync(settingsPath, '{ "autoCompactWindow": ');
+    const check = run();
+    expect(check.status).toBe('pass');
+    expect(check.name).toBe('context budget: auto-compact window unknown (settings.json unreadable or malformed)');
+    expect(check.contextBudget).toEqual({ value: null, source: 'unknown' });
+    expect(readFileSync(settingsPath, 'utf8')).toBe('{ "autoCompactWindow": ');
   });
 });
 
@@ -554,8 +663,11 @@ describe('checkV4Residue — accounting + uncertain keeps + json fix', () => {
     writeFileSync(join(fxGenieHome, 'serve.pid'), '77\n', 'utf-8');
     const repoRoot = join(import.meta.dir, '..', '..');
 
+    // Run from the fixture home, not this checkout: from the repository root `doctor --fix` scans
+    // (and may repair modes in) every worktree git registered for it, which makes the run as slow
+    // as the host is cluttered — about 4 s with 24 worktrees — and lets a test touch a real tree.
     const proc = Bun.spawnSync([process.execPath, join(repoRoot, 'src', 'genie.ts'), 'doctor', '--fix', '--json'], {
-      cwd: repoRoot,
+      cwd: fxHome,
       env: { ...process.env, HOME: fxHome, GENIE_HOME: fxGenieHome },
     });
 

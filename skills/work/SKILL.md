@@ -77,6 +77,10 @@ Every handoff writes: nothing changes hands between coordinator and worker, or b
 
 Recompute the next wave from the wish. Use native notifications or the runtime’s structured waits. Leave unresolved groups in progress with their diagnosis, counters, and next route; continue independent groups.
 
+## Context budget
+
+The orchestrator keeps its working context near 150-200k tokens and compacts or hands off by 400k. Long reads, broad searches and log inspection go to subagents. A subagent report is at most about 2,000 tokens and cites file paths instead of pasting content.
+
 ## Delivery
 
 When groups finish, perform required integrated execution/PR review and checks. Keep the wish `IN_PROGRESS` through PR and CI. Only an authorized merge and required QA/release evidence establish `SHIPPED`. Report the exact verified state, remaining gaps, and artifact links; a worker notification is not delivery evidence by itself.

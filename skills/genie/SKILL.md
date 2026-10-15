@@ -55,6 +55,10 @@ Bug reports, operational commands, and Genie questions route normally without cr
 
 A ready design without an approved wish resumes at its recorded brainstorm/wish handoff. Review verdicts alone do not change state: the caller persists evidence and transitions. Read `reference/lifecycle.md` for that contract.
 
+## Context budget
+
+The orchestrator keeps its working context near 150-200k tokens and compacts or hands off by 400k. Long reads, broad searches and log inspection go to subagents. A subagent report is at most about 2,000 tokens and cites file paths instead of pasting content.
+
 ## Operations
 
 Read `genie --help` and the relevant namespace help before running CLI commands. Lifecycle state lives in `genie task` and `genie board`.

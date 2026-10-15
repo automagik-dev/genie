@@ -1,0 +1,46 @@
+{
+  "collapse_filter": false,
+  "search": "",
+  "showTags": true,
+  "showAttachments": false,
+  "showOrphans": true,
+  "colorGroups": [
+    {
+      "query": "path:Daily",
+      "color": {
+        "a": 1,
+        "rgb": 5431424
+      }
+    },
+    {
+      "query": "path:Intelligence",
+      "color": {
+        "a": 1,
+        "rgb": 1474816
+      }
+    },
+    {
+      "query": "path:Playbooks",
+      "color": {
+        "a": 1,
+        "rgb": 26112
+      }
+    },
+    {
+      "query": "tag:#decision",
+      "color": {
+        "a": 1,
+        "rgb": 16744448
+      }
+    }
+  ],
+  "showArrow": true,
+  "textFadeMultiplier": 0,
+  "nodeSizeMultiplier": 1,
+  "lineSizeMultiplier": 1,
+  "centerStrength": 0.5,
+  "repelStrength": 10,
+  "linkStrength": 1,
+  "linkDistance": 250,
+  "scale": 1
+}

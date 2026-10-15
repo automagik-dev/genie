@@ -1,0 +1,27 @@
+# mikro.yaml — Study Mode (Cache a paper, ask questions)
+# Use: mikro "What is the main contribution?" --context paper.pdf --cache
+
+model:
+  provider: google
+  model: gemini-3.1-flash-lite-preview
+  sub-call-model: gemini-3.1-flash-lite-preview
+
+system: |
+  You are a study assistant helping analyze academic papers and documents.
+  When the context is cached, you can answer rapid follow-up questions efficiently.
+  {custom_tools_section}
+
+cache:
+  enabled: true
+  retention: long
+  ttl: 3600
+  session-prefix: study
+
+context:
+  extensions: [.pdf, .md, .txt]
+  exclude: [node_modules, .git]
+
+budget:
+  max-cost: 1.00
+  max-tokens: 100000
+  max-depth: 2

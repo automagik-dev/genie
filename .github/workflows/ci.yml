@@ -79,7 +79,8 @@ jobs:
           submodules: recursive
           persist-credentials: false
           # FULL history, for the legacy-skills-catalog step below: that
-          # generator walks `git log --all` over every `skills/*/SKILL.md` blob
+          # generator walks the shipped refs (HEAD, tags, origin/main, origin/dev,
+          # refs/archive/*) over every `skills/*/SKILL.md` blob
           # genie ever committed. On the default depth-1 checkout it would see
           # almost no history and regenerate an incomplete catalog — the exact
           # failure the script's header warns about and why it is not in

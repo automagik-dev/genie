@@ -159,7 +159,7 @@ Genie v6.261003.1 has 17 CLI commands. Nothing runs in the background: every com
 | `genie idea` | Capture an idea into the roadmap board's Idea lane |
 | `genie init` | Set up per-repository state and remove Genie's own historical MCP entries, backup first |
 | `genie install` | Finish a verified install and deliver the skills under the consent scope you chose |
-| `genie metrics` | Opt-in lifecycle capture, off until `metrics enable`: a machine-local ledger of card events with the runtime session they ran in; `metrics export` reports time and tokens per lifecycle transition and, with `--phoenix`, sends them to a Phoenix you name |
+| `genie metrics` | Opt-in lifecycle capture, off until `metrics enable`: a machine-local ledger of card events with the runtime session they ran in; `metrics export` reports time and tokens per lifecycle transition and, with `--phoenix`, sends them to a Phoenix you name; `metrics prices update` fetches an optional model price table so USD can be derived where the runtime did not price a call |
 | `genie mikro` | Run and grow mikro microagents in any repository; `mikro call <agent>` returns validated JSON with every citation checked |
 | `genie orca` | Retired: a stub for one more release that prints a notice and writes nothing |
 | `genie setup` | Configure Genie |
@@ -169,6 +169,31 @@ Genie v6.261003.1 has 17 CLI commands. Nothing runs in the background: every com
 | `genie update` | Update to the latest signed release, verified offline |
 | `genie wish` | `wish lint` checks any repository's wishes for structure; `wish report <runId>` prints a run's tokens and time per stage |
 </details>
+
+## Repository packages
+
+[Mikro](mikro/README.md) lives in `mikro/` with its original Git history, npm lockfile, Node build and independent CI. Its runtime and dependencies are not part of the Genie binary or release payload. Root Bun, Biome and Knip discovery exclude that package; its full npm checks run separately.
+
+The standalone runtime requires Node 22.19 or newer and pins the Pi SDK family to 1.0.2.
+`genie mikro call <agent> --engine rlm|pi` selects an engine explicitly; otherwise the
+agent's `engine` wins, then `rlm`. RLM remains the default. Pi uses an isolated native
+session with read, grep, glob, hermetic git and `emit_done`, not the RLM Python tool pack
+or an ambient Pi installation. Both paths retain the caller's schema and citation checks.
+Missing or partial provider usage is unknown: an observed subtotal is not a complete bill.
+See the [agent schema](mikro/docs/agent-yaml-schema.md) and
+[standalone upgrade boundary](UPGRADING.md#standalone-mikro-source-runtime).
+
+Repository checks use Bun 1.3.11 or newer, matching CI: subtree test pruning relies on `test.pathIgnorePatterns`. This development prerequisite does not change Genie's existing CLI runtime floor.
+
+```bash
+bun run check
+npm --prefix mikro run deps:ci
+npm --prefix mikro run build
+npm --prefix mikro run check
+npm --prefix mikro test
+```
+
+`mikro update` is for a standalone Mikro Git worktree, including linked worktrees. It refuses the nested package before acquiring update ownership or changing Git state. Update the owning Genie source checkout explicitly instead; `genie update` remains the signed installed-release update path.
 
 ## Links
 

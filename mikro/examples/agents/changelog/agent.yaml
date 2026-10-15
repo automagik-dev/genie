@@ -1,0 +1,8 @@
+schema_version: 1
+tools_api: 1
+shape: loop
+model: station/Qwen3.6-35B-A3B-MTP-GGUF
+description: Turns raw git log output into Keep-a-Changelog entries grouped under Added/Changed/Fixed/Security. Use for release prep instead of drafting entries by hand.
+system: SYSTEM.md
+budget:
+  max_iterations: 6

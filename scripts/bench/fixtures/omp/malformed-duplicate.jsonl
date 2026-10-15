@@ -1,0 +1,5 @@
+{"type":"session","version":3,"id":"sess-malformed-0005","timestamp":"2026-10-01T14:00:00.000Z","cwd":"/work/bench-task"}
+{"type":"message","id":"m01","parentId":null,"timestamp":"2026-10-01T14:00:01.000Z","message":{"role":"user","content":[{"type":"text","text":"Summarize the diff."}]}}
+{"type":"message","id":"m02","parentId":"m01","timestamp":"2026-10-01T14:00:0
+{"type":"message","id":"m03","parentId":"m01","timestamp":"2026-10-01T14:00:05.000Z","message":{"role":"assistant","content":[{"type":"text","text":"Two files changed."}],"provider":"example-provider","model":"model-observed","usage":{"input":700,"output":30,"cacheRead":0,"cacheWrite":120,"totalTokens":850},"stopReason":"stop"}}
+{"type":"message","id":"m03","parentId":"m01","timestamp":"2026-10-01T14:00:05.000Z","message":{"role":"assistant","content":[{"type":"text","text":"Two files changed."}],"provider":"example-provider","model":"model-observed","usage":{"input":700,"output":30,"cacheRead":0,"cacheWrite":120,"totalTokens":850},"stopReason":"stop"}}
