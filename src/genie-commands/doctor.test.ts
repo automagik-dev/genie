@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -676,6 +677,42 @@ describe('checkV4Residue — accounting + uncertain keeps + json fix', () => {
     expect(existsSync(join(fxGenieHome, 'serve.pid'))).toBe(false);
     expect(parsed.checks.find((c) => c.name === 'v4 residue')?.status).toBe('pass'); // post-fix state
     expect(proc.stderr.toString()).toContain('Removed v4 residue'); // chatter rerouted, not lost
+  });
+
+  test('doctor --fix --json from a repo root: worktree and mode-repair chatter go to stderr', () => {
+    // Issue #3143: the repo-root cleanups (launch worktree removal, mode repair) only run when
+    // the cwd is a git checkout, so the fixture-home test above never reaches their logSink.
+    const repo = join(fxHome, 'repo');
+    const worktrees = join(fxHome, 'worktrees');
+    mkdirSync(repo, { recursive: true });
+    chmodSync(repo, 0o755); // the mode scan probes the worktree root against 0755; keep the planted drift umask-free
+    mkdirSync(worktrees, { recursive: true });
+    const git = (...args: string[]) => execFileSync('git', args, { cwd: repo, stdio: ['ignore', 'pipe', 'pipe'] });
+    git('init', '-q');
+    git('config', 'user.email', 'test@example.com');
+    git('config', 'user.name', 'Test');
+    git('config', 'commit.gpgsign', 'false');
+    writeFileSync(join(repo, 'README.md'), 'seed\n');
+    chmodSync(join(repo, 'README.md'), 0o644); // explicit index mode, independent of the host umask
+    git('add', 'README.md');
+    git('commit', '-q', '-m', 'seed');
+    git('branch', 'dev'); // integration branch containing the launch branch's tip
+    git('worktree', 'add', '-q', '-b', 'wish/demo-alpha', join(worktrees, 'demo-alpha')); // merged + clean
+    chmodSync(join(repo, 'README.md'), 0o666); // drift wider than the index
+    const repoRoot = join(import.meta.dir, '..', '..');
+
+    const proc = Bun.spawnSync([process.execPath, join(repoRoot, 'src', 'genie.ts'), 'doctor', '--fix', '--json'], {
+      cwd: repo,
+      env: { ...process.env, HOME: fxHome, GENIE_HOME: fxGenieHome, GENIE_WORKTREES_DIR: worktrees },
+    });
+
+    const stdout = proc.stdout.toString();
+    const stderr = proc.stderr.toString();
+    expect(() => JSON.parse(stdout)).not.toThrow(); // whole stdout is exactly one document
+    for (const message of ['Removing 1 merged, clean launch worktree', 'Tightening 1 wider-than-index mode']) {
+      expect(stderr).toContain(message);
+      expect(stdout).not.toContain(message);
+    }
   });
 });
 
