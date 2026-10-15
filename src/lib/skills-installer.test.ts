@@ -80,15 +80,32 @@ function okRunner(record: { argv: string[][] }): CommandRunner {
  * agent home that exists. A zero exit that writes nothing is now a failure of
  * its own (see "a zero exit that wrote no verifiable skill directory"), so a
  * test that wants a SUCCESSFUL install has to deliver something.
+ *
+ * `replace` replaces each skill dir WHOLESALE the way the real `--copy` does
+ * (`rm -rf` the target, then copy); the default merging `cpSync` leaves extra
+ * files in place and so hides any loss of them.
  */
-function deliveringOkRunner(record: { argv: string[][] }, extraHomes: string[] = []): CommandRunner {
+function deliveringOkRunner(
+  record: { argv: string[][] },
+  extraHomes: string[] = [],
+  { replace = false }: { replace?: boolean } = {},
+): CommandRunner {
   const inner = okRunner(record);
   return (command, args, options) => {
     const source = args[args.indexOf('add') + 1] as string;
     const targets = [...existingAgentSkillHomes(home).map((entry) => entry.dir), ...extraHomes];
     // `--all` writes every agent home it detects, which on a real host is far
     // more than the four-row known table: `extraHomes` is how a test says so.
-    for (const dir of targets) cpSync(source, dir, { recursive: true });
+    for (const dir of targets) {
+      if (!replace) {
+        cpSync(source, dir, { recursive: true });
+        continue;
+      }
+      for (const skill of readdirSync(source)) {
+        rmSync(join(dir, skill), { recursive: true, force: true });
+        cpSync(join(source, skill), join(dir, skill), { recursive: true });
+      }
+    }
     return inner(command, args, options);
   };
 }
@@ -2695,6 +2712,132 @@ describe('r3 rehearsal defects', () => {
     expect(outcome.ok === true && outcome.record.collisions).toEqual([{ dir: wish, skill: 'wish', kind: 'modified' }]);
     // Still backup-first: the operator's bytes are kept, whatever it is called.
     expect(readFileSync(join(backupRoot, '.claude', 'skills', 'wish', 'NOTES.md'), 'utf8')).toBe('my own notes\n');
+  });
+
+  /**
+   * Issue #3146: a `SKILL.md` byte-equal to the delivered one proved the WHOLE
+   * dir unchanged, so anything added beside it — a note, a nested skill,
+   * another tool's files — was never snapshotted, and `--copy` deleted it on
+   * every update with no backup and no `skills:` line.
+   */
+  test('a recorded skill dir with an unchanged SKILL.md and an extra file is backed up before --copy replaces it', () => {
+    fixtureSkillsTree(['wish']);
+    const claudeSkills = join(home, '.claude', 'skills');
+    const wish = join(claudeSkills, 'wish');
+    const digest = seedSkillDir(wish, '# wish\n');
+    writeSkillsInstallRecord(genieHome, {
+      ...RECORD_BASE,
+      ref: 'v5.260915.1',
+      inventory: ['wish'],
+      agentDirs: [claudeSkills],
+      dirDigests: { [wish]: digest },
+    });
+    writeFileSync(join(wish, 'my-notes.md'), 'notes\n', 'utf8');
+    mkdirSync(join(wish, 'my-skill'));
+    writeFileSync(join(wish, 'my-skill', 'SKILL.md'), '# mine\n', 'utf8');
+
+    const outcome = runSkillsInstall({
+      version: VERSION_UNDER_TEST,
+      genieHome,
+      home,
+      which: alwaysFound,
+      spawn: deliveringOkRunner({ argv: [] }, [], { replace: true }),
+      now: () => new Date('2026-09-16T00:00:00.000Z'),
+    });
+
+    expect(outcome.ok).toBe(true);
+    expect(existsSync(join(wish, 'my-notes.md'))).toBe(false);
+    const backupRoot = join(genieHome, 'state-backups', 'skills-collision-2026-09-16T00-00-00-000Z');
+    expect(warningsOf(outcome)).toContain(
+      `skills: genie skill dir ${wish} was modified locally — previous contents backed up to ${backupRoot}`,
+    );
+    expect(outcome.ok === true && outcome.record.collisions).toEqual([{ dir: wish, skill: 'wish', kind: 'modified' }]);
+    const backedUp = join(backupRoot, '.claude', 'skills', 'wish');
+    expect(readFileSync(join(backedUp, 'my-notes.md'), 'utf8')).toBe('notes\n');
+    expect(readFileSync(join(backedUp, 'my-skill', 'SKILL.md'), 'utf8')).toBe('# mine\n');
+  });
+
+  /**
+   * The same extra file in a home no record names: the byte-equal `SKILL.md`
+   * still says whose dir it is (genie's, edited), but no longer says the dir
+   * holds nothing else.
+   */
+  test('an unrecorded skill dir with a delivered SKILL.md and an extra file is backed up as modified', () => {
+    fixtureSkillsTree(['wish']);
+    const wish = join(home, '.claude', 'skills', 'wish');
+    seedSkillDir(wish, '# wish\n');
+    writeFileSync(join(wish, 'my-notes.md'), 'notes\n', 'utf8');
+
+    const outcome = runSkillsInstall({
+      version: VERSION_UNDER_TEST,
+      genieHome,
+      home,
+      which: alwaysFound,
+      spawn: deliveringOkRunner({ argv: [] }, [], { replace: true }),
+      now: () => new Date('2026-09-16T00:00:00.000Z'),
+    });
+
+    expect(outcome.ok).toBe(true);
+    const backupRoot = join(genieHome, 'state-backups', 'skills-collision-2026-09-16T00-00-00-000Z');
+    expect(outcome.ok === true && outcome.record.collisions).toEqual([{ dir: wish, skill: 'wish', kind: 'modified' }]);
+    expect(readFileSync(join(backupRoot, '.claude', 'skills', 'wish', 'my-notes.md'), 'utf8')).toBe('notes\n');
+  });
+
+  /** A legacy record carries no `dirDigests`: the recorded pair alone still names the dir genie's. */
+  test('a legacy record without digests backs up the extra file as modified', () => {
+    fixtureSkillsTree(['wish']);
+    const claudeSkills = join(home, '.claude', 'skills');
+    const wish = join(claudeSkills, 'wish');
+    seedSkillDir(wish, '# wish\n');
+    writeSkillsInstallRecord(genieHome, {
+      ...RECORD_BASE,
+      ref: 'v5.260830.1',
+      inventory: ['wish'],
+      agentDirs: [claudeSkills],
+    });
+    writeFileSync(join(wish, 'my-notes.md'), 'notes\n', 'utf8');
+
+    const outcome = runSkillsInstall({
+      version: VERSION_UNDER_TEST,
+      genieHome,
+      home,
+      which: alwaysFound,
+      spawn: deliveringOkRunner({ argv: [] }, [], { replace: true }),
+      now: () => new Date('2026-09-16T00:00:00.000Z'),
+    });
+
+    expect(outcome.ok).toBe(true);
+    const backupRoot = join(genieHome, 'state-backups', 'skills-collision-2026-09-16T00-00-00-000Z');
+    expect(outcome.ok === true && outcome.record.collisions).toEqual([{ dir: wish, skill: 'wish', kind: 'modified' }]);
+    expect(readFileSync(join(backupRoot, '.claude', 'skills', 'wish', 'my-notes.md'), 'utf8')).toBe('notes\n');
+  });
+
+  /** The other side of #3146: genie's own unchanged dir still costs no backup. */
+  test('a recorded skill dir that still matches its recorded digest is replaced with no backup', () => {
+    fixtureSkillsTree(['wish']);
+    const claudeSkills = join(home, '.claude', 'skills');
+    const wish = join(claudeSkills, 'wish');
+    const digest = seedSkillDir(wish, '# wish (previous release)\n');
+    writeSkillsInstallRecord(genieHome, {
+      ...RECORD_BASE,
+      ref: 'v5.260915.1',
+      inventory: ['wish'],
+      agentDirs: [claudeSkills],
+      dirDigests: { [wish]: digest },
+    });
+
+    const outcome = runSkillsInstall({
+      version: VERSION_UNDER_TEST,
+      genieHome,
+      home,
+      which: alwaysFound,
+      spawn: deliveringOkRunner({ argv: [] }, [], { replace: true }),
+      now: () => new Date('2026-09-16T00:00:00.000Z'),
+    });
+
+    expect(outcome.ok).toBe(true);
+    expect(outcome.ok === true && outcome.record.collisions).toBeUndefined();
+    expect(collisionBackupRoots()).toEqual([]);
   });
 
   // D2 ----------------------------------------------------------------------
