@@ -10,6 +10,7 @@ import {
   getGenieConfigPath,
   getGenieDir,
   loadGenieConfig,
+  loadGenieConfigSync,
   resolveConfigKey,
   saveGenieConfig,
 } from './genie-config.js';
@@ -179,6 +180,41 @@ describe('config key resolution', () => {
       key: 'budgets.maxEscalationsPerGroup',
       value: 4,
       source: 'file',
+    });
+  });
+
+  test('skills.excludeAgents is addressable and defaults to an empty list when absent', async () => {
+    expect(configSchemaHasKey('skills.excludeAgents')).toBe(true);
+    expect(GenieConfigSchema.parse({}).skills.excludeAgents).toEqual([]);
+    expect(await resolveConfigKey('skills.excludeAgents')).toEqual({
+      key: 'skills.excludeAgents',
+      value: [],
+      source: 'default',
+    });
+  });
+
+  test('a configured skills.excludeAgents array is returned from the file', async () => {
+    writeFileSync(getGenieConfigPath(), JSON.stringify({ skills: { excludeAgents: ['hermes-agent', 'cursor'] } }));
+    expect(await resolveConfigKey('skills.excludeAgents')).toEqual({
+      key: 'skills.excludeAgents',
+      value: ['hermes-agent', 'cursor'],
+      source: 'file',
+    });
+    expect(loadGenieConfigSync().skills.excludeAgents).toEqual(['hermes-agent', 'cursor']);
+  });
+
+  test.each([
+    ['a string', 'hermes-agent'],
+    ['an array holding a non-string', ['hermes-agent', 3]],
+  ])('a garbage skills.excludeAgents (%s) loads without throwing and reads back as []', async (_label, garbage) => {
+    writeFileSync(getGenieConfigPath(), JSON.stringify({ skills: { excludeAgents: garbage } }), 'utf-8');
+    const config = await loadGenieConfig();
+    expect(config.skills.excludeAgents).toEqual([]);
+    expect(loadGenieConfigSync().skills.excludeAgents).toEqual([]);
+    expect(await resolveConfigKey('skills.excludeAgents')).toEqual({
+      key: 'skills.excludeAgents',
+      value: [],
+      source: 'default',
     });
   });
 

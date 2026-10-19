@@ -731,6 +731,85 @@ describe('runSkillsInstall', () => {
   });
 
   /**
+   * Issue #3148 option C: `skills.excludeAgents` takes a detected agent out of
+   * delivery. Hermes is detected (its home exists, holding the operator's own
+   * skill and a genie dir an earlier install delivered), yet it is named in no
+   * spawn, its home is not touched, and the other detected agents still get `*`.
+   */
+  test('skills.excludeAgents keeps an excluded agent out of every spawn and leaves its home byte-for-byte', () => {
+    const previousGenieHome = process.env.GENIE_HOME;
+    const previousHome = process.env.HOME;
+    process.env.GENIE_HOME = genieHome;
+    process.env.HOME = home;
+    try {
+      fixtureSkillsTree(['research', 'wish']);
+      const hermes = join(home, '.hermes', 'skills');
+      mkdirSync(join(hermes, 'my-skill'), { recursive: true });
+      writeFileSync(join(hermes, 'my-skill', 'SKILL.md'), '# user-owned\n', 'utf8');
+      mkdirSync(join(hermes, 'wish'), { recursive: true });
+      writeFileSync(join(hermes, 'wish', 'SKILL.md'), '# wish\n', 'utf8');
+      const before = computeSkillDirDigest(hermes);
+      const calls = { argv: [] as string[][] };
+
+      const outcome = runSkillsInstall({
+        version: VERSION_UNDER_TEST,
+        genieHome,
+        home,
+        which: alwaysFound,
+        spawn: argvCopyRunner(calls),
+        excludeAgents: ['hermes-agent'],
+      });
+
+      expect(outcome.ok).toBe(true);
+      expect(calls.argv.some((argv) => argv.includes('hermes-agent'))).toBe(false);
+      const star = calls.argv.filter((argv) => skillArgs(argv).includes('*'));
+      expect(star).toHaveLength(1);
+      expect(star[0]).toContain('claude-code');
+      expect(star[0]).toContain('codex');
+      expect(computeSkillDirDigest(hermes)).toBe(before as string);
+      expect(readdirSync(hermes).sort()).toEqual(['my-skill', 'wish']);
+      expect(readFileSync(join(hermes, 'wish', 'SKILL.md'), 'utf8')).toBe('# wish\n');
+      expect((outcome.warnings ?? []).filter((line) => line.includes('excludeAgents'))).toEqual([
+        'skills: excluded by skills.excludeAgents: hermes-agent — not delivered to; dirs already there are left in place',
+      ]);
+    } finally {
+      if (previousGenieHome === undefined) Reflect.deleteProperty(process.env, 'GENIE_HOME');
+      else process.env.GENIE_HOME = previousGenieHome;
+      if (previousHome === undefined) Reflect.deleteProperty(process.env, 'HOME');
+      else process.env.HOME = previousHome;
+    }
+  });
+
+  test('an unknown skills.excludeAgents name is reported on its own line and changes nothing else', () => {
+    fixtureSkillsTree(['research', 'wish']);
+    mkdirSync(join(home, '.hermes', 'skills'), { recursive: true });
+    const calls = { argv: [] as string[][] };
+
+    const outcome = runSkillsInstall({
+      version: VERSION_UNDER_TEST,
+      genieHome,
+      home,
+      which: alwaysFound,
+      spawn: argvCopyRunner(calls),
+      excludeAgents: ['not-an-agent'],
+    });
+
+    // The same single `*` spawn over the same detected agents an install with
+    // no exclusion makes (see "exactly one spawn with --skill *" above).
+    expect(outcome.ok).toBe(true);
+    expect(calls.argv).toHaveLength(1);
+    const argv = calls.argv[0] as string[];
+    expect(skillArgs(argv)).toEqual(['*']);
+    const agents = argv.slice(argv.indexOf('--agent') + 1, argv.indexOf('-y', argv.indexOf('--agent')));
+    expect(agents).toEqual(['claude-code', 'codex', 'hermes-agent']);
+    expect(outcome.ok && outcome.record.inventory).toEqual(['research', 'wish']);
+    expect(outcome.ok && outcome.record.agentDirs).toContain(join(home, '.hermes', 'skills'));
+    expect((outcome.warnings ?? []).filter((line) => line.includes('excludeAgents'))).toEqual([
+      'skills: skills.excludeAgents names not-an-agent, which is no skills.sh agent; ignored',
+    ]);
+  });
+
+  /**
    * Junie arrives after the record was written and is a SELECTED agent, so its
    * foreign `review` is left out of its `--skill` list rather than replaced and
    * backed up. With `review` the whole inventory, Junie gets no spawn at all.
