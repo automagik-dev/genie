@@ -730,7 +730,12 @@ describe('runSkillsInstall', () => {
     expect(outcome.ok && outcome.record.skipped).toBeUndefined();
   });
 
-  test('an agent installed after genie has its home backed up on the next update', () => {
+  /**
+   * Junie arrives after the record was written and is a SELECTED agent, so its
+   * foreign `review` is left out of its `--skill` list rather than replaced and
+   * backed up. With `review` the whole inventory, Junie gets no spawn at all.
+   */
+  test('an agent installed after genie keeps its foreign dir untouched on the next update', () => {
     fixtureSkillsTree(['review']);
     const claudeSkills = join(home, '.claude', 'skills');
     mkdirSync(join(claudeSkills, 'review'), { recursive: true });
@@ -747,25 +752,28 @@ describe('runSkillsInstall', () => {
     const junie = join(home, '.junie', 'skills');
     mkdirSync(join(junie, 'review'), { recursive: true });
     writeFileSync(join(junie, 'review', 'notes.md'), 'notes\n', 'utf8');
+    const before = computeSkillDirDigest(join(junie, 'review'));
+    const calls = { argv: [] as string[][] };
 
     const outcome = runSkillsInstall({
       version: VERSION_UNDER_TEST,
       genieHome,
       home,
       which: alwaysFound,
-      spawn: deliveringOkRunner({ argv: [] }, [junie]),
+      spawn: argvCopyRunner(calls),
       now: () => new Date('2026-10-12T00:00:00.000Z'),
     });
 
     expect(outcome.ok).toBe(true);
-    const backupRoot = join(genieHome, 'state-backups', 'skills-collision-2026-10-12T00-00-00-000Z');
-    expect((outcome.warnings ?? []).filter((entry) => entry.includes('collision:'))).toEqual([
-      `skills: collision: ${join(junie, 'review')} (review) — a foreign skill dir that changed while this install ran; its previous contents are backed up to ${backupRoot}`,
+    expect(computeSkillDirDigest(join(junie, 'review'))).toBe(before as string);
+    expect(readdirSync(join(junie, 'review'))).toEqual(['notes.md']);
+    expect((outcome.warnings ?? []).filter((line) => line.startsWith('skills: skipped'))).toEqual([
+      `skills: skipped review for junie — ${join(junie, 'review')} is not a genie skill dir; left untouched`,
     ]);
-    expect(outcome.ok && outcome.record.collisionBackups).toEqual([
-      { root: backupRoot, entries: [{ dir: join(junie, 'review'), skill: 'review', kind: 'foreign' }] },
-    ]);
-    expect(readFileSync(join(backupRoot, '.junie', 'skills', 'review', 'notes.md'), 'utf8')).toBe('notes\n');
+    expect((outcome.warnings ?? []).some((line) => line.includes('collision:'))).toBe(false);
+    expect(calls.argv.some((argv) => argv.includes('junie'))).toBe(false);
+    expect(outcome.ok && outcome.record.collisionBackups).toBeUndefined();
+    expect(collisionBackupRoots()).toEqual([]);
   });
 
   /**
