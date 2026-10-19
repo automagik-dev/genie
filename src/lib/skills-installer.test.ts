@@ -110,6 +110,50 @@ function deliveringOkRunner(
   };
 }
 
+/**
+ * What the pinned CLI does with its argv: writes ONLY the `--agent` homes and
+ * ONLY the `--skill` names (`'*'` is the whole delivered tree), replacing each
+ * target wholesale the way `--copy` does (`rm -rf`, then copy). A runner that
+ * ignores the argv cannot tell a skipped foreign dir from a replaced one.
+ */
+function argvCopyRunner(record: { argv: string[][] } = { argv: [] }): CommandRunner {
+  return (command, args) => {
+    record.argv.push([command, ...args]);
+    const source = args[args.indexOf('add') + 1] as string;
+    const listAfter = (flag: string): string[] => {
+      const values: string[] = [];
+      for (const token of args.slice(args.indexOf(flag) + 1)) {
+        if (token.startsWith('-')) break;
+        values.push(token);
+      }
+      return values;
+    };
+    const requested = listAfter('--skill');
+    const skills = requested.includes('*') ? readdirSync(source) : requested;
+    for (const agent of listAfter('--agent')) {
+      const spec = SKILLS_CLI_AGENTS.find((entry) => entry.agent === agent);
+      if (spec === undefined) throw new Error(`unknown agent: ${agent}`);
+      const target = agentSkillsHome(home, spec);
+      mkdirSync(target, { recursive: true });
+      for (const skill of skills) {
+        rmSync(join(target, skill), { recursive: true, force: true });
+        cpSync(join(source, skill), join(target, skill), { recursive: true });
+      }
+    }
+    return { exitCode: 0, stdout: '', stderr: '' };
+  };
+}
+
+/** The `--skill` values of one recorded argv, up to the next flag. */
+function skillArgs(argv: readonly string[]): string[] {
+  const values: string[] = [];
+  for (const token of argv.slice(argv.indexOf('--skill') + 1)) {
+    if (token.startsWith('-')) break;
+    values.push(token);
+  }
+  return values;
+}
+
 const alwaysFound = (name: string) => `/usr/bin/${name}`;
 
 /** Every `skills-collision-*` root currently under GENIE_HOME/state-backups. */
@@ -431,10 +475,13 @@ describe('runSkillsInstall', () => {
    * spawn proves it holds WHILE the install runs, not just afterwards.
    */
   test('only agent homes the install writes are snapshotted; foreign trees elsewhere are untouched', () => {
-    const source = fixtureSkillsTree(['wish']);
+    const source = fixtureSkillsTree(['wish', 'work']);
     const claudeSkills = join(home, '.claude', 'skills');
     mkdirSync(join(claudeSkills, 'wish'), { recursive: true });
     writeFileSync(join(claudeSkills, 'wish', 'SKILL.md'), '# a foreign wish skill\n', 'utf8');
+    // Genie's own `work`, edited locally: the one dir this install replaces.
+    cpSync(join(source, 'work'), join(claudeSkills, 'work'), { recursive: true });
+    writeFileSync(join(claudeSkills, 'work', 'notes.md'), 'notes\n', 'utf8');
     // Not an agent home: a stray `skills/` tree the scan used to sweep in.
     const stray = join(home, 'workspace', 'skills', 'wish');
     mkdirSync(stray, { recursive: true });
@@ -452,20 +499,29 @@ describe('runSkillsInstall', () => {
       spawn: (command, args, options) => {
         // MID-RUN: nothing outside an agent home has been read into a backup.
         for (const backupRoot of collisionBackupRoots()) staged.push(readdirSync(backupRoot));
-        return deliveringOkRunner({ argv: [] })(command, args, options);
+        return argvCopyRunner()(command, args, options);
       },
     });
 
     expect(outcome.ok).toBe(true);
-    expect(staged).toEqual([['.claude']]);
-    const collisions = (outcome.ok ? (outcome.warnings ?? []) : []).filter((line) => line.includes('collision:'));
-    expect(collisions).toHaveLength(1);
-    expect(collisions[0]).toContain(join(claudeSkills, 'wish'));
+    expect(staged.every((entries) => entries.length === 1 && entries[0] === '.claude')).toBe(true);
+    expect(staged.length).toBeGreaterThan(0);
+    // The foreign `wish` in the selected Claude home is skipped, not replaced.
+    expect(readFileSync(join(claudeSkills, 'wish', 'SKILL.md'), 'utf8')).toBe('# a foreign wish skill\n');
+    expect(outcome.warnings ?? []).toContain(
+      `skills: skipped wish for claude-code — ${join(claudeSkills, 'wish')} is not a genie skill dir; left untouched`,
+    );
+    const modified = (outcome.ok ? (outcome.warnings ?? []) : []).filter((line) =>
+      line.includes('was modified locally'),
+    );
+    expect(modified).toHaveLength(1);
+    expect(modified[0]).toContain(join(claudeSkills, 'work'));
     expect(outcome.ok && outcome.record.collisions).toEqual([
-      { dir: join(claudeSkills, 'wish'), skill: 'wish', kind: 'foreign' },
+      { dir: join(claudeSkills, 'work'), skill: 'work', kind: 'modified' },
     ]);
-    const backupRoot = (collisions[0] as string).split('backed up to ')[1] as string;
-    expect(existsSync(join(backupRoot, '.claude', 'skills', 'wish'))).toBe(true);
+    const backupRoot = (modified[0] as string).split('backed up to ')[1] as string;
+    expect(existsSync(join(backupRoot, '.claude', 'skills', 'work', 'notes.md'))).toBe(true);
+    expect(existsSync(join(backupRoot, '.claude', 'skills', 'wish'))).toBe(false);
     // Nothing outside an agent home was read into the backup, and both stray
     // trees are exactly as the user left them.
     expect(existsSync(join(backupRoot, 'workspace'))).toBe(false);
@@ -555,38 +611,123 @@ describe('runSkillsInstall', () => {
   });
 
   /**
-   * Issue #3147: genie names every detected agent on the CLI's command line, so
-   * that agent's skills home is one genie CAN name in advance — the first write
-   * into it (a first install, or an agent installed after genie) is backed up
-   * like a known-table home. `~/.hermes/skills/research` held five Hermes skills
-   * and was replaced by genie's `research` with no copy taken.
+   * Issue #3148 (was #3147's backup-on-first-install): `~/.hermes/skills/research`
+   * is a Hermes category holding the operator's own skills, and `--copy` would
+   * `rm -rf` it to write genie's `research`. Hermes is a SELECTED agent, so genie
+   * leaves that name out of Hermes' `--skill` list instead: the category
+   * survives byte-for-byte and every other genie skill still lands beside it.
    */
-  test('a selected agent home outside the known table is backed up on a FIRST install', () => {
-    fixtureSkillsTree(['research']);
+  test('a foreign dir in a selected agent home survives byte-for-byte while the rest is delivered', () => {
+    fixtureSkillsTree(['research', 'review', 'wish']);
     const hermes = join(home, '.hermes', 'skills');
-    mkdirSync(join(hermes, 'research', 'my-skill'), { recursive: true });
-    writeFileSync(join(hermes, 'research', 'my-skill', 'SKILL.md'), '# user-owned\n', 'utf8');
+    const research = join(hermes, 'research');
+    mkdirSync(join(research, 'my-skill'), { recursive: true });
+    writeFileSync(join(research, 'my-skill', 'SKILL.md'), '# user-owned\n', 'utf8');
+    writeFileSync(join(research, 'DESCRIPTION.md'), 'a hermes category\n', 'utf8');
+    const before = computeSkillDirDigest(research);
+    const calls = { argv: [] as string[][] };
 
     const outcome = runSkillsInstall({
       version: VERSION_UNDER_TEST,
       genieHome,
       home,
       which: alwaysFound,
-      spawn: deliveringOkRunner({ argv: [] }, [hermes]),
+      spawn: argvCopyRunner(calls),
       now: () => new Date('2026-10-12T00:00:00.000Z'),
     });
 
     expect(outcome.ok).toBe(true);
-    const backupRoot = join(genieHome, 'state-backups', 'skills-collision-2026-10-12T00-00-00-000Z');
-    expect((outcome.warnings ?? []).filter((entry) => entry.includes('collision:'))).toEqual([
-      `skills: collision: ${join(hermes, 'research')} (research) — a foreign skill dir that changed while this install ran; its previous contents are backed up to ${backupRoot}`,
+    expect(computeSkillDirDigest(research)).toBe(before as string);
+    expect(readFileSync(join(research, 'my-skill', 'SKILL.md'), 'utf8')).toBe('# user-owned\n');
+    expect(readdirSync(hermes).sort()).toEqual(['research', 'review', 'wish']);
+    expect(readFileSync(join(hermes, 'review', 'SKILL.md'), 'utf8')).toBe('# review\n');
+    expect(readFileSync(join(hermes, 'wish', 'SKILL.md'), 'utf8')).toBe('# wish\n');
+    expect((outcome.warnings ?? []).filter((line) => line.startsWith('skills: skipped'))).toEqual([
+      `skills: skipped research for hermes-agent — ${research} is not a genie skill dir; left untouched`,
     ]);
-    expect(outcome.ok && outcome.record.collisionBackups).toEqual([
-      { root: backupRoot, entries: [{ dir: join(hermes, 'research'), skill: 'research', kind: 'foreign' }] },
-    ]);
-    expect(readFileSync(join(backupRoot, '.hermes', 'skills', 'research', 'my-skill', 'SKILL.md'), 'utf8')).toBe(
-      '# user-owned\n',
-    );
+    // Hermes got its own spawn, with an explicit list that leaves `research` out.
+    const hermesCalls = calls.argv.filter((argv) => argv.includes('hermes-agent'));
+    expect(hermesCalls).toHaveLength(1);
+    expect(skillArgs(hermesCalls[0] as string[])).toEqual(['review', 'wish']);
+    expect(calls.argv.filter((argv) => skillArgs(argv).includes('*'))).toHaveLength(1);
+    // The record does not claim the skipped dir as delivered, and keeps the receipt.
+    const record = outcome.ok ? outcome.record : null;
+    expect(record?.dirDigests?.[research]).toBeUndefined();
+    expect(record?.dirDigests?.[join(hermes, 'review')]).toBeDefined();
+    expect(record?.skipped).toEqual([{ dir: research, skill: 'research' }]);
+    expect(record?.collisions).toBeUndefined();
+    expect(collisionBackupRoots()).toEqual([]);
+  });
+
+  /**
+   * The second-run trap: after the first install the Hermes home is in
+   * `agentDirs` and `research` is in `inventory`, which on its own reads as a
+   * pair genie placed — `modified`, and replaced. The `skipped` receipt keeps
+   * the dir foreign.
+   */
+  test('a skipped foreign dir stays skipped on the next run over the same record', () => {
+    fixtureSkillsTree(['research', 'wish']);
+    const hermes = join(home, '.hermes', 'skills');
+    const research = join(hermes, 'research');
+    mkdirSync(join(research, 'my-skill'), { recursive: true });
+    writeFileSync(join(research, 'my-skill', 'SKILL.md'), '# user-owned\n', 'utf8');
+    const before = computeSkillDirDigest(research);
+    const skippedLine = `skills: skipped research for hermes-agent — ${research} is not a genie skill dir; left untouched`;
+
+    const first = runSkillsInstall({
+      version: VERSION_UNDER_TEST,
+      genieHome,
+      home,
+      which: alwaysFound,
+      spawn: argvCopyRunner(),
+      now: () => new Date('2026-10-12T00:00:00.000Z'),
+    });
+    expect(first.ok).toBe(true);
+    const recorded = readSkillsInstallRecord(genieHome) as SkillsInstallRecord;
+    expect(recorded.agentDirs).toContain(hermes);
+    expect(recorded.inventory).toContain('research');
+
+    const calls = { argv: [] as string[][] };
+    const second = runSkillsInstall({
+      version: VERSION_UNDER_TEST,
+      genieHome,
+      home,
+      which: alwaysFound,
+      spawn: argvCopyRunner(calls),
+      now: () => new Date('2026-10-13T00:00:00.000Z'),
+    });
+
+    expect(second.ok).toBe(true);
+    expect(computeSkillDirDigest(research)).toBe(before as string);
+    expect(second.warnings ?? []).toContain(skippedLine);
+    expect((second.warnings ?? []).some((line) => line.includes('was modified locally'))).toBe(false);
+    expect(skillArgs(calls.argv.find((argv) => argv.includes('hermes-agent')) as string[])).toEqual(['wish']);
+    const record = second.ok ? second.record : null;
+    expect(record?.dirDigests?.[research]).toBeUndefined();
+    expect(record?.skipped).toEqual([{ dir: research, skill: 'research' }]);
+    expect(collisionBackupRoots()).toEqual([]);
+  });
+
+  test('an install with no foreign collision makes exactly one spawn with --skill *', () => {
+    fixtureSkillsTree(['research', 'wish']);
+    mkdirSync(join(home, '.hermes', 'skills'), { recursive: true });
+    const calls = { argv: [] as string[][] };
+
+    const outcome = runSkillsInstall({
+      version: VERSION_UNDER_TEST,
+      genieHome,
+      home,
+      which: alwaysFound,
+      spawn: argvCopyRunner(calls),
+    });
+
+    expect(outcome.ok).toBe(true);
+    expect(calls.argv).toHaveLength(1);
+    const argv = calls.argv[0] as string[];
+    expect(argv[argv.indexOf('--skill') + 1]).toBe('*');
+    expect(argv).toContain('hermes-agent');
+    expect((outcome.warnings ?? []).some((line) => line.startsWith('skills: skipped'))).toBe(false);
+    expect(outcome.ok && outcome.record.skipped).toBeUndefined();
   });
 
   test('an agent installed after genie has its home backed up on the next update', () => {
@@ -776,23 +917,25 @@ describe('runSkillsInstall', () => {
 
   /** X1: anything the CURRENT run keeps is named on stdout, with a count. */
   test('a kept collision backup root is named on stdout with the number of replaced dirs', () => {
-    const source = fixtureSkillsTree(['wish']);
+    const source = fixtureSkillsTree(['wish', 'work']);
     const claudeSkills = join(home, '.claude', 'skills');
+    // The user's OWN `wish` is skipped, so it is not a replaced dir; genie's
+    // edited `work` is.
     mkdirSync(join(claudeSkills, 'wish'), { recursive: true });
     writeFileSync(join(claudeSkills, 'wish', 'SKILL.md'), "# the user's OWN wish skill\n", 'utf8');
+    cpSync(join(source, 'work'), join(claudeSkills, 'work'), { recursive: true });
+    writeFileSync(join(claudeSkills, 'work', 'notes.md'), 'notes\n', 'utf8');
 
     const outcome = runSkillsInstall({
       version: VERSION_UNDER_TEST,
       genieHome,
       home,
       which: alwaysFound,
-      spawn: (command, args, options) => {
-        cpSync(source, claudeSkills, { recursive: true });
-        return deliveringOkRunner({ argv: [] })(command, args, options);
-      },
+      spawn: argvCopyRunner(),
     });
 
     expect(outcome.ok).toBe(true);
+    expect(readFileSync(join(claudeSkills, 'wish', 'SKILL.md'), 'utf8')).toBe("# the user's OWN wish skill\n");
     const kept = (outcome.warnings ?? []).find((line) => line.startsWith('skills: collision backup kept at '));
     expect(kept).toBeDefined();
     const root = collisionBackupRoots()[0] as string;
@@ -2205,10 +2348,13 @@ describe('runSkillsChannelConvergence', () => {
   });
 
   test('a failure still reports the collisions it actually replaced, and only those', () => {
-    const source = fixtureSkillsTree(['wish']);
+    const source = fixtureSkillsTree(['wish', 'work']);
     const claudeSkills = join(home, '.claude', 'skills');
     mkdirSync(join(claudeSkills, 'wish'), { recursive: true });
     writeFileSync(join(claudeSkills, 'wish', 'SKILL.md'), '# a foreign wish skill\n', 'utf8');
+    cpSync(join(source, 'work'), join(claudeSkills, 'work'), { recursive: true });
+    writeFileSync(join(claudeSkills, 'work', 'notes.md'), 'notes\n', 'utf8');
+    const deliver = argvCopyRunner();
 
     const lines: string[] = [];
     const result = runSkillsChannelConvergence({
@@ -2217,17 +2363,26 @@ describe('runSkillsChannelConvergence', () => {
       genieHome,
       home,
       which: alwaysFound,
-      spawn: () => {
-        cpSync(source, claudeSkills, { recursive: true });
-        return { exitCode: 1, stdout: '', stderr: 'boom\n' };
+      // The Claude spawn replaces what its argv names, then dies.
+      spawn: (command, args, options) => {
+        deliver(command, args, options);
+        return args.includes('claude-code')
+          ? { exitCode: 1, stdout: '', stderr: 'boom\n' }
+          : { exitCode: 0, stdout: '', stderr: '' };
       },
       log: (line) => lines.push(line),
     });
 
     expect(result.status).toBe('failed');
     expect(lines[0]).toStartWith('Skills install failed: skills CLI exited 1: boom.');
-    expect(lines[1]).toContain(
-      `skills: collision: ${join(claudeSkills, 'wish')} (wish) — a foreign skill dir that changed while this install ran; its previous contents are backed up to `,
+    expect(lines).toContain(
+      `skills: skipped wish for claude-code — ${join(claudeSkills, 'wish')} is not a genie skill dir; left untouched`,
+    );
+    expect(readFileSync(join(claudeSkills, 'wish', 'SKILL.md'), 'utf8')).toBe('# a foreign wish skill\n');
+    const reported = lines.filter((line) => line.includes('collision:') || line.includes('was modified locally'));
+    expect(reported).toHaveLength(1);
+    expect(reported[0]).toContain(
+      `skills: genie skill dir ${join(claudeSkills, 'work')} was modified locally — previous contents backed up to `,
     );
     expect(process.exitCode).toBe(1);
   });

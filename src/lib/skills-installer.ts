@@ -76,9 +76,11 @@ import {
   runBoundedIntegrationCommand,
 } from './runtime-integrations.js';
 import {
+  SKILLS_CLI_AGENTS,
   type SkillsAgentSelection,
   agentDetectionRoots,
   agentHomeIsIndependentlyDetected,
+  agentSkillsHome,
   selectSkillsCliAgents,
 } from './skills-agents.js';
 
@@ -337,6 +339,20 @@ const skillsInstallRecordSchema = z.object({
    * Optional for the same decision-2 reason as `source`.
    */
   collisionBackups: z.array(skillsCollisionBackupSchema).optional(),
+  /**
+   * Foreign same-named directories this run left untouched in a selected
+   * agent's skills home (issue #3148): genie delivered its other skills to that
+   * agent through an explicit `--skill` list that leaves these names out.
+   *
+   * The receipt is what keeps the skip stable. The home is still recorded in
+   * `agentDirs` and the name is still in `inventory`, so without it the next
+   * run's identity check would read the pair as genie's own (`modified`) and
+   * hand the directory to `--copy` after all. A skipped path never has a
+   * `dirDigests` entry. Optional for the same decision-2 reason as `source`.
+   */
+  skipped: z
+    .array(z.object({ dir: skillsCollisionSchema.shape.dir, skill: skillsCollisionSchema.shape.skill }))
+    .optional(),
   /**
    * Retired skill directories left on disk for a human. Optional for the same
    * decision-2 reason as `source`: a required field would invalidate every
@@ -969,6 +985,9 @@ type SkillDirOwnership = 'genie' | SkillsCollisionKind;
 function recordPlacedSkillDir(target: string, skill: string, previous: SkillsInstallRecord | null): boolean {
   if (previous === null) return false;
   if (previous.dirDigests?.[target] !== undefined) return true;
+  // A dir the previous run left untouched as foreign was never genie's, even
+  // though its home is recorded and its name is in the inventory.
+  if (previous.skipped?.some((entry) => entry.dir === target)) return false;
   return previous.inventory.includes(skill) && previous.agentDirs.includes(dirname(target));
 }
 
@@ -1081,10 +1100,12 @@ function collidingSkillDir(
  * Copy every foreign same-named skill directory out of harm's way BEFORE the
  * install overwrites it — but only in the homes `backupHomes` names.
  *
- * The pinned CLI takes an agent list but no per-home veto, so "install
- * everywhere except that one directory" is unimplementable (decisions 4/5):
- * collisions are detected, backed up, recorded and reported — never refused,
- * and never restored (restoration is explicitly out of scope). A directory that cannot be
+ * A FOREIGN dir in a selected agent's own skills home never reaches this
+ * point as an overwrite: `detectForeignSkillDirs` leaves it out of that agent's
+ * `--skill` list (issue #3148). What remains — genie's own edited dirs, and
+ * homes the CLI writes that genie cannot name in advance — is detected, backed
+ * up, recorded and reported — never refused, and never restored (restoration
+ * is explicitly out of scope). A directory that cannot be
  * backed up is NOT recorded as handled; it is reported as a failure instead, so
  * the operator line can never claim a backup that does not exist.
  *
@@ -1157,8 +1178,16 @@ export function releaseTag(version: string): string {
  * `sourceRoot` is an absolute LOCAL path — never a `<repo>@<ref>` GitHub
  * source, which the pinned CLI silently resolves to the default branch (see the
  * module header).
+ *
+ * `skills` replaces `'*'` with an explicit list — only for an agent whose home
+ * holds a foreign same-named dir (see {@link planSkillsSpawns}); omitted, the
+ * argv is the single `--skill '*'` form every other agent gets.
  */
-export function buildSkillsAddArgv(options: { sourceRoot: string; agents: readonly string[] }): string[] {
+export function buildSkillsAddArgv(options: {
+  sourceRoot: string;
+  agents: readonly string[];
+  skills?: readonly string[];
+}): string[] {
   return [
     'npx',
     '-y',
@@ -1166,7 +1195,7 @@ export function buildSkillsAddArgv(options: { sourceRoot: string; agents: readon
     'add',
     options.sourceRoot,
     '--skill',
-    '*',
+    ...(options.skills ?? ['*']),
     '--agent',
     ...options.agents,
     '-y',
@@ -1191,6 +1220,121 @@ function shellQuoteArgvToken(token: string): string {
 /** The operator-facing remedy line for any skills-channel failure. */
 export function skillsInstallRemedy(sourceRoot: string, agents: readonly string[]): string {
   return `Run: ${buildSkillsAddArgv({ sourceRoot, agents }).map(shellQuoteArgvToken).join(' ')}`;
+}
+
+/** One foreign same-named dir in a selected agent's skills home, left untouched. */
+interface SkippedSkillDir {
+  agent: string;
+  skill: string;
+  /** `<agent's skills home>/<skill>`, absolute. */
+  dir: string;
+}
+
+/** The selected agent's global skills home, or `null` for a name the mirrored registry lacks. */
+function selectedAgentHome(home: string, agent: string): string | null {
+  const spec = SKILLS_CLI_AGENTS.find((entry) => entry.agent === agent);
+  return spec === undefined ? null : agentSkillsHome(home, spec);
+}
+
+/**
+ * Every (agent, skill) pair whose target the CLI's `--copy` would `rm -rf`
+ * although it is not genie's (issue #3148): an existing real directory at
+ * `<agent's skills home>/<skill>` that {@link isGenieSkillDir} disowns.
+ *
+ * Identity only, so a genie dir the operator EDITED (`modified`) is never
+ * skipped — it keeps the replace-and-back-up path. A file or a symlink at that
+ * name is not a collision, exactly as in {@link collidingSkillDir}.
+ */
+function detectForeignSkillDirs(context: {
+  home: string;
+  agents: readonly string[];
+  inventory: readonly string[];
+  skillsRoot: string;
+  previous: SkillsInstallRecord | null;
+}): SkippedSkillDir[] {
+  const readDelivered = deliveredSkillReader(context.skillsRoot);
+  const skipped: SkippedSkillDir[] = [];
+  for (const agent of context.agents) {
+    const agentHome = selectedAgentHome(context.home, agent);
+    if (agentHome === null) continue;
+    for (const skill of context.inventory) {
+      const dir = join(agentHome, skill);
+      if (!isRealDirectory(dir)) continue;
+      if (isGenieSkillDir(dir, readDelivered(skill).skillMd, context.previous, skill)) continue;
+      skipped.push({ agent, skill, dir });
+    }
+  }
+  return skipped;
+}
+
+function isRealDirectory(path: string): boolean {
+  try {
+    const stat = lstatSync(path);
+    return stat.isDirectory() && !stat.isSymbolicLink();
+  } catch {
+    return false;
+  }
+}
+
+/** The operator line for one skipped pair — one per (agent, skill), never aggregated. */
+function describeSkippedSkillDir(entry: SkippedSkillDir): string {
+  return `skills: skipped ${entry.skill} for ${entry.agent} — ${entry.dir} is not a genie skill dir; left untouched`;
+}
+
+/** One pinned-CLI spawn: `skills` is `undefined` for the `--skill '*'` form. */
+interface SkillsSpawn {
+  agents: string[];
+  skills?: string[];
+}
+
+/**
+ * The spawns that deliver genie's skills without replacing a foreign dir.
+ *
+ * Every agent with no skipped pair shares the single `--skill '*'` spawn. An
+ * agent with one gets an explicit list — the inventory minus its colliding
+ * names — and agents writing the same home share that spawn, because the
+ * skipped names are a property of the home. A list that comes out empty issues
+ * no spawn at all.
+ */
+function planSkillsSpawns(context: {
+  home: string;
+  agents: readonly string[];
+  inventory: readonly string[];
+  skipped: readonly SkippedSkillDir[];
+}): SkillsSpawn[] {
+  const everything: string[] = [];
+  const byHome = new Map<string, SkillsSpawn>();
+  for (const agent of context.agents) {
+    const colliding = new Set(context.skipped.filter((entry) => entry.agent === agent).map((entry) => entry.skill));
+    if (colliding.size === 0) {
+      everything.push(agent);
+      continue;
+    }
+    const key = selectedAgentHome(context.home, agent) as string;
+    const spawn = byHome.get(key) ?? {
+      agents: [],
+      skills: context.inventory.filter((skill) => !colliding.has(skill)),
+    };
+    spawn.agents.push(agent);
+    byHome.set(key, spawn);
+  }
+  const spawns: SkillsSpawn[] = everything.length > 0 ? [{ agents: everything }] : [];
+  for (const spawn of byHome.values()) {
+    if ((spawn.skills ?? []).length > 0) spawns.push(spawn);
+  }
+  return spawns;
+}
+
+/** The remedy for a planned run: every spawn's argv, quoted, in order. */
+function plannedSkillsRemedy(sourceRoot: string, spawns: readonly SkillsSpawn[]): string {
+  // Every name is skipped everywhere: there is no command that delivers safely.
+  if (spawns.length === 0) return 'Move the dirs named on the skills: skipped lines aside, then run: genie update';
+  const commands = spawns.map((spawn) =>
+    buildSkillsAddArgv({ sourceRoot, ...spawn })
+      .map(shellQuoteArgvToken)
+      .join(' '),
+  );
+  return `Run: ${commands.join(' && ')}`;
 }
 
 export type ExecutableProbe = (name: string) => string | null;
@@ -1771,11 +1915,17 @@ function retireRemovedSkills(context: SkillsRetirementContext, warnings: string[
  * it. A combination that did not land (or cannot be read) records no digest:
  * uninstall then preserves that directory instead of deleting it.
  */
-function digestInstalledSkillDirs(agentDirs: readonly string[], inventory: readonly string[]): Record<string, string> {
+function digestInstalledSkillDirs(
+  agentDirs: readonly string[],
+  inventory: readonly string[],
+  skipped: ReadonlySet<string> = new Set(),
+): Record<string, string> {
   const dirDigests: Record<string, string> = {};
   for (const agentDir of agentDirs) {
     for (const name of inventory) {
       const target = join(agentDir, name);
+      // A foreign dir this run left untouched was not delivered.
+      if (skipped.has(target)) continue;
       const digest = computeSkillDirDigest(target);
       if (digest !== null) dirDigests[target] = digest;
     }
@@ -2189,8 +2339,9 @@ function isUnderAnyPrunedDir(path: string, prunedDirs: ReadonlySet<string>): boo
 }
 
 /**
- * Preflight → archive the skills this release retires → collision snapshot →
- * spawn the pinned CLI → discovery scan → record.
+ * Preflight → archive the skills this release retires → skip foreign dirs in
+ * selected homes → collision snapshot → spawn the pinned CLI (one `'*'` spawn,
+ * plus one explicit-list spawn per home with a skip) → discovery scan → record.
  * Never throws: every failure is a returned reason plus the remedy command.
  */
 export function runSkillsInstall(options: SkillsInstallOptions): SkillsInstallOutcome {
@@ -2279,6 +2430,16 @@ export function runSkillsInstall(options: SkillsInstallOptions): SkillsInstallOu
     };
   }
 
+  // BEFORE the spawn: a foreign dir in a selected agent's own home is left out
+  // of that agent's `--skill` list, so `--copy` never `rm -rf`s it (#3148).
+  const skipped =
+    inventory.length === 0
+      ? []
+      : detectForeignSkillDirs({ home, agents: selection.agents, inventory, skillsRoot, previous });
+  for (const entry of skipped) warnings.push(describeSkippedSkillDir(entry));
+  const spawns = planSkillsSpawns({ home, agents: selection.agents, inventory, skipped });
+  remedy = plannedSkillsRemedy(skillsRoot, spawns);
+
   const snapshot = snapshotCollisionsSafely({
     ...options,
     home,
@@ -2295,23 +2456,12 @@ export function runSkillsInstall(options: SkillsInstallOptions): SkillsInstallOu
   const finalizeCollisions = (): CollisionOutcome =>
     finalizeCollisionSnapshot({ snapshot, home, genieHome: options.genieHome, warnings });
 
-  const argv = buildSkillsAddArgv({ sourceRoot: skillsRoot, agents: selection.agents });
-  const run = options.spawn ?? runBoundedIntegrationCommand;
-  // Captured immediately before the spawn: the discovery window opens here.
+  // Captured immediately before the first spawn: the discovery window opens here.
   const startedAtMs = nowMs();
-  let result: CommandResult;
-  try {
-    result = run(argv[0], argv.slice(1), {
-      timeoutMs: SKILLS_INSTALL_TIMEOUT_MS,
-      maxOutputBytes: SKILLS_INSTALL_OUTPUT_LIMIT_BYTES,
-    });
-  } catch (error) {
+  const spawnFailure = runSkillsSpawns(skillsRoot, spawns, options.spawn ?? runBoundedIntegrationCommand);
+  if (spawnFailure !== null) {
     finalizeCollisions();
-    return { ok: false, reason: error instanceof Error ? error.message : String(error), remedy, warnings };
-  }
-  if (result.exitCode !== 0) {
-    finalizeCollisions();
-    return { ok: false, reason: describeFailure(result), remedy, warnings };
+    return { ok: false, reason: spawnFailure, remedy, warnings };
   }
 
   // A zero exit with nothing to record is not a success: the delivered tree is
@@ -2334,7 +2484,9 @@ export function runSkillsInstall(options: SkillsInstallOptions): SkillsInstallOu
     targetHomes: selection.homes,
   });
   warnings.push(...agents.warnings);
-  const dirDigests = digestInstalledSkillDirs(agents.dirs, inventory);
+  // One receipt per path: agents sharing a home share its skipped dirs.
+  const skippedDirs = new Map(skipped.map((entry) => [entry.dir, entry.skill]));
+  const dirDigests = digestInstalledSkillDirs(agents.dirs, inventory, new Set(skippedDirs.keys()));
   // A zero exit that wrote no verifiable skill directory anywhere is not a
   // success. It is the one replacement check retirement can no longer make for
   // itself now that it runs first: the retired bytes are already archived and
@@ -2362,6 +2514,9 @@ export function runSkillsInstall(options: SkillsInstallOptions): SkillsInstallOu
       // removed, so a record that rewrote the list from scratch (the pre-fix
       // behaviour) left roots on disk with nothing naming them by the next run.
       ...collisionRecordFields(previous, collisionOutcome),
+      // The receipt that keeps the next run's identity check from reading a
+      // skipped foreign dir as genie's own recorded pair.
+      ...(skippedDirs.size > 0 ? { skipped: [...skippedDirs].map(([dir, skill]) => ({ dir, skill })) } : {}),
       ...(preserved.length > 0 ? { preserved } : {}),
       // This run named its agents explicitly from products already installed,
       // so it created no product home — the durable fact that stops the next
@@ -2383,6 +2538,27 @@ export function runSkillsInstall(options: SkillsInstallOptions): SkillsInstallOu
       warnings,
     };
   }
+}
+
+/**
+ * Run the planned spawns in order; the first failure stops the rest.
+ * Returns that failure's reason, or `null` when every spawn exited 0.
+ */
+function runSkillsSpawns(sourceRoot: string, spawns: readonly SkillsSpawn[], run: CommandRunner): string | null {
+  for (const spawn of spawns) {
+    const argv = buildSkillsAddArgv({ sourceRoot, ...spawn });
+    let result: CommandResult;
+    try {
+      result = run(argv[0] as string, argv.slice(1), {
+        timeoutMs: SKILLS_INSTALL_TIMEOUT_MS,
+        maxOutputBytes: SKILLS_INSTALL_OUTPUT_LIMIT_BYTES,
+      });
+    } catch (error) {
+      return error instanceof Error ? error.message : String(error);
+    }
+    if (result.exitCode !== 0) return describeFailure(result);
+  }
+  return null;
 }
 
 /**
@@ -2462,7 +2638,9 @@ function hasGenieOwnedSkill(
  *    hands those to the CLI itself, so the first write into one is never a
  *    surprise (issue #3147: a first install replaced the Hermes category
  *    `~/.hermes/skills/research`, five skills, with no copy taken, and an agent
- *    installed after genie lost its same-named dir on the next update);
+ *    installed after genie lost its same-named dir on the next update). A
+ *    FOREIGN dir there is now skipped rather than replaced (#3148), so the
+ *    copy is the backstop for genie's own edited dirs;
  *  - any other discovered home that ALREADY carries a genie-owned skill dir, so
  *    a home genie delivered to before a record existed is covered too.
  *
