@@ -13,6 +13,7 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { loadGenieConfigSync } from '../lib/genie-config.js';
 import { retireInstallVersionMarker } from '../lib/install-version-marker.js';
 import {
   type LifecycleLease,
@@ -190,7 +191,12 @@ export async function installCommand(
   writeConsent: ConsentWriter = (selection) => persistIntegrationConsent(selection, GENIE_HOME),
   retireMarker: InstallMarkerRetirer = () => retireInstallVersionMarker(GENIE_HOME),
   runSkills: SkillsChannelRunner = (selection) =>
-    runSkillsChannelConvergence({ selection, version: VERSION, genieHome: GENIE_HOME }),
+    runSkillsChannelConvergence({
+      selection,
+      version: VERSION,
+      genieHome: GENIE_HOME,
+      excludeAgents: loadGenieConfigSync().skills.excludeAgents,
+    }),
   runWorkflows: WorkflowsChannelRunner = (selection) =>
     runWorkflowsChannelConvergence({ selection, version: VERSION, genieHome: GENIE_HOME }),
 ): Promise<void> {

@@ -1374,6 +1374,51 @@ export interface SkillsInstallOptions {
   scan?: Pick<SkillsHomeScanOptions, 'maxDepth' | 'maxDirs' | 'budgetMs'>;
   /** Injectable archival move for deterministic concurrent-edit tests. */
   renameRetiredSkill?: (source: string, destination: string) => void;
+  /**
+   * `skills.excludeAgents`: skills.sh agent names genie never delivers to, even
+   * when detected (issue #3148 option C). Absent or empty is today's behaviour.
+   */
+  excludeAgents?: readonly string[];
+}
+
+/**
+ * Drop every excluded registry agent from `selection` BEFORE anything plans a
+ * spawn: it is never named with `--agent`, and its skills home leaves `homes`
+ * unless an agent still selected writes the same (shared) home. Nothing under an
+ * excluded home is touched — genie dirs already delivered there stay on disk.
+ *
+ * One `skills:` line names the excluded registry agents; each name the mirrored
+ * registry lacks gets its own line and is otherwise ignored, never a failure.
+ */
+function applyAgentExclusion(
+  home: string,
+  selection: SkillsAgentSelection,
+  excludeAgents: readonly string[] | undefined,
+  warnings?: string[],
+): SkillsAgentSelection {
+  const requested = [...new Set(excludeAgents ?? [])];
+  if (requested.length === 0) return selection;
+  const known = requested.filter((agent) => selectedAgentHome(home, agent) !== null);
+  if (warnings !== undefined) {
+    for (const agent of requested) {
+      if (!known.includes(agent)) {
+        warnings.push(`skills: skills.excludeAgents names ${agent}, which is no skills.sh agent; ignored`);
+      }
+    }
+    if (known.length > 0) {
+      warnings.push(
+        `skills: excluded by skills.excludeAgents: ${known.join(', ')} — not delivered to; dirs already there are left in place`,
+      );
+    }
+  }
+  if (known.length === 0) return selection;
+  const agents = selection.agents.filter((agent) => !known.includes(agent));
+  const keptHomes = new Set(agents.map((agent) => selectedAgentHome(home, agent)));
+  return {
+    agents,
+    homes: selection.homes.filter((dir) => keptHomes.has(dir)),
+    recordedOnly: selection.recordedOnly.filter((agent) => !known.includes(agent)),
+  };
 }
 
 /**
@@ -2349,7 +2394,10 @@ export function runSkillsInstall(options: SkillsInstallOptions): SkillsInstallOu
   const home = options.home ?? homedir();
   // The agent list is data, so the remedy line a failure prints is the argv the
   // run would have used. Recomputed once the previous record is known.
-  let remedy = skillsInstallRemedy(skillsRoot, selectSkillsCliAgents({ home }).agents);
+  let remedy = skillsInstallRemedy(
+    skillsRoot,
+    applyAgentExclusion(home, selectSkillsCliAgents({ home }), options.excludeAgents).agents,
+  );
   if (options.version.trim() === '') {
     return { ok: false, reason: 'running binary version is unknown', remedy };
   }
@@ -2414,10 +2462,14 @@ export function runSkillsInstall(options: SkillsInstallOptions): SkillsInstallOu
     }
   }
 
-  const { selection, prunedDirs } = resolveInstallTargets(
+  const targets = resolveInstallTargets(
     { home, genieHome: options.genieHome, previous, now, rename: options.renameRetiredSkill ?? renameSync },
     warnings,
   );
+  const { prunedDirs } = targets;
+  // `skills.excludeAgents` is applied here, before the foreign-dir skip, the
+  // spawn plan, the collision snapshot and the agent-dir scan read `selection`.
+  const selection = applyAgentExclusion(home, targets.selection, options.excludeAgents, warnings);
   remedy = skillsInstallRemedy(skillsRoot, selection.agents);
   // Never invent a home: with no agent installed there is nothing to write to.
   if (selection.agents.length === 0) {
