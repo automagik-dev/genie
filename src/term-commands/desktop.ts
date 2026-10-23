@@ -4,16 +4,22 @@
  *   genie desktop [--path <file>] [--tag <tag>] [--dry-run]
  *
  * Mirrors Omni's `omni desktop`: the build for this machine comes from the GitHub releases of
- * automagik-dev/automagik (tags `v<version>`; a release without a build for this machine is
- * skipped), is checked against the release's SHA256SUMS, is kept in the same cache
- * `omni desktop` uses ($OMNI_HOME/desktop/app, else ~/.omni/desktop/app: one app, one
- * download), and is opened with `--preload=genie`, so the app's welcome lists Genie first and
- * starts with it chosen. `--path` opens a build you already have instead.
+ * automagik-dev/automagik (tags `v<version>`: the newest with this machine's build and its
+ * SHA256SUMS; on macOS also latest-mac.yml, which only a signed build carries), is checked
+ * against SHA256SUMS, is kept in the same cache `omni desktop` uses ($OMNI_HOME/desktop/app,
+ * else ~/.omni/desktop/app: one app, one download), and is opened. Releases from before the
+ * app moved there (automagik-dev/omni-desktop) are taken only when Automagik has no build for
+ * this machine yet; they update themselves into Automagik's. `--path` opens a build you
+ * already have instead.
+ *
+ * The preload: before the app opens, its home (OMNI_DESKTOP_HOME, else $OMNI_HOME/desktop,
+ * else ~/.omni/desktop) gets `preload` = `genie`, which the app reads at every start, however
+ * it was installed (a dmg dragged to Applications included); the AppImage is also started with
+ * `--preload=genie`. The app's welcome then lists Genie first and starts with it chosen.
  *
  * Linux x64 (and WSL, through WSLg) gets the AppImage, unpacked once into the cache and run
  * from there, so it needs no FUSE. macOS gets the dmg, opened so you can drag the app to
- * Applications; once it is there, the app itself is opened with the preload. Windows itself
- * is not supported: run this inside WSL.
+ * Applications. Windows itself is not supported: run this inside WSL.
  */
 
 import { spawn, spawnSync } from 'node:child_process';
@@ -24,16 +30,24 @@ import { basename, join, resolve } from 'node:path';
 import type { Command } from 'commander';
 import { z } from 'zod';
 
+/** The Automagik desktop app's releases. */
 const RELEASES_URL = 'https://api.github.com/repos/automagik-dev/automagik/releases?per_page=50';
+/** Builds released before the app moved to Automagik; taken only when Automagik has none for this machine. */
+const LEGACY_RELEASES_URL = 'https://api.github.com/repos/automagik-dev/omni-desktop/releases?per_page=50';
 const TAG_PREFIX = 'v';
 const SUMS_ASSET = 'SHA256SUMS';
-/** What the app is opened for: its welcome lists Genie first and starts with it chosen. */
-export const PRELOAD_ARG = '--preload=genie';
-/** Where macOS keeps the app once dragged out of the dmg (the build's product name is Omni). */
-const MAC_APP = '/Applications/Omni.app';
+/** What `genie desktop` opens the app for: its welcome lists Genie first and starts with it chosen. */
+export const PRELOAD = 'genie';
 
 export type DesktopTarget =
-  | { supported: true; os: 'linux' | 'mac'; asset: RegExp; label: string }
+  | {
+      supported: true;
+      os: 'linux' | 'mac';
+      asset: RegExp;
+      label: string;
+      /** A file the release must carry too: on macOS the update feed, which only a signed build has. */
+      requires?: string;
+    }
   | { supported: false; reason: string };
 type Supported = Extract<DesktopTarget, { supported: true }>;
 
@@ -46,7 +60,9 @@ export function desktopTarget(platform: NodeJS.Platform, arch: string, procVersi
   }
   if (platform === 'darwin') {
     if (arch !== 'arm64' && arch !== 'x64') return { supported: false, reason: `There is no macOS ${arch} build.` };
-    return { supported: true, os: 'mac', asset: new RegExp(`-mac-${arch}\\.dmg$`), label: `macOS ${arch}` };
+    // An unsigned dmg does not open on macOS: only a signed release carries latest-mac.yml.
+    const asset = new RegExp(`-mac-${arch}\\.dmg$`);
+    return { supported: true, os: 'mac', asset, label: `macOS ${arch}`, requires: 'latest-mac.yml' };
   }
   if (platform === 'win32')
     return { supported: false, reason: 'Windows itself is not supported. Run `genie desktop` inside WSL.' };
@@ -62,13 +78,21 @@ const ReleaseSchema = z.object({
 export type DesktopRelease = z.infer<typeof ReleaseSchema>;
 
 /**
- * The release to use: the one tagged `tag`; else the newest published release that carries a
- * build for this machine (GitHub lists newest first). A release with only plugins is skipped.
+ * The release to use: the one tagged `tag`; else the newest published release (GitHub lists
+ * newest first) that has this machine's build, its SHA256SUMS and, where the target needs it,
+ * the file only a signed build carries. A release with only plugins is skipped.
  */
-export function pickRelease(releases: DesktopRelease[], asset: RegExp, tag?: string): DesktopRelease | undefined {
+export function pickRelease(releases: DesktopRelease[], target: Supported, tag?: string): DesktopRelease | undefined {
   const published = releases.filter((release) => !release.draft && release.tag_name.startsWith(TAG_PREFIX));
   if (tag) return published.find((release) => release.tag_name === tag);
-  return published.find((release) => release.assets.some((candidate) => asset.test(candidate.name)));
+  const has = (release: DesktopRelease, test: (name: string) => boolean) =>
+    release.assets.some((candidate) => test(candidate.name));
+  return published.find(
+    (release) =>
+      has(release, (name) => target.asset.test(name)) &&
+      has(release, (name) => name === SUMS_ASSET) &&
+      (!target.requires || has(release, (name) => name === target.requires)),
+  );
 }
 
 /** `sha256sum` output: "<hex>  <name>" per line. */
@@ -83,6 +107,22 @@ export function parseSums(text: string): Map<string, string> {
 
 const sha256Of = (bytes: Uint8Array) => createHash('sha256').update(bytes).digest('hex');
 
+/** The desktop app's own home: OMNI_DESKTOP_HOME, else $OMNI_HOME/desktop, else ~/.omni/desktop (as the app reads it). */
+export function desktopHome(env: NodeJS.ProcessEnv = process.env): string {
+  if (env.OMNI_DESKTOP_HOME?.trim()) return resolve(env.OMNI_DESKTOP_HOME.trim());
+  const omni = env.OMNI_HOME?.trim() ? resolve(env.OMNI_HOME.trim()) : join(homedir(), '.omni');
+  return join(omni, 'desktop');
+}
+
+/** Say what the app is opened for: its home's `preload` file, which the app reads at every start. */
+export function writePreload(env: NodeJS.ProcessEnv = process.env, preload = PRELOAD): string {
+  const home = desktopHome(env);
+  mkdirSync(home, { recursive: true });
+  const file = join(home, 'preload');
+  writeFileSync(file, `${preload}\n`);
+  return file;
+}
+
 /** The cache `omni desktop` uses too: $OMNI_HOME/desktop/app, else ~/.omni/desktop/app. */
 export function appCacheDir(env: NodeJS.ProcessEnv = process.env): string {
   const omni = env.OMNI_HOME?.trim() ? resolve(env.OMNI_HOME.trim()) : join(homedir(), '.omni');
@@ -95,21 +135,12 @@ export function extractionDir(file: string, env: NodeJS.ProcessEnv = process.env
 }
 
 /**
- * How to open a build, with the preload: the extracted AppImage's AppRun on Linux. On macOS a
- * dmg cannot take arguments, so the app installed in Applications is opened with them when it
- * is there, else the dmg is opened for the drag.
+ * How to open a build: the extracted AppImage's AppRun on Linux, with the preload; `open` for a
+ * dmg on macOS (the app, dragged to Applications, reads the preload from its home).
  */
-export function launchPlan(
-  file: string,
-  target: Supported,
-  extracted: string,
-  macApp: string | null,
-): { command: string; args: string[] } {
-  if (target.os === 'mac')
-    return macApp
-      ? { command: 'open', args: ['-a', macApp, '--args', PRELOAD_ARG] }
-      : { command: 'open', args: [file] };
-  return { command: join(extracted, 'squashfs-root', 'AppRun'), args: [PRELOAD_ARG] };
+export function launchPlan(file: string, target: Supported, extracted: string): { command: string; args: string[] } {
+  if (target.os === 'mac') return { command: 'open', args: [file] };
+  return { command: join(extracted, 'squashfs-root', 'AppRun'), args: [`--preload=${PRELOAD}`] };
 }
 
 function fail(message: string): never {
@@ -163,35 +194,36 @@ async function fetchBuild(release: DesktopRelease, target: Supported): Promise<s
   return file;
 }
 
-function planFor(file: string, target: Supported): { command: string; args: string[] } {
-  return launchPlan(file, target, extractionDir(file), target.os === 'mac' && existsSync(MAC_APP) ? MAC_APP : null);
-}
-
 function open(file: string, target: Supported): void {
+  writePreload();
   if (target.os === 'linux') ensureExtracted(file, extractionDir(file));
-  const plan = planFor(file, target);
+  const plan = launchPlan(file, target, extractionDir(file));
   spawn(plan.command, plan.args, { detached: true, stdio: 'ignore' }).unref();
-  if (target.os === 'mac' && plan.args[0] !== '-a') {
-    say(`Opened ${file}: drag Omni to Applications, then run \`genie desktop\` again to open it with Genie.`);
-  } else {
-    say(`Opened ${file} with Genie preloaded`);
-  }
+  say(
+    target.os === 'mac'
+      ? `Opened ${file} with Genie preloaded: drag Omni to Applications, then open it`
+      : `Opened ${file} with Genie preloaded`,
+  );
 }
 
 type DesktopOptions = { path?: string; tag?: string; dryRun?: boolean };
 
 async function buildFromReleases(target: Supported, options: DesktopOptions): Promise<string | null> {
-  const releases = z
-    .array(ReleaseSchema)
-    .parse(await (await fetchOk(RELEASES_URL, 'application/vnd.github+json')).json());
-  const release = pickRelease(releases, target.asset, options.tag);
+  const list = async (url: string) =>
+    z.array(ReleaseSchema).parse(await (await fetchOk(url, 'application/vnd.github+json')).json());
+  let release = pickRelease(await list(RELEASES_URL), target, options.tag);
+  if (!release && !options.tag) {
+    // No Automagik build for this machine yet (a macOS one is published only signed).
+    release = pickRelease(await list(LEGACY_RELEASES_URL), target);
+    if (release) say(`Taking ${release.tag_name} from automagik-dev/omni-desktop; it updates itself.`);
+  }
   if (!release) {
     fail(options.tag ? `There is no release ${options.tag}.` : `There is no desktop release for ${target.label} yet.`);
   }
   if (options.dryRun) {
     const asset = release.assets.find((candidate) => target.asset.test(candidate.name));
     say(
-      `Would download ${asset?.name ?? `(no ${target.label} build)`} from ${release.tag_name} and open it with ${PRELOAD_ARG}`,
+      `Would download ${asset?.name ?? `(no ${target.label} build)`} from ${release.tag_name} and open it with Genie preloaded`,
     );
     return null;
   }
@@ -207,7 +239,8 @@ async function handleDesktop(options: DesktopOptions): Promise<void> {
     if (file === null) return;
     if (!existsSync(file)) fail(`No file at ${file}`);
     if (options.dryRun) {
-      const plan = planFor(file, target);
+      const plan = launchPlan(file, target, extractionDir(file));
+      say(`Would write ${PRELOAD} to ${join(desktopHome(), 'preload')}`);
       say(`Would open ${file} (${target.label}): ${[plan.command, ...plan.args].join(' ')}`);
       return;
     }

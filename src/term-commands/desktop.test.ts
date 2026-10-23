@@ -6,18 +6,20 @@
  */
 
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   type DesktopRelease,
-  PRELOAD_ARG,
+  PRELOAD,
   appCacheDir,
+  desktopHome,
   desktopTarget,
   extractionDir,
   launchPlan,
   parseSums,
   pickRelease,
+  writePreload,
 } from './desktop.js';
 
 const GENIE = join(import.meta.dir, '..', 'genie.ts');
@@ -31,13 +33,15 @@ const release = (tag: string, names: string[], extra: Partial<DesktopRelease> = 
 });
 const linux = desktopTarget('linux', 'x64');
 if (!linux.supported) throw new Error('linux x64 is supported');
+const mac = desktopTarget('darwin', 'arm64');
+if (!mac.supported) throw new Error('macOS arm64 is supported');
 
 describe('genie desktop: the build for this machine', () => {
   test('Linux x64 and macOS get a build; other machines are told why not', () => {
     expect(linux.asset.test('Omni-3.261024.1-linux-x86_64.AppImage')).toBe(true);
     expect(desktopTarget('linux', 'x64', 'Linux version 5.15 (Microsoft)')).toMatchObject({ label: 'Linux (WSL)' });
-    const mac = desktopTarget('darwin', 'arm64');
-    expect(mac.supported && mac.asset.test('Omni-3.261024.1-mac-arm64.dmg')).toBe(true);
+    expect(mac.asset.test('Omni-3.261024.1-mac-arm64.dmg')).toBe(true);
+    expect(mac.requires).toBe('latest-mac.yml');
     expect(desktopTarget('linux', 'arm64')).toMatchObject({ supported: false });
     expect(desktopTarget('win32', 'x64')).toMatchObject({ supported: false, reason: expect.stringContaining('WSL') });
   });
@@ -49,10 +53,21 @@ describe('genie desktop: the build for this machine', () => {
       release('v3.261024.1', ['Omni-3.261024.1-linux-x86_64.AppImage', 'SHA256SUMS']),
       release('v3.261023.1', ['Omni-3.261023.1-linux-x86_64.AppImage', 'SHA256SUMS']),
     ];
-    expect(pickRelease(releases, linux.asset)?.tag_name).toBe('v3.261024.1');
-    expect(pickRelease(releases, linux.asset, 'v3.261023.1')?.tag_name).toBe('v3.261023.1');
-    expect(pickRelease(releases, linux.asset, 'v9.0.0')).toBeUndefined();
-    expect(pickRelease([], linux.asset)).toBeUndefined();
+    expect(pickRelease(releases, linux)?.tag_name).toBe('v3.261024.1');
+    expect(pickRelease(releases, linux, 'v3.261023.1')?.tag_name).toBe('v3.261023.1');
+    expect(pickRelease(releases, linux, 'v9.0.0')).toBeUndefined();
+    expect(pickRelease([], linux)).toBeUndefined();
+    // A build without its SHA256SUMS is never picked.
+    expect(pickRelease([release('v3.261026.1', ['Omni-3.261026.1-linux-x86_64.AppImage'])], linux)).toBeUndefined();
+  });
+
+  test('on macOS only a signed release (it carries latest-mac.yml) is picked', () => {
+    const releases = [
+      release('v3.261025.1', ['Omni-3.261025.1-mac-arm64.dmg', 'SHA256SUMS']),
+      release('v2.261023.32', ['Omni-2.261023.32-mac-arm64.dmg', 'latest-mac.yml', 'SHA256SUMS']),
+    ];
+    expect(pickRelease(releases, mac)?.tag_name).toBe('v2.261023.32');
+    expect(pickRelease(releases.slice(0, 1), mac)).toBeUndefined();
   });
 
   test('SHA256SUMS is read as sha256sum writes it', () => {
@@ -73,19 +88,29 @@ describe('genie desktop: the build for this machine', () => {
   });
 
   test('the app opens with Genie preloaded', () => {
-    expect(PRELOAD_ARG).toBe('--preload=genie');
-    expect(launchPlan('/c/Omni.AppImage', linux, '/c/x', null)).toEqual({
+    expect(PRELOAD).toBe('genie');
+    expect(launchPlan('/c/Omni.AppImage', linux, '/c/x')).toEqual({
       command: '/c/x/squashfs-root/AppRun',
       args: ['--preload=genie'],
     });
-    const mac = desktopTarget('darwin', 'arm64');
-    if (!mac.supported) throw new Error('macOS arm64 is supported');
-    expect(launchPlan('/c/Omni.dmg', mac, '/c/x', '/Applications/Omni.app')).toEqual({
-      command: 'open',
-      args: ['-a', '/Applications/Omni.app', '--args', '--preload=genie'],
-    });
-    // Not installed yet: the dmg opens for the drag (a dmg takes no arguments).
-    expect(launchPlan('/c/Omni.dmg', mac, '/c/x', null)).toEqual({ command: 'open', args: ['/c/Omni.dmg'] });
+    // A dmg takes no arguments: the app dragged to Applications reads the preload from its home.
+    expect(launchPlan('/c/Omni.dmg', mac, '/c/x')).toEqual({ command: 'open', args: ['/c/Omni.dmg'] });
+  });
+
+  test("the preload goes in the app's home, where the app reads it at every start", () => {
+    const root = mkdtempSync(join(tmpdir(), 'genie-desktop-home-'));
+    try {
+      expect(desktopHome({ OMNI_HOME: '/srv/omni' })).toBe('/srv/omni/desktop');
+      expect(desktopHome({ OMNI_HOME: '/srv/omni', OMNI_DESKTOP_HOME: '/opt/app' })).toBe('/opt/app');
+      const file = writePreload({ OMNI_DESKTOP_HOME: join(root, 'desktop') });
+      expect(file).toBe(join(root, 'desktop', 'preload'));
+      expect(readFileSync(file, 'utf8')).toBe('genie\n');
+      // Idempotent: written again, the same.
+      writePreload({ OMNI_DESKTOP_HOME: join(root, 'desktop') });
+      expect(readFileSync(file, 'utf8')).toBe('genie\n');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });
 
@@ -119,6 +144,9 @@ describe.skipIf(process.platform !== 'linux' || process.arch !== 'x64')('genie d
     expect(first.stderr).toBe('');
     expect(first.stdout).toContain(`Would open ${file} (Linux`);
     expect(first.stdout).toContain('squashfs-root/AppRun --preload=genie');
+    expect(first.stdout).toContain(`Would write genie to ${join(dir, 'omni-home', 'desktop', 'preload')}`);
+    // A dry run writes nothing.
+    expect(existsSync(join(dir, 'omni-home', 'desktop', 'preload'))).toBe(false);
     const again = await cli('--path', file, '--dry-run');
     expect(again).toEqual(first);
   });
