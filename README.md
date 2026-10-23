@@ -144,16 +144,17 @@ Every release is cosign-signed with SLSA provenance, and `genie update` verifies
 
 ## Commands
 
-Genie v6.261003.1 has 17 CLI commands. Nothing runs in the background: every command does its work and exits. The [CLI reference](https://docs.automagik.dev/genie/cli-reference) has the full `--help` output.
+Genie v6.261003.1 has 18 CLI commands. Nothing runs in the background: every command does its work and exits. The [CLI reference](https://docs.automagik.dev/genie/cli-reference) has the full `--help` output.
 
 <details>
-<summary>All 17 commands</summary>
+<summary>All 18 commands</summary>
 
 | Command | What it does |
 |---------|-------------|
 | `genie board` | Kanban view of task state, derived live by query |
 | `genie config` | Read the resolved global config, for example `config get budgets.maxEscalationsPerGroup` |
 | `genie context` | Resolve spawn context as versioned JSON: the wish or group branch and base SHA, or the integration branch |
+| `genie desktop` | Open the Automagik desktop app with Genie preloaded: downloads the build for this machine from automagik-dev/automagik's releases, checked against `SHA256SUMS` |
 | `genie doctor` | Check the installation; `--fix-global-db` repairs a contaminated machine-scope database, backup first |
 | `genie help` | Show help for any command |
 | `genie idea` | Capture an idea into the roadmap board's Idea lane |

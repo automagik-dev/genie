@@ -46,6 +46,8 @@ describe('the v4 workspace gate exempts every verb that must run outside a genie
     ['idea', undefined],
     // Read-only global config.
     ['config', 'get'],
+    // Opens the Automagik desktop app; reads no repository state.
+    ['desktop', undefined],
   ] as Array<[string, string | undefined]>)('genie %s %s requires no workspace', (root, sub) => {
     expect(commandRequiresWorkspace(actionCommand(root, sub))).toBe(false);
   });
