@@ -6,14 +6,14 @@
  * Mirrors Omni's `omni desktop`: the build for this machine comes from the GitHub releases of
  * automagik-dev/automagik (tags `v<version>`: the newest with this machine's build and its
  * SHA256SUMS; on macOS also latest-mac.yml, which only a signed build carries), is checked
- * against SHA256SUMS, is kept in the same cache `omni desktop` uses ($OMNI_HOME/desktop/app,
- * else ~/.omni/desktop/app: one app, one download), and is opened. Releases from before the
+ * against SHA256SUMS, is kept in the same cache `omni desktop` uses (the app's home's app/<tag>/:
+ * one app, one download), and is opened. Releases from before the
  * app moved there (automagik-dev/omni-desktop) are taken only when Automagik has no build for
  * this machine yet; they update themselves into Automagik's. `--path` opens a build you
  * already have instead.
  *
- * The preload: before the app opens, its home (OMNI_DESKTOP_HOME, else $OMNI_HOME/desktop,
- * else ~/.omni/desktop) gets `preload` = `genie`, which the app reads at every start, however
+ * The preload: before the app opens, its home ($AUTOMAGIK_HOME, else ~/.automagik) gets
+ * `preload` = `genie`, which the app reads at every start, however
  * it was installed (a dmg dragged to Applications included); the AppImage is also started with
  * `--preload=genie`. The app's welcome then lists Genie first and starts with it chosen.
  *
@@ -107,11 +107,9 @@ export function parseSums(text: string): Map<string, string> {
 
 const sha256Of = (bytes: Uint8Array) => createHash('sha256').update(bytes).digest('hex');
 
-/** The desktop app's own home: OMNI_DESKTOP_HOME, else $OMNI_HOME/desktop, else ~/.omni/desktop (as the app reads it). */
+/** The desktop app's own home: $AUTOMAGIK_HOME, else ~/.automagik (as the app reads it). */
 export function desktopHome(env: NodeJS.ProcessEnv = process.env): string {
-  if (env.OMNI_DESKTOP_HOME?.trim()) return resolve(env.OMNI_DESKTOP_HOME.trim());
-  const omni = env.OMNI_HOME?.trim() ? resolve(env.OMNI_HOME.trim()) : join(homedir(), '.omni');
-  return join(omni, 'desktop');
+  return env.AUTOMAGIK_HOME?.trim() ? resolve(env.AUTOMAGIK_HOME.trim()) : join(homedir(), '.automagik');
 }
 
 /** Say what the app is opened for: its home's `preload` file, which the app reads at every start. */
@@ -123,10 +121,9 @@ export function writePreload(env: NodeJS.ProcessEnv = process.env, preload = PRE
   return file;
 }
 
-/** The cache `omni desktop` uses too: $OMNI_HOME/desktop/app, else ~/.omni/desktop/app. */
+/** The cache `omni desktop` uses too: the app's home's app/, one folder per release tag. */
 export function appCacheDir(env: NodeJS.ProcessEnv = process.env): string {
-  const omni = env.OMNI_HOME?.trim() ? resolve(env.OMNI_HOME.trim()) : join(homedir(), '.omni');
-  return join(omni, 'desktop', 'app');
+  return join(desktopHome(env), 'app');
 }
 
 /** Where an AppImage is unpacked to run: mounting it needs libfuse2, which Ubuntu 24.04+ and WSL lack. */

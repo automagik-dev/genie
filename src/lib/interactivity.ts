@@ -94,7 +94,7 @@ const WORKSPACE_EXEMPT = new Set([
   // retirement notice, not the v4 workspace gate. Leaves with the stub.
   'orca',
   // `desktop` downloads and opens the Automagik desktop app. It reads no repo
-  // state, only its cache under $OMNI_HOME/desktop/app, and is run from any cwd.
+  // state, only its cache under ~/.automagik/app, and is run from any cwd.
   'desktop',
 ]);
 
