@@ -1,0 +1,4 @@
+[install]
+# The @deepseek-ai and @automagik peers come from the dsh profile that loads the plugin
+# (the Bot team checkout in tests). Only the build tools in devDependencies belong here.
+peer = false

@@ -4,5 +4,6 @@
 # and need no daemon. The one preload left strips inherited colour policy
 # (FORCE_COLOR) so the suite is hermetic under any host or agent harness.
 preload = ["./scripts/test-preload.ts"]
-# Mikro is an independent npm/Node package with its own full test gate.
-pathIgnorePatterns = ["mikro/**"]
+# Mikro is an independent npm/Node package with its own full test gate; so is the Genie DSH
+# plugin, whose tests run on Node against a DeepSeek Harness (plugins/genie-dsh, npm test).
+pathIgnorePatterns = ["mikro/**", "plugins/genie-dsh/**"]
