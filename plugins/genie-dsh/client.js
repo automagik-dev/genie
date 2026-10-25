@@ -38,7 +38,19 @@ var { botChildren } = import_client.omni;
 var ENDED_SHOWN = 3;
 function endedWishesOf(roster, botId) {
   const tasks = roster?.tasks ?? {};
-  return (roster?.genie?.wishes ?? []).filter((wish) => wish.botId === botId).map((wish) => ({ ...wish, status: tasks[wish.sessionId]?.status ?? "ended" })).filter((wish) => wish.status !== "working").slice(0, ENDED_SHOWN);
+  return (roster?.genie?.wishes ?? []).filter((wish) => wish.botId === botId).map((wish) => ({
+    ...wish,
+    status: tasks[wish.sessionId]?.status ?? "ended",
+    summary: tasks[wish.sessionId]?.summary
+  })).filter((wish) => wish.status !== "working").slice(0, ENDED_SHOWN);
+}
+function outcomeOf(wish) {
+  if (wish.status === "failed") {
+    const reason = String(wish.summary ?? "").split("\n")[0].trim();
+    return { state: "failed", short: "Failed", full: reason ? `Failed: ${reason}` : "Failed" };
+  }
+  if (wish.status === "stopped") return { state: "stopped", short: "Stopped", full: "Stopped" };
+  return { state: "done", short: "Done", full: "Done" };
 }
 
 // src/client/index.js
@@ -51,22 +63,21 @@ function GenieWishes({ bot, roster, actions }) {
     "div",
     { className: "bt-threads", role: "group", "aria-label": `Wishes ${bot.name} granted` },
     wishes.map((wish) => {
-      const failed = wish.status === "failed";
-      const outcome = failed ? "Stopped" : "Done";
+      const outcome = outcomeOf(wish);
       return (0, import_react.createElement)(
         "button",
         {
           key: wish.sessionId,
           type: "button",
           className: "bt-thread",
-          "data-state": failed ? "failed" : "done",
-          "aria-label": `${wish.title}, ${outcome}`,
-          title: `${wish.title} · ${wish.branch}`,
+          "data-state": outcome.state,
+          "aria-label": `${wish.title}, ${outcome.full}`,
+          title: `${wish.title} · ${outcome.full} · ${wish.branch}`,
           onClick: () => actions.openSession(wish.sessionId)
         },
-        (0, import_react.createElement)("span", { className: "bt-thread-age", "aria-hidden": true }, failed ? "✕" : "✓"),
+        (0, import_react.createElement)("span", { className: "bt-thread-age", "aria-hidden": true }, outcome.state === "done" ? "✓" : "✕"),
         (0, import_react.createElement)("span", { className: "bt-thread-title" }, wish.title),
-        (0, import_react.createElement)("span", { className: "bt-thread-age" }, outcome)
+        (0, import_react.createElement)("span", { className: "bt-thread-age" }, outcome.short)
       );
     })
   );

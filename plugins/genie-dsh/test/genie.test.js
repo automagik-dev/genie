@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, test } from 'node:test';
 import { createRuntime } from '../index.js';
-import { endedWishesOf } from '../src/client/wishes.js';
+import { endedWishesOf, outcomeOf } from '../src/client/wishes.js';
 import { GENIE_KIND, slugOf, wishBrief } from '../src/host/genie.js';
 import { MISSING_GIT, MISSING_TOOLS_MAC, gitProblem } from '../src/host/git.js';
 
@@ -284,4 +284,16 @@ test('the rows under Genie list its ended wishes, newest first, and leave runnin
     ],
   );
   assert.deepEqual(endedWishesOf({}, 'g'), []);
+});
+
+test('an ended wish says how it turned out: a failed one names why, a stopped one is not done', () => {
+  assert.deepEqual(outcomeOf({ status: 'failed', summary: 'the provider refused the key\nat step 3' }), {
+    state: 'failed',
+    short: 'Failed',
+    full: 'Failed: the provider refused the key',
+  });
+  assert.equal(outcomeOf({ status: 'failed' }).full, 'Failed');
+  assert.deepEqual(outcomeOf({ status: 'stopped' }), { state: 'stopped', short: 'Stopped', full: 'Stopped' });
+  assert.equal(outcomeOf({ status: 'done' }).short, 'Done');
+  assert.equal(outcomeOf({ status: 'ended' }).short, 'Done');
 });
