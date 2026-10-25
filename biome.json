@@ -48,6 +48,7 @@
       "node_modules",
       "dist",
       "mikro",
+      "plugins/genie-dsh/client.js",
       "*.min.js",
       ".dev",
       ".hermes",
