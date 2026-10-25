@@ -7,7 +7,7 @@
 
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   type DesktopRelease,
@@ -81,9 +81,10 @@ describe('genie desktop: the build for this machine', () => {
   });
 
   test("builds share omni desktop's cache", () => {
-    expect(appCacheDir({ OMNI_HOME: '/srv/omni' })).toBe('/srv/omni/desktop/app');
-    expect(extractionDir('/x/Omni-3.261024.1-linux-x86_64.AppImage', { OMNI_HOME: '/srv/omni' })).toBe(
-      '/srv/omni/desktop/app/extracted/Omni-3.261024.1-linux-x86_64',
+    expect(appCacheDir({ AUTOMAGIK_HOME: '/srv/automagik' })).toBe('/srv/automagik/app');
+    expect(appCacheDir({})).toBe(join(homedir(), '.automagik', 'app'));
+    expect(extractionDir('/x/Omni-3.261024.1-linux-x86_64.AppImage', { AUTOMAGIK_HOME: '/srv/automagik' })).toBe(
+      '/srv/automagik/app/extracted/Omni-3.261024.1-linux-x86_64',
     );
   });
 
@@ -100,13 +101,17 @@ describe('genie desktop: the build for this machine', () => {
   test("the preload goes in the app's home, where the app reads it at every start", () => {
     const root = mkdtempSync(join(tmpdir(), 'genie-desktop-home-'));
     try {
-      expect(desktopHome({ OMNI_HOME: '/srv/omni' })).toBe('/srv/omni/desktop');
-      expect(desktopHome({ OMNI_HOME: '/srv/omni', OMNI_DESKTOP_HOME: '/opt/app' })).toBe('/opt/app');
-      const file = writePreload({ OMNI_DESKTOP_HOME: join(root, 'desktop') });
-      expect(file).toBe(join(root, 'desktop', 'preload'));
+      expect(desktopHome({ AUTOMAGIK_HOME: '/srv/automagik' })).toBe('/srv/automagik');
+      expect(desktopHome({})).toBe(join(homedir(), '.automagik'));
+      // Omni's old homes are not read any more.
+      expect(desktopHome({ OMNI_HOME: '/srv/omni', OMNI_DESKTOP_HOME: '/opt/app' })).toBe(
+        join(homedir(), '.automagik'),
+      );
+      const file = writePreload({ AUTOMAGIK_HOME: join(root, 'automagik') });
+      expect(file).toBe(join(root, 'automagik', 'preload'));
       expect(readFileSync(file, 'utf8')).toBe('genie\n');
       // Idempotent: written again, the same.
-      writePreload({ OMNI_DESKTOP_HOME: join(root, 'desktop') });
+      writePreload({ AUTOMAGIK_HOME: join(root, 'automagik') });
       expect(readFileSync(file, 'utf8')).toBe('genie\n');
     } finally {
       rmSync(root, { recursive: true, force: true });
@@ -127,7 +132,7 @@ describe.skipIf(process.platform !== 'linux' || process.arch !== 'x64')('genie d
       cwd: dir,
       stdout: 'pipe',
       stderr: 'pipe',
-      env: { ...process.env, NO_COLOR: '1', OMNI_HOME: join(dir, 'omni-home'), GENIE_TEST_SKIP_PGSERVE: '1' },
+      env: { ...process.env, NO_COLOR: '1', AUTOMAGIK_HOME: join(dir, 'automagik-home'), GENIE_TEST_SKIP_PGSERVE: '1' },
     });
     const [stdout, stderr, code] = await Promise.all([
       new Response(proc.stdout).text(),
@@ -144,9 +149,9 @@ describe.skipIf(process.platform !== 'linux' || process.arch !== 'x64')('genie d
     expect(first.stderr).toBe('');
     expect(first.stdout).toContain(`Would open ${file} (Linux`);
     expect(first.stdout).toContain('squashfs-root/AppRun --preload=genie');
-    expect(first.stdout).toContain(`Would write genie to ${join(dir, 'omni-home', 'desktop', 'preload')}`);
+    expect(first.stdout).toContain(`Would write genie to ${join(dir, 'automagik-home', 'preload')}`);
     // A dry run writes nothing.
-    expect(existsSync(join(dir, 'omni-home', 'desktop', 'preload'))).toBe(false);
+    expect(existsSync(join(dir, 'automagik-home', 'preload'))).toBe(false);
     const again = await cli('--path', file, '--dry-run');
     expect(again).toEqual(first);
   });
