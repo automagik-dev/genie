@@ -100,6 +100,8 @@ test('a new team gets one Genie Bot, in its own project folder, with the default
   assert.equal(made.workDir, join(dir, 'team', 'genie'));
   assert.ok(existsSync(made.workDir));
   assert.equal(made.avatar, undefined);
+  // bots-dsh cuts a role past 24 characters.
+  assert.ok(made.role.length <= 24, made.role);
 });
 
 test('Genie waits for a model when none is served yet', async () => {
