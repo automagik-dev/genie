@@ -28,7 +28,8 @@ export const GENIE_INSTRUCTIONS = [
 
 export const GENIE_BOT = Object.freeze({
   kind: GENIE_KIND,
-  role: 'Grants wishes in your project',
+  // The team keeps a role to ROLE_MAX (24) characters (bots-dsh roster.js).
+  role: 'Grants your wishes',
   instructions: GENIE_INSTRUCTIONS,
 });
 
