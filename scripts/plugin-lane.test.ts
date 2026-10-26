@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { createPublicKey, generateKeyPairSync } from 'node:crypto';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, relative } from 'node:path';
 import {
   KEY_ID,
   PLUGIN_DIR,
@@ -111,6 +111,9 @@ describe('plugin lane', () => {
       });
       expect(packed.integrity).toStartWith('sha512-');
       expect(describeTarball(join(dir, packed.file))).toEqual(packed);
+      // The workflow passes a folder relative to the checkout root; npm packs from the plugin's.
+      rmSync(join(dir, packed.file));
+      expect(pack(relative(process.cwd(), dir))).toEqual(packed);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

@@ -22,7 +22,7 @@
 import { execFileSync } from 'node:child_process';
 import { createHash, createPrivateKey, createPublicKey, sign as signBytes, verify as verifyBytes } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { basename, join } from 'node:path';
+import { basename, join, resolve } from 'node:path';
 
 export const ROOT = join(import.meta.dir, '..');
 export const PLUGIN_DIR = join(ROOT, 'plugins', 'genie-dsh');
@@ -144,12 +144,13 @@ export function describe(file: string): Packed {
   };
 }
 
-/** npm pack genie-dsh into `dir` and describe the tarball. */
+/** npm pack genie-dsh into `dir` (relative to the caller's folder, not the plugin's) and describe the tarball. */
 export function pack(dir: string): Packed {
+  const out = resolve(dir);
   const [entry] = JSON.parse(
-    execFileSync('npm', ['pack', '--json', '--pack-destination', dir], { cwd: PLUGIN_DIR, encoding: 'utf8' }),
+    execFileSync('npm', ['pack', '--json', '--pack-destination', out], { cwd: PLUGIN_DIR, encoding: 'utf8' }),
   );
-  const packed = describe(join(dir, entry.filename));
+  const packed = describe(join(out, entry.filename));
   if (packed.integrity !== entry.integrity) throw new Error('npm and this script disagree on the tarball integrity');
   return packed;
 }
