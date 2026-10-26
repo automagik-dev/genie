@@ -339,6 +339,7 @@ test('a Genie per repository: + Genie makes a new one in a free color, and the s
   await rt.genieReady;
   const first = Object.values(team.state.bots)[0];
   assert.equal(first.color, GENIE_COLORS[0], 'the first Genie wears the first Genie color');
+  assert.equal(GENIE_COLORS[0], 'magenta', "Genie's own painting, so the first Genie keeps today's look");
   const create = team.record.endpoints.get('genie-create');
   assert.equal(typeof create, 'function', 'served as genie-create');
 
