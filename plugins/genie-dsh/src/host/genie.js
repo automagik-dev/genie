@@ -27,9 +27,11 @@ export const GENIE_INSTRUCTIONS = [
   'Do not do the wish yourself in this chat.',
 ].join('\n');
 
-// A Genie's colors, one per Genie: the first is the color Genie's own art is drawn in, and a
-// Genie saved before Genies had colors wears it. Bot team color ids (bots-dsh characters.js).
+// A Genie's colors, one per Genie: the first is the color Genie's own art is painted in
+// (magenta, ~325°), so the first Genie and one saved before Genies had colors keep that look.
+// Bot team color ids (bots-dsh characters.js).
 export const GENIE_COLORS = Object.freeze([
+  'magenta',
   'violet',
   'blue',
   'cyan',
@@ -37,7 +39,6 @@ export const GENIE_COLORS = Object.freeze([
   'yellow',
   'orange',
   'red',
-  'magenta',
   'aurora',
   'brown',
   'gray',
