@@ -9,7 +9,9 @@ name: genie-dsh plugin lane
 on:
   push:
     branches: [dev]
-    paths: ['plugins/genie-dsh/**']
+    # The lane's own script and workflow too: a fix to either re-runs it, since a manual run
+    # needs the workflow on the default branch (main), and this one lives on dev.
+    paths: ['plugins/genie-dsh/**', 'scripts/plugin-lane.ts', '.github/workflows/plugin-lane.yml']
   workflow_dispatch:
 
 permissions:
