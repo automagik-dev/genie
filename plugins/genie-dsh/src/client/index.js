@@ -3,7 +3,8 @@
 // task threads (bots-dsh sidebar.js); an ended task leaves that list, so this row keeps the
 // latest ended wishes in reach. A row opens the wish's thread.
 import { createElement as h } from 'react';
-import { botChildren } from './core.js';
+import { botChildren, chatSuggestions } from './core.js';
+import { registerSuggestions } from './suggestions.js';
 import { endedWishesOf, outcomeOf } from './wishes.js';
 
 export function GenieWishes({ bot, roster, actions }) {
@@ -36,4 +37,5 @@ export function GenieWishes({ bot, roster, actions }) {
 
 export function apply(ctx) {
   ctx.effect(() => botChildren.register({ id: 'genie-wishes', Component: GenieWishes }), 'genie: ended wishes');
+  ctx.effect(() => registerSuggestions(chatSuggestions), 'genie: empty-chat suggestions');
 }

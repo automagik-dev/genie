@@ -3,4 +3,5 @@
 // this one the same module instance: one roster, one set of the registries it adds to.
 import { omni } from '@automagik/bots-dsh/client';
 
-export const { botChildren } = omni;
+// chatSuggestions is undefined on a team older than bots-dsh 3.23.
+export const { botChildren, chatSuggestions } = omni;

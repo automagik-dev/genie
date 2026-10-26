@@ -8,6 +8,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, test } from 'node:test';
 import { createRuntime } from '../index.js';
+import { GENIE_SUGGESTIONS, registerSuggestions } from '../src/client/suggestions.js';
 import { endedWishesOf, outcomeOf } from '../src/client/wishes.js';
 import { GENIE_KIND, slugOf, wishBrief } from '../src/host/genie.js';
 import { MISSING_GIT, MISSING_TOOLS_MAC, gitProblem } from '../src/host/git.js';
@@ -296,4 +297,28 @@ test('an ended wish says how it turned out: a failed one names why, a stopped on
   assert.deepEqual(outcomeOf({ status: 'stopped' }), { state: 'stopped', short: 'Stopped', full: 'Stopped' });
   assert.equal(outcomeOf({ status: 'done' }).short, 'Done');
   assert.equal(outcomeOf({ status: 'ended' }).short, 'Done');
+});
+
+test("Genie's empty chat leads with its own chips, only for a Genie, and a team without the hook gets none", () => {
+  const registered = [];
+  const off = registerSuggestions({
+    register: (entry) => {
+      registered.push(entry);
+      return () => registered.pop();
+    },
+  });
+  assert.equal(registered[0], GENIE_SUGGESTIONS);
+  assert.ok(GENIE_SUGGESTIONS.order < 0, "before the team's own");
+  assert.equal(GENIE_SUGGESTIONS.when({ bot: { kind: 'genie' } }), true);
+  assert.equal(GENIE_SUGGESTIONS.when({ bot: { kind: 'bot' } }), false);
+  const items = GENIE_SUGGESTIONS.items({ bot: { kind: 'genie' } });
+  assert.equal(items.length, 3);
+  for (const item of items) {
+    assert.ok(item.id && item.label, item.label);
+    assert.match(item.text, / $/, 'the person finishes the text');
+  }
+  assert.equal(items[0].text, 'I wish ');
+  off();
+  assert.equal(registered.length, 0);
+  assert.equal(typeof registerSuggestions(undefined), 'function');
 });
