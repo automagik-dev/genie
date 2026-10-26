@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "publisher": "genie",
+  "keyId": "genie-2026-10",
+  "sequence": 10004,
+  "issuedAt": "2026-10-26T06:17:56Z",
+  "repository": "https://github.com/automagik-dev/genie",
+  "version": "0.1.4",
+  "commit": "39402fb18dd29e33f7c18cb9eb7d5d757c3a7273",
+  "base": "3.3.0",
+  "plugins": [
+    {
+      "name": "@automagik/genie-dsh",
+      "version": "0.1.4",
+      "url": "https://github.com/automagik-dev/genie/releases/download/genie-dsh-v0.1.4/automagik-genie-dsh-0.1.4.tgz",
+      "integrity": "sha512-3Fs1kjcpOqxH3/fgseFt1G5Sgiu0Ha1oEBnYs2pi0jnUwwElWsESOya6tm8NkpGxIK3Iim5aMkkyD6L6M8WNZQ==",
+      "sha256": "e6309119f3dafc3a2c3ca0e5ee68f10b300eb409037eef9ec1c1796635762b82",
+      "size": 11847,
+      "engines": {
+        "dsh": ">=0.2.1-rc.2 <0.3.0"
+      }
+    }
+  ]
+}
