@@ -2,8 +2,9 @@
 
 Genie for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (DSH), on the
 Automagik Bot team ([`@automagik/bots-dsh`](https://github.com/automagik-dev/automagik/tree/dev/apps/bots-dsh)).
-It adds one Bot, **Genie**, that grants wishes in a project: each wish runs as its own thread,
-in its own copy of the project on a `wish/<name>` branch, and reports back to Genie's chat.
+It adds **Genies**, Bots that grant wishes in a project: each wish runs as its own thread, in its
+own copy of the project on a `wish/<name>` branch, and reports back to that Genie's chat. A team
+can have many Genies, one per repository, each in its own color.
 
 ## What it does
 
@@ -12,6 +13,12 @@ in its own copy of the project on a `wish/<name>` branch, and reports back to Ge
   (`<team workspace>/genie`), started as a git repository on `dev` the first time Genie needs it.
   To work in your own repository, pick it as Genie's **Working folder** in its settings. A Genie
   you delete is not made again.
+- **More Genies**: the `genie-create` endpoint of the Bot team (`POST /api/omni-ui`,
+  `{ endpoint: 'genie-create', payload: { folder } }`) adds a Genie for the git repository
+  `folder` is in, named `Genie` while that is free, else `Genie <repository>`. A repository that
+  already has a Genie answers that Genie instead (`existed: true`). Each Genie takes the first
+  color no other Genie wears (`GENIE_COLORS`, twelve); with all twelve worn, a new one is
+  refused. The team view's `genie.colors` and `genie.taken` say which are free.
 - **Granting a wish**: Genie's `grant_wish` tool (Genie only) makes a local clone of the project
   in `<team workspace>/wishes/<project>/<name>`, on a new branch `wish/<name>` from the project's
   current commit, and hands the wish to a Tasks session there (the Bot team's `startTask`). The
