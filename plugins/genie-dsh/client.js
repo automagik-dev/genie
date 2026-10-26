@@ -32,7 +32,23 @@ module.exports = __toCommonJS(index_exports);
 
 // src/client/core.js
 var import_client = require("@automagik/bots-dsh/client");
-var { botChildren } = import_client.omni;
+var { botChildren, chatSuggestions } = import_client.omni;
+
+// src/client/suggestions.js
+var GENIE_SUGGESTIONS = Object.freeze({
+  id: "genie",
+  order: -10,
+  when: ({ bot }) => bot?.kind === "genie",
+  items: () => [
+    { id: "wish", label: "Make a wish", text: "I wish ", icon: "SparkIcon" },
+    { id: "fix", label: "Find what to fix", text: "What should I fix first in this project? ", icon: "SearchIcon" },
+    { id: "idea", label: "Think through an idea", text: "Help me think through an idea: ", icon: "MessageIcon" }
+  ]
+});
+function registerSuggestions(chatSuggestions2) {
+  return chatSuggestions2?.register ? chatSuggestions2.register(GENIE_SUGGESTIONS) : () => {
+  };
+}
 
 // src/client/wishes.js
 var ENDED_SHOWN = 3;
@@ -84,6 +100,7 @@ function GenieWishes({ bot, roster, actions }) {
 }
 function apply(ctx) {
   ctx.effect(() => botChildren.register({ id: "genie-wishes", Component: GenieWishes }), "genie: ended wishes");
+  ctx.effect(() => registerSuggestions(chatSuggestions), "genie: empty-chat suggestions");
 }
 return Object.defineProperty({ ...module.exports }, Symbol.toStringTag, { value: 'Module' })
   },

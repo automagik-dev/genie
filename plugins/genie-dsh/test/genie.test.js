@@ -8,8 +8,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, test } from 'node:test';
 import { createRuntime } from '../index.js';
+import { GENIE_SUGGESTIONS, registerSuggestions } from '../src/client/suggestions.js';
 import { endedWishesOf, outcomeOf } from '../src/client/wishes.js';
-import { GENIE_KIND, slugOf, wishBrief } from '../src/host/genie.js';
+import { GENIE_COLORS, GENIE_KIND, freeGenieColor, genieNameFor, slugOf, wishBrief } from '../src/host/genie.js';
 import { MISSING_GIT, MISSING_TOOLS_MAC, gitProblem } from '../src/host/git.js';
 
 let dir;
@@ -29,7 +30,7 @@ function fakeTeam({ bots = {}, readOnly, noModel = false } = {}) {
   const model = noModel ? undefined : { provider: 'p', model: 'm' };
   const team = join(dir, 'team');
   mkdirSync(team, { recursive: true });
-  const record = { created: [], tasks: [], views: [], saves: 0 };
+  const record = { created: [], tasks: [], views: [], endpoints: new Map(), saves: 0 };
   const state = { bots: { ...bots } };
   const rt = {
     home: join(dir, 'home'),
@@ -59,6 +60,10 @@ function fakeTeam({ bots = {}, readOnly, noModel = false } = {}) {
     hooks: {
       view: (fn) => {
         record.views.push(fn);
+        return () => {};
+      },
+      endpoint: (name, fn) => {
+        record.endpoints.set(name, fn);
         return () => {};
       },
     },
@@ -296,4 +301,92 @@ test('an ended wish says how it turned out: a failed one names why, a stopped on
   assert.deepEqual(outcomeOf({ status: 'stopped' }), { state: 'stopped', short: 'Stopped', full: 'Stopped' });
   assert.equal(outcomeOf({ status: 'done' }).short, 'Done');
   assert.equal(outcomeOf({ status: 'ended' }).short, 'Done');
+});
+
+test("Genie's empty chat leads with its own chips, only for a Genie, and a team without the hook gets none", () => {
+  const registered = [];
+  const off = registerSuggestions({
+    register: (entry) => {
+      registered.push(entry);
+      return () => registered.pop();
+    },
+  });
+  assert.equal(registered[0], GENIE_SUGGESTIONS);
+  assert.ok(GENIE_SUGGESTIONS.order < 0, "before the team's own");
+  assert.equal(GENIE_SUGGESTIONS.when({ bot: { kind: 'genie' } }), true);
+  assert.equal(GENIE_SUGGESTIONS.when({ bot: { kind: 'bot' } }), false);
+  const items = GENIE_SUGGESTIONS.items({ bot: { kind: 'genie' } });
+  assert.equal(items.length, 3);
+  for (const item of items) {
+    assert.ok(item.id && item.label, item.label);
+    assert.match(item.text, / $/, 'the person finishes the text');
+  }
+  assert.equal(items[0].text, 'I wish ');
+  off();
+  assert.equal(registered.length, 0);
+  assert.equal(typeof registerSuggestions(undefined), 'function');
+});
+
+const repoAt = (path) => {
+  mkdirSync(path, { recursive: true });
+  gitIn(path, 'init', '-q');
+  return path;
+};
+
+test('a Genie per repository: + Genie makes a new one in a free color, and the same repository opens its own', async () => {
+  const team = fakeTeam();
+  const { rt } = compose(team);
+  await rt.genieReady;
+  const first = Object.values(team.state.bots)[0];
+  assert.equal(first.color, GENIE_COLORS[0], 'the first Genie wears the first Genie color');
+  const create = team.record.endpoints.get('genie-create');
+  assert.equal(typeof create, 'function', 'served as genie-create');
+
+  const api = repoAt(join(dir, 'api'));
+  const made = await create({ folder: api });
+  assert.equal(made.existed, false);
+  assert.deepEqual(made.bot, { id: 'bot-2', name: 'Genie api', color: GENIE_COLORS[1] });
+  assert.equal(team.record.created[1].kind, GENIE_KIND);
+  assert.equal(team.record.created[1].workDir, gitIn(api, 'rev-parse', '--show-toplevel'));
+
+  // A folder inside the same repository is that repository: its Genie opens, nothing is made.
+  mkdirSync(join(api, 'src'));
+  assert.deepEqual(await create({ folder: join(api, 'src') }), { bot: made.bot, existed: true });
+  assert.equal(team.record.created.length, 2);
+
+  // Two quick presses for a new repository make one Genie.
+  const web = repoAt(join(dir, 'web'));
+  const [a, b] = await Promise.all([create({ folder: web }), create({ folder: web })]);
+  assert.equal(a.bot.id, b.bot.id);
+  assert.deepEqual([a.existed, b.existed].sort(), [false, true]);
+  assert.equal(a.bot.color, GENIE_COLORS[2]);
+
+  // The team view says which colors are worn.
+  const view = Object.assign({}, ...team.record.views.map((fn) => fn())).genie;
+  assert.deepEqual(view.taken, GENIE_COLORS.slice(0, 3));
+
+  await assert.rejects(create({ folder: join(dir, 'team') }), /is not in a git repository/);
+  await assert.rejects(create({}), /Pick the repository/);
+});
+
+test('no two Genies share a color, and a twelfth-plus Genie is refused rather than doubled', async () => {
+  const bots = Object.fromEntries(
+    GENIE_COLORS.map((color, i) => [`g${i}`, { id: `g${i}`, name: `G${i}`, kind: GENIE_KIND, color }]),
+  );
+  const team = fakeTeam({ bots });
+  const { rt } = compose(team);
+  await rt.genieReady;
+  await assert.rejects(rt.createGenie({ folder: repoAt(join(dir, 'one-more')) }), /Every Genie color is taken/);
+  assert.equal(freeGenieColor([{}]), GENIE_COLORS[1], 'a Genie saved without a color wears the first');
+  assert.equal(freeGenieColor([]), GENIE_COLORS[0]);
+});
+
+test('a new Genie is called Genie while that name is free, else after its repository', () => {
+  const names = new Set();
+  const taken = (name) => names.has(name);
+  assert.equal(genieNameFor('/x/api', taken), 'Genie');
+  names.add('Genie');
+  assert.equal(genieNameFor('/x/api', taken), 'Genie api');
+  names.add('Genie api');
+  assert.equal(genieNameFor('/y/api', taken), 'Genie api 2');
 });
