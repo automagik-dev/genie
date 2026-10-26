@@ -3,11 +3,12 @@
  * Genie's plugin lane: genie-dsh releases reach the Automagik desktop app (and any market
  * that reads lanes) without a Genie CLI release or an Automagik one. The shape is Automagik's
  * (automagik-dev/automagik plugin-lane/README.md, schemaVersion 1): one signed manifest on
- * a rolling `plugin-lane` release of this repository, the tarball on its own immutable
- * `genie-dsh-v<version>` release.
+ * the `lane` branch of this repository, the tarball on its own immutable
+ * `genie-dsh-v<version>` release. Not on a rolling release as Automagik's is: this
+ * repository's releases are immutable, so a published one takes no new files.
  *
- *   https://github.com/automagik-dev/genie/releases/download/plugin-lane/lane.json
- *   https://github.com/automagik-dev/genie/releases/download/plugin-lane/lane.json.sig
+ *   https://raw.githubusercontent.com/automagik-dev/genie/lane/lane.json
+ *   https://raw.githubusercontent.com/automagik-dev/genie/lane/lane.json.sig
  *
  * The signature is ed25519 over the exact bytes of lane.json, detached, base64; the public
  * keys are plugin-lane/keys.json, and the private key exists only as the PLUGIN_LANE_KEY

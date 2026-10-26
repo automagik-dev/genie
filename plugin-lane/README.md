@@ -4,11 +4,14 @@ genie-dsh releases reach the Automagik desktop app without a Genie CLI release o
 Automagik one. The shape is Automagik's lane, schemaVersion 1 (automagik-dev/automagik
 `plugin-lane/README.md`), with `publisher: "genie"`:
 
-- https://github.com/automagik-dev/genie/releases/download/plugin-lane/lane.json
-- https://github.com/automagik-dev/genie/releases/download/plugin-lane/lane.json.sig
+- https://raw.githubusercontent.com/automagik-dev/genie/lane/lane.json
+- https://raw.githubusercontent.com/automagik-dev/genie/lane/lane.json.sig
 
-- The rolling `plugin-lane` release holds those two files only. Each tarball stays on its own
-  `genie-dsh-v<version>` release, which never changes.
+- The `lane` branch holds those two files only, a new commit on every publish. Unlike
+  Automagik's, Genie's lane is not a rolling release: this repository's releases are
+  immutable, so a published release takes no new files. The signature is what a consumer
+  trusts, wherever the bytes come from.
+- Each tarball stays on its own immutable `genie-dsh-v<version>` release.
 - `lane.json.sig` is ed25519 over the exact bytes of `lane.json`, detached, base64.
   `keys.json` here lists the public keys, `{ keys: [{ keyId, publicKey }] }`, PEM (SPKI).
 - `sequence` is genie-dsh's version M.m.p as M·10⁸ + m·10⁴ + p.

@@ -1,8 +1,9 @@
 # Genie's plugin lane (scripts/plugin-lane.ts, plugin-lane/README.md): a genie-dsh version
 # that lands on dev is released on its own, with no Genie CLI release and no Automagik one.
-# The tarball goes on an immutable `genie-dsh-v<version>` release; the signed lane.json and
-# lane.json.sig replace the two files on the rolling `plugin-lane` release. Neither is ever
-# the Latest release, and neither tag matches the `v*` CLI tags the release chain watches.
+# The tarball goes on an immutable `genie-dsh-v<version>` release, never the Latest one, and
+# its tag does not match the `v*` CLI tags the release chain watches. The signed lane.json and
+# lane.json.sig are the only files of the `lane` branch, a new commit on it each time: this
+# repository's releases are immutable, so a rolling release cannot take new files.
 # A version already released keeps its tarball: a re-run only signs the lane again.
 name: genie-dsh plugin lane
 
@@ -69,10 +70,18 @@ jobs:
           bun scripts/plugin-lane.ts verify dist/lane.json dist/lane.json.sig
 
       - name: Publish the lane
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
-          if ! gh release view plugin-lane --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release create plugin-lane --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --latest=false \
-              --title "Genie plugin lane" \
-              --notes "The signed manifest of Genie's newest plugins (plugin-lane/README.md). It holds lane.json and lane.json.sig only."
+          remote="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          if git ls-remote --exit-code --heads "$remote" lane >/dev/null; then
+            git clone -q --depth 1 --branch lane "$remote" lane
+          else
+            git init -q -b lane lane
           fi
-          gh release upload plugin-lane dist/lane.json dist/lane.json.sig --repo "$GITHUB_REPOSITORY" --clobber
+          cp dist/lane.json dist/lane.json.sig lane/
+          cd lane
+          git add lane.json lane.json.sig
+          git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+            commit -q -m "lane: genie-dsh ${VERSION}"
+          git push -q "$remote" HEAD:refs/heads/lane
