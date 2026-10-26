@@ -1,4 +1,5 @@
-// The Genie Bot and its wishes. Genie lives in one project folder (its Bot's workDir).
+// The Genie Bots and their wishes. A team may have many Genies, one per repository (its
+// Bot's workDir), each in a color no other Genie wears; genie-create adds one for a folder.
 // grant_wish makes the wish its own clone of the project, on a new wish/<slug> branch, and
 // hands the wish to a Tasks session there (rt.startTask): the team runs it, shows it as a
 // thread under Genie while it works, resumes it after a restart, and brings its final
@@ -25,6 +26,42 @@ export const GENIE_INSTRUCTIONS = [
   'If grant_wish answers that something is missing (git, a project folder), give the user exactly the fix it names.',
   'Do not do the wish yourself in this chat.',
 ].join('\n');
+
+// A Genie's colors, one per Genie: the first is the color Genie's own art is drawn in, and a
+// Genie saved before Genies had colors wears it. Bot team color ids (bots-dsh characters.js).
+export const GENIE_COLORS = Object.freeze([
+  'violet',
+  'blue',
+  'cyan',
+  'green',
+  'yellow',
+  'orange',
+  'red',
+  'magenta',
+  'aurora',
+  'brown',
+  'gray',
+  'black',
+]);
+
+/** The color a Genie wears. */
+export const genieColorOf = (bot) => bot?.color ?? GENIE_COLORS[0];
+
+/** The first Genie color no Genie in `genies` wears, or undefined when every one is taken. */
+export function freeGenieColor(genies) {
+  const taken = new Set(genies.map(genieColorOf));
+  return GENIE_COLORS.find((color) => !taken.has(color));
+}
+
+/** A name for a new Genie in `repo`: Genie while that is free, else Genie <repo>, numbered past a clash. */
+export function genieNameFor(repo, taken) {
+  if (!taken('Genie')) return 'Genie';
+  const stem = `Genie ${basename(repo)}`.slice(0, 34).trim();
+  if (!taken(stem)) return stem;
+  let n = 2;
+  while (taken(`${stem} ${n}`)) n += 1;
+  return `${stem} ${n}`;
+}
 
 export const GENIE_BOT = Object.freeze({
   kind: GENIE_KIND,
@@ -94,8 +131,8 @@ export function install(rt) {
 
   const genieBots = () => Object.values(rt.state?.bots ?? {}).filter((bot) => bot.kind === GENIE_KIND);
 
-  // The Genie Bot, made once (the plugin loads on every start): an existing genie Bot is
-  // kept, and one the user deleted is not made again.
+  // The first Genie, made once (the plugin loads on every start): an existing Genie is kept,
+  // and one the user deleted is not made again. More come from createGenie.
   async function ensureGenie() {
     await rt.load();
     if (rt.readOnly() !== undefined) return undefined;
@@ -108,13 +145,54 @@ export function install(rt) {
     const project = typeof team === 'string' ? join(team, GENIE_PROJECT) : undefined;
     if (project !== undefined) mkdirSync(project, { recursive: true });
     const name = GENIE_NAMES.find((candidate) => rt.findBot?.(candidate) === undefined) ?? `Genie ${Date.now()}`;
-    // With a default model already served (Connect AI done), Genie takes it and greets at
-    // once; with none, its greeting waits until Connect AI gives it one.
-    const model = await Promise.resolve(rt.defaultModel?.()).catch(() => undefined);
-    const bot = await rt.createBot({ ...GENIE_BOT, name, workDir: project, pickModel: model === undefined });
+    const bot = await rt.createBot({
+      ...GENIE_BOT,
+      name,
+      color: GENIE_COLORS[0],
+      workDir: project,
+      pickModel: await noModel(),
+    });
     load().genieCreated = true;
     save();
     return bot;
+  }
+
+  // With a default model already served (Connect AI done), a new Genie takes it and greets at
+  // once; with none, its greeting waits until Connect AI gives it one.
+  const noModel = async () => (await Promise.resolve(rt.defaultModel?.()).catch(() => undefined)) === undefined;
+
+  // The repository a Genie lives in, or null when its folder is not in one.
+  const repoOf = (bot) => {
+    const folder = bot.workDir ?? rt.workDirOf?.({ botId: bot.id });
+    return typeof folder === 'string' ? topLevel(folder) : Promise.resolve(null);
+  };
+  const genieView = (bot) => ({ id: bot.id, name: bot.name, color: genieColorOf(bot) });
+
+  // A Genie for the repository `folder` is in: the one already living there, else a new one in
+  // the first free Genie color. One at a time, so two quick presses make one Genie.
+  let creating = Promise.resolve();
+  function createGenie({ folder } = {}) {
+    const run = creating.then(async () => {
+      await rt.load();
+      const readOnly = rt.readOnly();
+      if (readOnly !== undefined) throw new Error(readOnly);
+      if (typeof folder !== 'string' || folder.trim() === '')
+        throw new Error('Pick the repository this Genie will live in.');
+      const repo = await topLevel(folder.trim());
+      if (repo === null)
+        throw new Error(`${folder.trim()} is not in a git repository. Pick a repository, or run git init there first.`);
+      for (const bot of genieBots()) if ((await repoOf(bot)) === repo) return { bot: genieView(bot), existed: true };
+      const color = freeGenieColor(genieBots());
+      if (color === undefined)
+        throw new Error(`Every Genie color is taken (${GENIE_COLORS.length} Genies). Remove a Genie to add another.`);
+      const name = genieNameFor(repo, (candidate) => rt.findBot?.(candidate) !== undefined);
+      const bot = await rt.createBot({ ...GENIE_BOT, name, color, workDir: repo, pickModel: await noModel() });
+      load().genieCreated = true;
+      save();
+      return { bot: genieView(bot), existed: false };
+    });
+    creating = run.catch(() => {});
+    return run;
   }
 
   const ready = (async () => {
@@ -201,11 +279,17 @@ export function install(rt) {
     if (wish !== undefined) void bringBack(wish).catch((error) => rt.warn?.('genie: %s', error?.message ?? error));
   });
 
+  // Adding a Genie: genie-create { folder } answers { bot: { id, name, color }, existed }.
+  ctx.effect(() => rt.hooks.endpoint?.('genie-create', (body) => createGenie(body ?? {})), 'genie: create a Genie');
+
   // The wishes, for the rows under Genie; their status is the team's task status.
   ctx.effect(
     () =>
       rt.hooks.view(() => ({
         genie: {
+          // Which Genie colors are worn, so a picker offers only the free ones.
+          colors: GENIE_COLORS,
+          taken: genieBots().map(genieColorOf),
           wishes: load().wishes.map(({ slug, title, branch, sessionId, botId, at }) => ({
             slug,
             title,
@@ -253,5 +337,5 @@ export function install(rt) {
     }),
   );
 
-  Object.assign(rt, { ensureGenie, grantWish, genieWishes: () => load().wishes, genieReady: ready });
+  Object.assign(rt, { ensureGenie, createGenie, grantWish, genieWishes: () => load().wishes, genieReady: ready });
 }
