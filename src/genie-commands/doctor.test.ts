@@ -705,10 +705,12 @@ describe('checkV4Residue — accounting + uncertain keeps + json fix', () => {
     chmodSync(join(repo, 'README.md'), 0o666); // drift wider than the index
     plant(repo);
     const repoRoot = join(import.meta.dir, '..', '..');
+    // The success case asserts no check fails, so no host config root may override the fixture home.
+    const { CODEX_HOME: _codex, CLAUDE_CONFIG_DIR: _claude, HERMES_HOME: _hermes, ...hostEnv } = process.env;
 
     const proc = Bun.spawnSync([process.execPath, join(repoRoot, 'src', 'genie.ts'), 'doctor', '--fix', '--json'], {
       cwd: repo,
-      env: { ...process.env, HOME: fxHome, GENIE_HOME: fxGenieHome, GENIE_WORKTREES_DIR: worktrees },
+      env: { ...hostEnv, HOME: fxHome, GENIE_HOME: fxGenieHome, GENIE_WORKTREES_DIR: worktrees },
     });
     const stdout = proc.stdout.toString();
     const stderr = proc.stderr.toString();
