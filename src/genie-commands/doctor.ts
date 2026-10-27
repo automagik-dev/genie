@@ -60,7 +60,13 @@ import {
   shippedWorkflowNames,
   shippedWorkflowsRoot,
 } from '../lib/workflows-installer.js';
-import { type ModeDriftReportEntry, checkWorktreeModes, modeDriftLines, repairWorktreeModes } from './doctor-modes.js';
+import {
+  type ModeDriftReportEntry,
+  type ModeDriftScan,
+  checkWorktreeModes,
+  modeDriftLines,
+  repairWorktreeModes,
+} from './doctor-modes.js';
 import { checkLaunchWorktrees, cleanupLaunchWorktrees } from './doctor-worktrees.js';
 import {
   cleanupV4,
@@ -1876,19 +1882,22 @@ export interface DoctorDeps {
  * state, and AFTER the caller's Git resolution because the worktree cleanup is
  * scoped to the resolved repo root. Without --fix, detection only — both residue
  * checks are pure reads and nothing on disk changes. In --json mode stdout
- * belongs to the JSON document, so cleanup chatter goes to stderr.
+ * belongs to the JSON document, so cleanup chatter goes to stderr. Returns the
+ * mode scan the repair took when it tightened nothing, for the report to reuse.
  */
-function runDoctorCleanups(options: { json?: boolean; fix?: boolean } | undefined, root: string | null): void {
+function runDoctorCleanups(
+  options: { json?: boolean; fix?: boolean } | undefined,
+  root: string | null,
+): ModeDriftScan | undefined {
   const cleanupOptions = options?.json ? { logSink: (line: string) => writeErr(`${line}\n`) } : {};
-  if (options?.fix) {
-    cleanupV4(cleanupOptions);
-    cleanupLaunchWorktrees(root, cleanupOptions);
-    // Mode repair runs AFTER worktree removal: the removal scan decides on the
-    // pre-repair state, so a worktree whose only dirt is mode drift is never
-    // removed in the same run that tightens it (removal stays fail-closed on
-    // the state the user last saw; the next --fix may reclaim it).
-    repairWorktreeModes(root, cleanupOptions);
-  }
+  if (!options?.fix) return undefined;
+  cleanupV4(cleanupOptions);
+  cleanupLaunchWorktrees(root, cleanupOptions);
+  // Mode repair runs AFTER worktree removal: the removal scan decides on the
+  // pre-repair state, so a worktree whose only dirt is mode drift is never
+  // removed in the same run that tightens it (removal stays fail-closed on
+  // the state the user last saw; the next --fix may reclaim it).
+  return repairWorktreeModes(root, cleanupOptions) ?? undefined;
 }
 
 /** The `--fix-global-db` verb: repair, report, and decide the exit code alone. */
@@ -1920,7 +1929,7 @@ export async function doctorCommand(
       ? deps.databaseRoot
       : (gitRoots?.commonRoot ?? root);
 
-  runDoctorCleanups(options, root);
+  const unchangedModeScan = runDoctorCleanups(options, root);
 
   const pluginProbe = deps.pluginProbe?.cliAvailable !== undefined ? deps.pluginProbe : probeCodexGeniePlugin();
   const results: CheckResult[] = [
@@ -1944,7 +1953,7 @@ export async function doctorCommand(
     ),
     ...checkV4Residue(),
     ...checkLaunchWorktrees(root),
-    ...checkWorktreeModes(root),
+    ...checkWorktreeModes(root, unchangedModeScan),
     ...checkIndexLaneDrift(root, databaseRoot),
     ...checkRetiredJsonMcpEntry(root),
     ...checkTrackedMachineState(root),

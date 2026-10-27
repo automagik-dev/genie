@@ -633,11 +633,13 @@ export function modeDriftLines(entries: ModeDriftEntry[]): string[] {
 /**
  * Detect-only view of the mode drift. Pure read: doctor without `--fix`
  * mutates nothing here. Outside a git repo (`root === null`) there is nothing
- * to enumerate and no check is emitted.
+ * to enumerate and no check is emitted. `prior` is a scan the same run already
+ * took and nothing has mutated since — the one `repairWorktreeModes` hands back
+ * when it tightened nothing — so `--fix` does not walk every worktree twice.
  */
-export function checkWorktreeModes(root: string | null): CheckResult[] {
+export function checkWorktreeModes(root: string | null, prior?: ModeDriftScan): CheckResult[] {
   if (root === null) return [];
-  const scan = scanWorktreeModes(root);
+  const scan = prior ?? scanWorktreeModes(root);
   if (scan.enumerationError !== null) {
     return [
       {
@@ -708,17 +710,21 @@ function tightenNoFollow(path: string, mode: number, entry: ModeDriftEntry): str
  * a repo with no wider item is a strict no-op. A per-item open/fchmod failure
  * is reported and skipped; it never escalates and never touches a non-wider
  * item.
+ *
+ * Returns the scan when no tightening was attempted, because it still describes
+ * the tree and the report may reuse it; `null` once any item was attempted (the
+ * post-fix state must be re-read, a refused item included) or without a root.
  */
-export function repairWorktreeModes(root: string | null, deps: ModeRepairDeps = {}): void {
-  if (root === null) return;
+export function repairWorktreeModes(root: string | null, deps: ModeRepairDeps = {}): ModeDriftScan | null {
+  if (root === null) return null;
   const emit = deps.logSink ?? ((line: string) => writeOut(`${line}\n`));
   const scan = deps.scan ?? scanWorktreeModes(root);
   if (scan.enumerationError !== null) {
     emit(`  \x1b[33m!\x1b[0m mode repair skipped: enumeration failed (${scan.enumerationError})`);
-    return;
+    return scan;
   }
   const wider = scan.entries.filter((entry) => entry.disposition === 'wider');
-  if (wider.length === 0) return;
+  if (wider.length === 0) return scan;
   emit(`\x1b[2mTightening ${wider.length} wider-than-index mode(s)...\x1b[0m`);
   for (const entry of wider) {
     const path = entry.relPath === null ? entry.worktree : join(entry.worktree, entry.relPath);
@@ -736,4 +742,5 @@ export function repairWorktreeModes(root: string | null, deps: ModeRepairDeps = 
     if (failure === null) emit(`  \x1b[32m✔\x1b[0m tightened ${path} (${entry.diskMode} → ${entry.indexMode})`);
     else emit(`  \x1b[33m!\x1b[0m kept ${path}: ${failure}`);
   }
+  return null;
 }

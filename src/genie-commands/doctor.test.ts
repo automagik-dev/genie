@@ -679,9 +679,13 @@ describe('checkV4Residue — accounting + uncertain keeps + json fix', () => {
     expect(proc.stderr.toString()).toContain('Removed v4 residue'); // chatter rerouted, not lost
   });
 
-  test('doctor --fix --json from a repo root: worktree and mode-repair chatter go to stderr', () => {
-    // Issue #3143: the repo-root cleanups (launch worktree removal, mode repair) only run when
-    // the cwd is a git checkout, so the fixture-home test above never reaches their logSink.
+  /**
+   * A tmp repo root with both repo-only cleanups armed — one merged, clean launch
+   * worktree and one tracked file wider than its index mode — then `doctor --fix
+   * --json` run from it as a user would. Issue #3143: those cleanups only run when
+   * the cwd is a git checkout, so the fixture-home test above never reaches their logSink.
+   */
+  function runFixJsonFromRepoRoot(plant: (repo: string) => void = () => {}) {
     const repo = join(fxHome, 'repo');
     const worktrees = join(fxHome, 'worktrees');
     mkdirSync(repo, { recursive: true });
@@ -699,20 +703,46 @@ describe('checkV4Residue — accounting + uncertain keeps + json fix', () => {
     git('branch', 'dev'); // integration branch containing the launch branch's tip
     git('worktree', 'add', '-q', '-b', 'wish/demo-alpha', join(worktrees, 'demo-alpha')); // merged + clean
     chmodSync(join(repo, 'README.md'), 0o666); // drift wider than the index
+    plant(repo);
     const repoRoot = join(import.meta.dir, '..', '..');
 
     const proc = Bun.spawnSync([process.execPath, join(repoRoot, 'src', 'genie.ts'), 'doctor', '--fix', '--json'], {
       cwd: repo,
       env: { ...process.env, HOME: fxHome, GENIE_HOME: fxGenieHome, GENIE_WORKTREES_DIR: worktrees },
     });
-
     const stdout = proc.stdout.toString();
     const stderr = proc.stderr.toString();
-    expect(() => JSON.parse(stdout)).not.toThrow(); // whole stdout is exactly one document
+    // Whole stdout is exactly one document, whatever the verdict.
+    const json = JSON.parse(stdout) as { ok: boolean; checks: Array<{ name: string; status: string }> };
     for (const message of ['Removing 1 merged, clean launch worktree', 'Tightening 1 wider-than-index mode']) {
       expect(stderr).toContain(message);
       expect(stdout).not.toContain(message);
     }
+    expect(existsSync(join(worktrees, 'demo-alpha'))).toBe(false);
+    expect(statSync(join(repo, 'README.md')).mode & 0o777).toBe(0o644);
+    const status = (name: string) => json.checks.find((check) => check.name === name)?.status;
+    expect(status('launch worktrees')).toBe('pass'); // the report is the post-fix state
+    expect(status('mode drift')).toBe('pass');
+    return { exitCode: proc.exitCode, json, status };
+  }
+
+  test('doctor --fix --json from a repo root: cleanup chatter on stderr, post-fix JSON on stdout, exit 0', () => {
+    const { exitCode, json } = runFixJsonFromRepoRoot();
+
+    expect(json.checks.filter((check) => check.status === 'fail').map((check) => check.name)).toEqual([]);
+    expect(json.ok).toBe(true);
+    expect(exitCode).toBe(0);
+  });
+
+  test('doctor --fix --json with a failing check: still one JSON document, ok false, exit 1', () => {
+    const { exitCode, json, status } = runFixJsonFromRepoRoot((repo) => {
+      mkdirSync(join(repo, '.genie'), { recursive: true });
+      writeFileSync(join(repo, '.genie', 'genie.db'), 'not a sqlite database\n'); // untracked: no mode drift
+    });
+
+    expect(status('genie.db')).toBe('fail');
+    expect(json.ok).toBe(false);
+    expect(exitCode).toBe(1);
   });
 });
 
