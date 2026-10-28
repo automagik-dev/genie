@@ -110,3 +110,34 @@ export async function fetchWishBranch(repo, dir, branch) {
   const result = await git(['fetch', '--quiet', dir, `refs/heads/${branch}:refs/heads/${branch}`], repo);
   return result.ok ? { ok: true } : { ok: false, error: result.stderr || 'git fetch failed' };
 }
+
+/**
+ * The URL a wish publishes to: the project's `origin` when it has one, else its first remote,
+ * or null when the project has no remote at all.
+ */
+export async function publishUrl(repo) {
+  const names = await git(['remote'], repo);
+  if (!names.ok) return null;
+  const remotes = names.stdout.split('\n').filter((name) => name !== '');
+  if (remotes.length === 0) return null;
+  const url = await git(['remote', 'get-url', remotes.includes('origin') ? 'origin' : remotes[0]], repo);
+  return url.ok && url.stdout !== '' ? url.stdout : null;
+}
+
+/**
+ * Gives a wish's copy the named branches the project already has, as local branches it may
+ * change. The clone's remote-tracking refs carry the project's branches already.
+ */
+export async function grantBranches(dir, branches) {
+  for (const branch of branches) {
+    const made = await git(['branch', '--quiet', branch, `origin/${branch}`], dir);
+    if (!made.ok) return { ok: false, error: made.stderr || `git branch ${branch} failed` };
+  }
+  return { ok: true };
+}
+
+/** In a wish's copy, the project's real remote as `publish`, so a scoped wish can push there. */
+export async function addPublishRemote(dir, url) {
+  const added = await git(['remote', 'add', 'publish', url], dir);
+  return added.ok ? { ok: true } : { ok: false, error: added.stderr || 'git remote add failed' };
+}
