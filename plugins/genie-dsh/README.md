@@ -23,9 +23,18 @@ can have many Genies, one per repository, each in its own color.
   in `<team workspace>/wishes/<project>/<name>`, on a new branch `wish/<name>` from the project's
   current commit, and hands the wish to a Tasks session there (the Bot team's `startTask`). The
   thread plans, makes the change, runs the project's own checks, commits on its branch and ends
-  with a short report. It never pushes or merges.
+  with a short report. A plain wish never pushes, merges, or touches another branch.
+- **A follow-up wish, scoped to branches**: a wish that must repair or publish branches an
+  earlier wish made passes their names in `grant_wish`'s optional `branches` list. Those existing
+  branches are created as local branches in the wish's copy, and the project's real remote becomes
+  its `publish` remote. The brief then lets that wish commit on exactly those branches, push them
+  to `publish` and open or update their pull requests — never force-push, merge or deploy, and
+  never touch a branch the wish was not given. The branch the project is on (the integration
+  branch) and `main`/`master` are never grantable, so a wish cannot bypass review. With no
+  remote, a scoped wish commits its repairs and reports that it could not publish.
 - **When it ends**: the team brings the thread's report to Genie's chat, and this plugin fetches
-  the `wish/<name>` branch back into the project. You merge it when you are happy with it.
+  the `wish/<name>` branch, plus any branches the wish was scoped to, back into the project. You
+  merge when you are happy with it.
 - **In the sidebar**: a running wish shows as a thread under Genie (the team's task threads); the
   last ended ones stay listed under Genie with their outcome, and open their thread.
 - **No git**: on a Mac without the Command Line Tools, Genie says so with the one-line fix

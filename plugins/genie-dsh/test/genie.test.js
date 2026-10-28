@@ -209,6 +209,81 @@ test('the same title twice gets its own branch', async () => {
   assert.match(second, /wish\/fix-it-2/);
 });
 
+// Issue #3182: a follow-up authorized to repair and publish the branches an earlier wish made
+// must be able to act on them, where the plain brief said "do not touch any other branch".
+test('a follow-up wish scoped to an earlier branch repairs and publishes it, and leaves other branches alone', async () => {
+  const origin = join(dir, 'origin.git');
+  gitIn(dir, 'init', '-q', '--bare', origin);
+  const repo = join(dir, 'app');
+  mkdirSync(repo);
+  gitIn(repo, 'init', '-q', '-b', 'main');
+  writeFileSync(join(repo, 'a.txt'), 'a');
+  gitIn(repo, 'add', '.');
+  gitIn(repo, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-m', 'first');
+  gitIn(repo, 'remote', 'add', 'origin', origin);
+  // Two branches an earlier wish left behind; only the first is given to the follow-up.
+  gitIn(repo, 'branch', 'wish/keep-a');
+  gitIn(repo, 'branch', 'wish/keep-b');
+  const untouched = gitIn(repo, 'rev-parse', 'wish/keep-b');
+
+  const team = fakeTeam({ bots: { g: { id: 'g', name: 'Genie', kind: GENIE_KIND, workDir: repo } } });
+  const { rt, tools, turnEnd } = compose(team);
+  await rt.genieReady;
+  const answer = await grant(tools, 'g', {
+    title: 'Repair and publish the earlier wishes',
+    wish: 'Repair wish/keep-a, then push it.',
+    branches: ['wish/keep-a'],
+  });
+  assert.match(answer, /granted as a thread on branch wish\/repair-and-publish-the-earlier-wishes/);
+  const task = team.record.tasks[0];
+  // The brief names the given branch, allows publishing exactly it, and keeps the guardrail.
+  assert.match(task.text, /existing branches: wish\/keep-a\./);
+  assert.match(task.text, /git push publish <branch>/);
+  assert.match(task.text, /Do not push, merge, or touch any branch not listed here/);
+  assert.doesNotMatch(task.text, /Do not push, merge, or touch any other branch/);
+
+  const folder = join(dir, 'wishes', 'app', 'repair-and-publish-the-earlier-wishes');
+  // The given branch is in the wish's copy; the branch it was not given is not.
+  assert.equal(gitIn(folder, 'rev-parse', 'wish/keep-a'), gitIn(repo, 'rev-parse', 'wish/keep-a'));
+  assert.equal(gitIn(folder, 'branch', '--list', 'wish/keep-b'), '');
+  assert.equal(gitIn(folder, 'remote', 'get-url', 'publish'), origin);
+
+  // The thread repairs the given branch and publishes it.
+  gitIn(folder, 'switch', '-q', 'wish/keep-a');
+  writeFileSync(join(folder, 'a.txt'), 'repaired');
+  gitIn(folder, 'commit', '-q', '-am', 'Repair a');
+  gitIn(folder, 'push', '-q', 'publish', 'wish/keep-a');
+  assert.equal(gitIn(origin, 'log', '-1', '--format=%s', 'wish/keep-a'), 'Repair a');
+
+  // When the turn ends, the repair comes back into the project; the other branch does not move.
+  turnEnd('session-1');
+  for (let i = 0; i < 50 && gitIn(repo, 'log', '-1', '--format=%s', 'wish/keep-a') !== 'Repair a'; i++)
+    await new Promise((r) => setTimeout(r, 20));
+  assert.equal(gitIn(repo, 'log', '-1', '--format=%s', 'wish/keep-a'), 'Repair a');
+  assert.equal(gitIn(repo, 'rev-parse', 'wish/keep-b'), untouched);
+  assert.equal(gitIn(repo, 'rev-parse', '--abbrev-ref', 'HEAD'), 'main');
+});
+
+test('a wish is only given branches that exist, and never the integration branch', async () => {
+  const repo = join(dir, 'app');
+  mkdirSync(repo);
+  gitIn(repo, 'init', '-q', '-b', 'main');
+  writeFileSync(join(repo, 'a.txt'), 'a');
+  gitIn(repo, 'add', '.');
+  gitIn(repo, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-m', 'first');
+  const team = fakeTeam({ bots: { g: { id: 'g', name: 'Genie', kind: GENIE_KIND, workDir: repo } } });
+  const { rt, tools } = compose(team);
+  await rt.genieReady;
+  assert.match(
+    await grant(tools, 'g', { title: 'Missing', wish: 'w', branches: ['wish/missing'] }),
+    /is not a branch in/,
+  );
+  assert.match(await grant(tools, 'g', { title: 'Own', wish: 'w', branches: ['main'] }), /integration branch/);
+  // The tool schema itself refuses a scope that is not a list of branch names.
+  await assert.rejects(grant(tools, 'g', { title: 'Bad', wish: 'w', branches: 'all' }), /must be an array/);
+  assert.equal(team.record.tasks.length, 0);
+});
+
 test('a folder the user picked that is not a repository is refused, never initialised', async () => {
   const picked = join(dir, 'my-project');
   mkdirSync(picked);
@@ -267,6 +342,33 @@ test('slugs are branch-safe and the brief tells the thread where and how to fini
   assert.match(brief, /Work only in \/w: your own copy of the project, on branch wish\/t \(made from abcdef123456\)/);
   assert.match(brief, /Do not push, merge, or touch any other branch/);
   assert.match(brief, /final report/);
+
+  // A wish scoped to branches an earlier wish made may act on exactly those, and on nothing
+  // else: the plain rule narrows to the listed branches instead of being dropped.
+  const scoped = wishBrief({
+    title: 'T',
+    wish: 'W',
+    folder: '/w',
+    branch: 'wish/t',
+    base: 'abcdef1234567890',
+    branches: ['wish/one', 'wish/two'],
+    canPublish: true,
+  });
+  assert.match(scoped, /existing branches: wish\/one, wish\/two\./);
+  assert.match(scoped, /git push publish <branch>/);
+  assert.match(scoped, /never force-push, merge, or deploy/);
+  assert.match(scoped, /Do not push, merge, or touch any branch not listed here/);
+  assert.doesNotMatch(scoped, /Do not push, merge, or touch any other branch/);
+  // With no remote, a scoped wish is told plainly that it can repair but not publish.
+  const offline = wishBrief({
+    title: 'T',
+    wish: 'W',
+    folder: '/w',
+    branch: 'wish/t',
+    base: 'abcdef1234567890',
+    branches: ['wish/one'],
+  });
+  assert.match(offline, /no git remote, so they cannot be published/);
 });
 
 test('the rows under Genie list its ended wishes, newest first, and leave running ones to the team', () => {

@@ -5,12 +5,25 @@
 // thread under Genie while it works, resumes it after a restart, and brings its final
 // report back to Genie's chat when it ends. When it ends, this module fetches the wish's
 // branch back into the project, and keeps the list of wishes, so ended ones stay listed
-// under Genie.
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+// under Genie. A follow-up wish may be scoped to branches an earlier wish made (`branches`),
+// so it can repair and publish exactly those and nothing else.
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, join } from 'node:path';
 import { defineTool } from '@deepseek-ai/dsh-tools';
-import { branchExists, cloneForWish, fetchWishBranch, gitProblem, headCommit, initRepo, topLevel } from './git.js';
+import {
+  addPublishRemote,
+  branchExists,
+  cloneForWish,
+  currentBranch,
+  fetchWishBranch,
+  gitProblem,
+  grantBranches,
+  headCommit,
+  initRepo,
+  publishUrl,
+  topLevel,
+} from './git.js';
 
 export const GENIE_KIND = 'genie';
 export const GENIE_NAMES = ['Genie', 'Genie Bot', 'The Genie'];
@@ -23,6 +36,7 @@ export const GENIE_INSTRUCTIONS = [
   'You are Genie: you grant wishes in your project, the folder you live in.',
   'Talk with the user in plain words. When they want something built, changed or fixed in the project, agree on the wish in a sentence or two, then call grant_wish with a short title and the whole wish written so it stands on its own.',
   'Each wish runs as its own thread, in its own copy of the project on a branch wish/<name>, so your chat stays clean. When it ends, the branch is brought back into the project and its report comes back to you: tell the user in a line or two what was done and where (the branch), and that they can merge it when they are happy.',
+  'When the user asks a follow-up wish to repair or publish branches an earlier wish made, pass exactly those names as grant_wish branches: that is the only scope in which a wish may push. Never give it the project branch it was made from, and never a branch the user did not name.',
   'If grant_wish answers that something is missing (git, a project folder), give the user exactly the fix it names.',
   'Do not do the wish yourself in this chat.',
 ].join('\n');
@@ -84,8 +98,20 @@ export function slugOf(title) {
   return slug === '' ? 'wish' : slug;
 }
 
-/** What the wish thread is told: the wish, where to work and how to finish. */
-export function wishBrief({ title, wish, folder, branch, base }) {
+/** What the wish thread is told: the wish, where to work, what it may touch and how to finish. */
+export function wishBrief({ title, wish, folder, branch, base, branches = [], canPublish = false }) {
+  // A wish that was given branches may change those too, and push only them when the project
+  // has a remote; every other branch keeps the plain wish rule.
+  const scope =
+    branches.length === 0
+      ? ' Do not push, merge, or touch any other branch.'
+      : [
+          ` This wish was also given these existing branches: ${branches.join(', ')}. Commit your repairs on them.`,
+          canPublish
+            ? ' Publish each one with git push publish <branch>, and open or update its pull request; never force-push, merge, or deploy.'
+            : ' The project has no git remote, so they cannot be published: commit the repairs and say so in your final report.',
+          ' Do not push, merge, or touch any branch not listed here.',
+        ].join('');
   return [
     'You are a Genie wish thread. Grant exactly this one wish, then report.',
     '',
@@ -96,7 +122,7 @@ export function wishBrief({ title, wish, folder, branch, base }) {
     '1. Read the project first (README, AGENTS.md or CLAUDE.md when present) and plan in a few lines.',
     '2. Make the change.',
     "3. Run the project's own checks or tests when it has them, and fix what fails.",
-    `4. Commit everything on ${branch} with a clear message (git add -A, then git commit). Do not push, merge, or touch any other branch.`,
+    `4. Commit everything on ${branch} with a clear message (git add -A, then git commit).${scope}`,
     '5. End with a short final report: what changed (files), how you checked it (commands and their results), and anything left open.',
     'If you need a decision you cannot make, stop and ask it in your final report.',
   ].join('\n');
@@ -228,12 +254,35 @@ export function install(rt) {
     return { repo: top, base };
   }
 
-  async function grantWish({ bot, title, wish }) {
+  // The branches a follow-up wish may change besides its own: branches the project already has,
+  // never the one the project is on (the integration branch a wish is made from) nor main/master.
+  // Returns the clean scope, or the sentence to answer the Genie with.
+  async function scopedBranches(repo, branches) {
+    if (branches === undefined) return [];
+    if (!Array.isArray(branches) || branches.some((name) => typeof name !== 'string'))
+      return 'The wish did not start: branches must be a list of branch names.';
+    const integration = await currentBranch(repo);
+    const scope = [];
+    for (const raw of branches) {
+      const name = raw.trim();
+      if (name === '' || scope.includes(name)) continue;
+      if (name === integration || name === 'main' || name === 'master')
+        return `The wish did not start: ${name} is the project's integration branch, which a wish never pushes or merges. Name the branches an earlier wish made.`;
+      if (!(await branchExists(repo, name)))
+        return `The wish did not start: ${name} is not a branch in ${repo} to give it.`;
+      scope.push(name);
+    }
+    return scope;
+  }
+
+  async function grantWish({ bot, title, wish, branches }) {
     const problem = await gitProblem();
     if (problem !== null) return problem;
     const where = await repositoryFor(bot);
     if (where.error) return where.error;
     const { repo, base } = where;
+    const scope = await scopedBranches(repo, branches);
+    if (typeof scope === 'string') return scope;
     let slug = slugOf(title);
     for (let n = 2; (await branchExists(repo, `wish/${slug}`)) || load().wishes.some((w) => w.slug === slug); n++) {
       slug = `${slugOf(title)}-${n}`;
@@ -244,7 +293,18 @@ export function install(rt) {
     const folder = join(root, slug);
     const made = await cloneForWish(repo, folder, branch, base);
     if (!made.ok) return `The wish did not start: ${made.error}`;
-    const text = wishBrief({ title, wish, folder, branch, base });
+    // The given branches become local branches in the wish's copy; the project's real remote
+    // becomes its `publish` remote, since the copy's origin is only the project folder.
+    const publishTo = scope.length === 0 ? null : await publishUrl(repo);
+    if (scope.length > 0) {
+      const given = await grantBranches(folder, scope);
+      const published = publishTo === null ? { ok: true } : await addPublishRemote(folder, publishTo);
+      if (!given.ok || !published.ok) {
+        rmSync(folder, { recursive: true, force: true });
+        return `The wish did not start: ${given.error ?? published.error}`;
+      }
+    }
+    const text = wishBrief({ title, wish, folder, branch, base, branches: scope, canPublish: publishTo !== null });
     // bots-dsh with startTask's cwd (automagik PR #9) opens the thread in its folder with
     // the Bots' preset; an older one ignores both and the brief's absolute path still holds.
     const sessionId = await rt.startTask({
@@ -254,7 +314,18 @@ export function install(rt) {
       cwd: folder,
       agentPreset: 'standard',
     });
-    const entry = { slug, title, branch, folder, repo, base, sessionId, botId: bot.id, at: Date.now() };
+    const entry = {
+      slug,
+      title,
+      branch,
+      branches: scope,
+      folder,
+      repo,
+      base,
+      sessionId,
+      botId: bot.id,
+      at: Date.now(),
+    };
     const list = load().wishes;
     list.unshift(entry);
     list.splice(WISHES_KEPT);
@@ -263,14 +334,18 @@ export function install(rt) {
     return `Wish "${title}" is granted as a thread on branch ${branch}. Its report comes back to you as a message when it ends; do not wait or poll.`;
   }
 
-  // A wish's turn ends: its branch comes back into the project, once. A turn a restart cut
-  // is not an end (the team resumes it).
+  // A wish's turn ends: its branch, and the branches it was given, come back into the project,
+  // once. A turn a restart cut is not an end (the team resumes it).
   const bringBack = async (wish) => {
-    const back = await fetchWishBranch(wish.repo, wish.folder, wish.branch);
-    wish.delivered = back.ok;
-    if (!back.ok) {
-      wish.deliveryError = back.error;
-      rt.warn?.('genie: wish %s stayed in %s: %s', wish.branch, wish.folder, back.error);
+    const errors = [];
+    for (const branch of [wish.branch, ...(wish.branches ?? [])]) {
+      const back = await fetchWishBranch(wish.repo, wish.folder, branch);
+      if (!back.ok) errors.push(`${branch}: ${back.error}`);
+    }
+    wish.delivered = errors.length === 0;
+    if (errors.length > 0) {
+      wish.deliveryError = errors.join('; ');
+      rt.warn?.('genie: wish %s stayed in %s: %s', wish.branch, wish.folder, wish.deliveryError);
     }
     save();
   };
@@ -308,13 +383,19 @@ export function install(rt) {
     defineTool({
       name: 'grant_wish',
       description:
-        'Genie only. Grants one wish in your project: a new thread works on it in its own copy of the project on a new branch, then reports back to you. Write the wish so it stands on its own: the thread cannot see this chat.',
+        'Genie only. Grants one wish in your project: a new thread works on it in its own copy of the project on a new branch, then reports back to you. Write the wish so it stands on its own: the thread cannot see this chat. A follow-up that must repair or publish branches an earlier wish made names them in branches: it may commit on, push and open PRs for exactly those, never merge.',
       parameters: {
         title: { type: 'string', required: true, description: 'A few words the user will see as the thread name' },
         wish: {
           type: 'string',
           required: true,
           description: 'The whole wish: the goal, what done looks like, anything to keep in mind',
+        },
+        branches: {
+          type: 'array',
+          items: { type: 'string' },
+          description:
+            "Optional. Existing branches an earlier wish made that this wish may change besides its own: commit repairs on them, push them to the project's remote and open or update their PRs. Only branches the user named, never the project's integration branch.",
         },
       },
       output,
@@ -330,7 +411,7 @@ export function install(rt) {
         const wish = String(args.wish ?? '').trim();
         if (title === '' || wish === '') return 'A wish needs a title and the wish itself.';
         try {
-          return await grantWish({ bot, title, wish });
+          return await grantWish({ bot, title, wish, branches: args.branches });
         } catch (error) {
           return `The wish did not start: ${error?.message ?? error}`;
         }
