@@ -36,5 +36,8 @@ export function expectExplicitScriptPathRule(skill: string, name: string): void 
   expect(skill).toContain(`~/.claude/workflows/${name}.js`);
   // The rule itself, in the words the runtime's operator reads.
   expect(skill).toContain('explicit script path');
+  // The fallback when the runtime reads scripts only inside the session's
+  // directories: the same file passed as inline text, never a bare name.
+  expect(skill).toContain('whole text');
   expect(skill).not.toMatch(BARE_NAME_INSTRUCTION);
 }

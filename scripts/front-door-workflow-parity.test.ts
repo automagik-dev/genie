@@ -15,7 +15,8 @@ import { expectExplicitScriptPathRule } from './workflow-front-door-parity.js';
 const CANONICAL =
   'Run the script at `<repository root>/.claude/workflows/council.js` when that file exists, otherwise ' +
   '`~/.claude/workflows/council.js` (delivered by `genie install` / `genie update`); pass it as the ' +
-  'explicit script path, never a bare name.';
+  "explicit script path, never a bare name. If the runtime refuses that path, pass that same file's " +
+  'whole text as the inline script.';
 
 describe('the shared front-door rule rejects every way of breaking it', () => {
   test('the canonical sentence passes', () => {
