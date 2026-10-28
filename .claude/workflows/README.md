@@ -44,9 +44,11 @@ one shared assertion (`scripts/workflow-front-door-parity.ts`).
 The explicit path can be refused. On 2026-10-28 Claude Code 2.1.312 refused
 `~/.claude/workflows/council.js` as a script path from a project without its own copy:
 it accepts a path only inside the working directory or an added directory, and reading
-the file first did not change that. Each front door therefore names one fallback: read
-that same file and pass its whole text as the inline script. It is still the file the
-rule chose, never a bare name.
+the file first did not change that. Each front door therefore names the fallback: copy
+that same file unchanged into a directory the runtime does read (a byte-identical copy
+in the session's scratch directory ran `brainstorm.js` the same day) and pass the
+copy's path, or pass its whole text as the inline script. Either way it is still the
+file the rule chose, never a bare name.
 
 Drift between the two scopes is observed rather than guessed. `genie doctor` reads
 the `workflows` field of `<GENIE_HOME>/skills-install.json` — file name → the sha256
