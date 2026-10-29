@@ -2,12 +2,24 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdirSync, mkdtempSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { LEGACY_MARKER_DIRS, LEGACY_SKILL_DESCRIPTIONS, LEGACY_SKILL_NAMES } from './legacy-skills-catalog.js';
+import { legacySkillDigest } from './legacy-skill-digest.js';
+import {
+  LEGACY_MARKER_DIRS,
+  LEGACY_SKILL_DESCRIPTION_DIGESTS,
+  LEGACY_SKILL_NAME_DIGESTS,
+} from './legacy-skills-catalog.js';
 import { classifyLegacySkillEntry, findLegacySkillLeftovers, readSkillDescription } from './legacy-skills.js';
 
 /** A description genie really shipped — the 2026-07 `pm` skill's, found as residue on the dogfood host. */
 const SHIPPED_PM_DESCRIPTION =
   'Full PM playbook — triage backlog, prioritize, assign, track, report, escalate. Copilot, autopilot, or pair modes.';
+
+/**
+ * A retired skill whose name and description the binary must not carry as text: the catalog keeps
+ * only their digests, and dropping them would leave its old installs behind.
+ */
+const RETIRED_NAME_DIGEST = '8759c42d6ac3a9e062085bfefe8305ec5eac284f45d743ba25ec10700874531a';
+const RETIRED_DESCRIPTION_DIGEST = '27561af4f572cdbeeadb6ade27aafc1e545e81238047a44f7512d0e841fdc453';
 
 let home: string;
 let agentDir: string;
@@ -43,19 +55,37 @@ describe('legacy skills catalog', () => {
     const shipped = shippedSkillNames();
     expect(shipped.length).toBeGreaterThan(0);
     for (const name of shipped) {
-      expect(LEGACY_SKILL_NAMES).not.toContain(name);
+      expect(LEGACY_SKILL_NAME_DIGESTS).not.toContain(legacySkillDigest(name));
       const description = readSkillDescription(join(SKILLS_ROOT, name));
-      if (description !== null) expect(LEGACY_SKILL_DESCRIPTIONS).not.toContain(description);
+      if (description !== null) expect(LEGACY_SKILL_DESCRIPTION_DIGESTS).not.toContain(legacySkillDigest(description));
     }
-    for (const name of ['pm', 'wizard', 'brain']) expect(LEGACY_SKILL_NAMES).toContain(name);
-    expect(LEGACY_SKILL_DESCRIPTIONS).toContain(SHIPPED_PM_DESCRIPTION);
-    expect(new Set(LEGACY_SKILL_DESCRIPTIONS).size).toBe(LEGACY_SKILL_DESCRIPTIONS.length);
-    expect(LEGACY_SKILL_DESCRIPTIONS.every((entry) => entry.length > 0)).toBe(true);
+    for (const name of ['pm', 'wizard', 'brain']) expect(LEGACY_SKILL_NAME_DIGESTS).toContain(legacySkillDigest(name));
+    expect(LEGACY_SKILL_DESCRIPTION_DIGESTS).toContain(legacySkillDigest(SHIPPED_PM_DESCRIPTION));
+    expect(new Set(LEGACY_SKILL_DESCRIPTION_DIGESTS).size).toBe(LEGACY_SKILL_DESCRIPTION_DIGESTS.length);
     // A fork of a CURRENT skill keeps a current description; none of those may prove anything.
-    expect(LEGACY_SKILL_DESCRIPTIONS).not.toContain(
-      readSkillDescription(join(import.meta.dir, '..', '..', 'skills', 'review')),
-    );
+    const review = readSkillDescription(join(import.meta.dir, '..', '..', 'skills', 'review'));
+    expect(review).not.toBeNull();
+    expect(LEGACY_SKILL_DESCRIPTION_DIGESTS).not.toContain(legacySkillDigest(review as string));
     expect(LEGACY_MARKER_DIRS).toEqual(['.genie-codex-fallback-retirement']);
+  });
+
+  test('carries digests only, and still carries every retired skill, the one it must not name included', () => {
+    for (const entry of [...LEGACY_SKILL_NAME_DIGESTS, ...LEGACY_SKILL_DESCRIPTION_DIGESTS]) {
+      expect(entry).toMatch(/^[0-9a-f]{64}$/);
+    }
+    expect(LEGACY_SKILL_NAME_DIGESTS).toContain(RETIRED_NAME_DIGEST);
+    expect(LEGACY_SKILL_DESCRIPTION_DIGESTS).toContain(RETIRED_DESCRIPTION_DIGEST);
+  });
+});
+
+describe('legacySkillDigest', () => {
+  test('is the sha256 of the exact UTF-8 text: no trimming, no case folding', () => {
+    expect(legacySkillDigest('pm')).toBe('96f2f0811df88d8fc36bba1ebfe4e4841ce71b1e26c4ac0b77c860f26a37a763');
+    expect(legacySkillDigest('PM')).not.toBe(legacySkillDigest('pm'));
+    expect(legacySkillDigest(' pm')).not.toBe(legacySkillDigest('pm'));
+    expect(legacySkillDigest('Quoted — value')).toBe(
+      new Bun.CryptoHasher('sha256').update('Quoted — value', 'utf8').digest('hex'),
+    );
   });
 });
 
@@ -91,6 +121,17 @@ describe('classifyLegacySkillEntry', () => {
     });
     expect(classifyLegacySkillEntry(agentDir, 'brain', [])).toEqual({ agentDir, entry: 'brain', kind: 'unproven' });
     expect(classifyLegacySkillEntry(agentDir, 'my-pm', [])).toEqual({ agentDir, entry: 'my-pm', kind: 'unproven' });
+  });
+
+  test('a skill whose name only resembles a retired one is not genie’s', () => {
+    // Exact equality, as before the catalog was hashed: case and extra characters count.
+    seedSkill('PM', `---\nname: PM\ndescription: An unrelated PM helper\n---`);
+    seedSkill('pm2', '---\nname: pm2\ndescription: Process manager notes\n---');
+    seedSkill('pm-notes', `---\nname: pm-notes\ndescription: "${SHIPPED_PM_DESCRIPTION} "\n---`);
+    expect(classifyLegacySkillEntry(agentDir, 'PM', [])).toBeNull();
+    expect(classifyLegacySkillEntry(agentDir, 'pm2', [])).toBeNull();
+    // One space inside the quotes makes it another description, so nothing matches.
+    expect(classifyLegacySkillEntry(agentDir, 'pm-notes', [])).toBeNull();
   });
 
   test('the current inventory, symlinks, markerless unknown dirs and files are never leftovers', () => {

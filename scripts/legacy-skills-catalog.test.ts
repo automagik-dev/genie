@@ -3,6 +3,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { cpSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { legacySkillDigest } from '../src/lib/legacy-skill-digest.js';
 import type { classifyLegacySkillEntry } from '../src/lib/legacy-skills.js';
 import {
   CATALOG_CHECK_GAP,
@@ -16,6 +17,11 @@ import {
 
 /** Render tests cover the additive union; isolated CLI histories below cover ownership collection. */
 const ROOT = join(import.meta.dir, '..');
+
+/** The catalog's form of plain names or descriptions: their digests, sorted as the generator sorts them. */
+function digests(values: readonly string[]): string[] {
+  return values.map(legacySkillDigest).sort();
+}
 
 /** A description genie really shipped — the 2026-07 `pm` skill's, found as residue on the dogfood host. */
 const SHIPPED_PM_DESCRIPTION =
@@ -58,39 +64,43 @@ function aShippedSkill(): { name: string; description: string } {
 
 describe('render is additive', () => {
   test('a recorded name and description survive a render over an empty collected catalog', () => {
-    const rendered = render(new Map(), { names: ['pm'], descriptions: [SHIPPED_PM_DESCRIPTION] });
+    const rendered = render(new Map(), { names: digests(['pm']), descriptions: digests([SHIPPED_PM_DESCRIPTION]) });
 
-    expect(rendered).toContain('"pm"');
-    expect(rendered).toContain(JSON.stringify(SHIPPED_PM_DESCRIPTION));
+    expect(rendered).toContain(JSON.stringify(legacySkillDigest('pm')));
+    expect(rendered).toContain(JSON.stringify(legacySkillDigest(SHIPPED_PM_DESCRIPTION)));
   });
 
   test('history entries join the recorded ones rather than replacing them', () => {
     const collected = new Map<string, Set<string>>([
       ['from-history', new Set(['A description only git history knows.'])],
     ]);
-    const rendered = render(collected, { names: ['pm'], descriptions: [SHIPPED_PM_DESCRIPTION] });
+    const rendered = render(collected, { names: digests(['pm']), descriptions: digests([SHIPPED_PM_DESCRIPTION]) });
 
-    expect(rendered).toContain('"from-history"');
-    expect(rendered).toContain(JSON.stringify('A description only git history knows.'));
-    expect(rendered).toContain('"pm"');
-    expect(rendered).toContain(JSON.stringify(SHIPPED_PM_DESCRIPTION));
+    expect(rendered).toContain(JSON.stringify(legacySkillDigest('from-history')));
+    expect(rendered).toContain(JSON.stringify(legacySkillDigest('A description only git history knows.')));
+    expect(rendered).toContain(JSON.stringify(legacySkillDigest('pm')));
+    expect(rendered).toContain(JSON.stringify(legacySkillDigest(SHIPPED_PM_DESCRIPTION)));
+    // Digests only: the retired text itself never reaches the file.
+    expect(rendered).not.toContain('from-history');
+    expect(rendered).not.toContain('A description only git history knows.');
   });
 
   test('a collected-only entry needs no recorded catalog to appear', () => {
     const collected = new Map<string, Set<string>>([['solo', new Set(['Solo description.'])]]);
     const rendered = render(collected, { names: [], descriptions: [] });
 
-    expect(rendered).toContain('"solo"');
-    expect(rendered).toContain(JSON.stringify('Solo description.'));
+    expect(rendered).toContain(JSON.stringify(legacySkillDigest('solo')));
+    expect(rendered).toContain(JSON.stringify(legacySkillDigest('Solo description.')));
   });
 
   test('only currently shipped names and descriptions are subtracted, from either source', () => {
     const shipped = aShippedSkill();
     const collected = new Map<string, Set<string>>([[shipped.name, new Set([shipped.description])]]);
-    const rendered = render(collected, { names: [shipped.name], descriptions: [shipped.description] });
+    const recorded = { names: digests([shipped.name]), descriptions: digests([shipped.description]) };
+    const rendered = render(collected, recorded);
 
-    expect(rendered).not.toContain(`"${shipped.name}"`);
-    expect(rendered).not.toContain(JSON.stringify(shipped.description));
+    expect(rendered).not.toContain(legacySkillDigest(shipped.name));
+    expect(rendered).not.toContain(legacySkillDigest(shipped.description));
   });
 });
 
@@ -119,7 +129,7 @@ describe('--check is an additive-union SUPERSET check', () => {
   });
 
   test('a catalog that already carries every history entry is current', () => {
-    const verdict = verdictFor({ names: ['pm'], descriptions: [SHIPPED_PM_DESCRIPTION] });
+    const verdict = verdictFor({ names: digests(['pm']), descriptions: digests([SHIPPED_PM_DESCRIPTION]) });
 
     expect(verdict.stale).toBe(false);
     expect(verdict.lines.join('\n')).toContain('current');
@@ -133,8 +143,8 @@ describe('--check is an additive-union SUPERSET check', () => {
    */
   test('an entry no history yields is never reported — the union makes it invisible', () => {
     const verdict = verdictFor({
-      names: ['pm', 'never-shipped-by-any-ref'],
-      descriptions: [SHIPPED_PM_DESCRIPTION, 'A description no commit ever carried.'],
+      names: digests(['pm', 'never-shipped-by-any-ref']),
+      descriptions: digests([SHIPPED_PM_DESCRIPTION, 'A description no commit ever carried.']),
     });
 
     expect(verdict.stale).toBe(false);
@@ -142,7 +152,7 @@ describe('--check is an additive-union SUPERSET check', () => {
   });
 
   test('a text-only difference is stale with no missing entry, and says so', () => {
-    const recorded = { names: ['pm'], descriptions: [SHIPPED_PM_DESCRIPTION] };
+    const recorded = { names: digests(['pm']), descriptions: digests([SHIPPED_PM_DESCRIPTION]) };
     const verdict = verdictFor(recorded, `${render(collected, recorded)}\n// hand-edited trailer\n`);
 
     expect(verdict.stale).toBe(true);
@@ -200,6 +210,11 @@ describe('catalog CLI over isolated Git histories', () => {
       join(dir, 'scripts', 'git-history-ownership.ts'),
       readFileSync(join(ROOT, 'scripts', 'git-history-ownership.ts'), 'utf8'),
     );
+    mkdirSync(join(dir, 'src', 'lib'), { recursive: true });
+    writeFileSync(
+      join(dir, 'src', 'lib', 'legacy-skill-digest.ts'),
+      readFileSync(join(ROOT, 'src', 'lib', 'legacy-skill-digest.ts'), 'utf8'),
+    );
     git(dir, 'init', '-q', '-b', 'main');
     git(dir, 'config', 'user.email', 'test@example.com');
     git(dir, 'config', 'user.name', 'Test');
@@ -207,6 +222,8 @@ describe('catalog CLI over isolated Git histories', () => {
     git(dir, 'config', 'core.hooksPath', '/dev/null');
     return dir;
   }
+
+  const RECORDED_ONLY_DESCRIPTION = 'Recorded from an unavailable Genie ref.';
 
   /** A minimal repo carrying both collector sources, with history a shallow clone truncates. */
   function seedOrigin(): string {
@@ -217,8 +234,8 @@ describe('catalog CLI over isolated Git histories', () => {
     mkdirSync(join(dir, 'src', 'lib'), { recursive: true });
     writeFileSync(
       join(dir, 'src', 'lib', 'legacy-skills-catalog.ts'),
-      'export const LEGACY_SKILL_NAMES = ["recorded-only"];\n' +
-        'export const LEGACY_SKILL_DESCRIPTIONS = ["Recorded from an unavailable Genie ref."];\n',
+      `export const LEGACY_SKILL_NAME_DIGESTS = ${JSON.stringify(digests(['recorded-only']))};\n` +
+        `export const LEGACY_SKILL_DESCRIPTION_DIGESTS = ${JSON.stringify(digests([RECORDED_ONLY_DESCRIPTION]))};\n`,
     );
     git(dir, 'add', '-A');
     git(dir, 'commit', '-q', '-m', 'seed');
@@ -279,12 +296,12 @@ describe('catalog CLI over isolated Git histories', () => {
     const run = runCheck(repo, ...(provenance === undefined ? [] : ['--ref-provenance', provenance]));
     expect(run.code).toBe(0);
     expect(run.stderr).toBe('');
-    const names = /LEGACY_SKILL_NAMES: readonly string\[\] = (\[[^\n]*\]);/.exec(run.stdout);
-    const descriptions = /LEGACY_SKILL_DESCRIPTIONS: readonly string\[\] = (\[[\s\S]*?\n\]);/.exec(run.stdout);
+    const names = /LEGACY_SKILL_NAME_DIGESTS: readonly string\[\] = (\[[\s\S]*?\]);/.exec(run.stdout);
+    const descriptions = /LEGACY_SKILL_DESCRIPTION_DIGESTS: readonly string\[\] = (\[[\s\S]*?\]);/.exec(run.stdout);
     expect(names).not.toBeNull();
     expect(descriptions).not.toBeNull();
     return {
-      names: JSON.parse(names?.[1] ?? ''),
+      names: JSON.parse((names?.[1] ?? '').replace(/,\s*\]$/, ']')),
       descriptions: JSON.parse((descriptions?.[1] ?? '').replace(/,\s*\]$/, ']')),
     };
   }
@@ -302,7 +319,7 @@ describe('catalog CLI over isolated Git histories', () => {
     expect(run.stderr).toBe('');
     const dir = mkdtempSync(join(tmpdir(), 'legacy-catalog-consumer-'));
     scratch.push(dir);
-    for (const file of ['legacy-skills.ts', 'skills-agents.ts']) {
+    for (const file of ['legacy-skills.ts', 'skills-agents.ts', 'legacy-skill-digest.ts']) {
       cpSync(join(ROOT, 'src', 'lib', file), join(dir, file));
     }
     writeFileSync(join(dir, 'legacy-skills-catalog.ts'), run.stdout);
@@ -400,15 +417,18 @@ describe('catalog CLI over isolated Git histories', () => {
     return { provenance, split, foreign, side };
   }
 
+  const GENIE_HISTORY_NAMES = ['genie-branch', 'genie-nested', 'genie-retired', 'recorded-only'];
+  const GENIE_HISTORY_DESCRIPTIONS = [
+    'Demo.',
+    'Genie skill only an archived ref delivered.',
+    'Historical Genie plugin skill.',
+    'Historical Genie root skill.',
+    'Recorded from an unavailable Genie ref.',
+  ];
+
   function expectGenieHistory(catalog: { names: string[]; descriptions: string[] }): void {
-    expect(catalog.names).toEqual(['genie-branch', 'genie-nested', 'genie-retired', 'recorded-only']);
-    expect(catalog.descriptions).toEqual([
-      'Demo.',
-      'Genie skill only an archived ref delivered.',
-      'Historical Genie plugin skill.',
-      'Historical Genie root skill.',
-      'Recorded from an unavailable Genie ref.',
-    ]);
+    expect(catalog.names).toEqual(digests(GENIE_HISTORY_NAMES));
+    expect(catalog.descriptions).toEqual(digests(GENIE_HISTORY_DESCRIPTIONS));
   }
 
   test('tag-only retirement reaches the consumer, while unmerged work cannot grant it without Mikro imports', async () => {
@@ -464,8 +484,8 @@ describe('catalog CLI over isolated Git histories', () => {
     expect([...current.descriptions].sort()).toEqual(['The kept skill.', 'The live skill.']);
 
     const catalog = outputCatalog(repo);
-    expect(catalog.names).toEqual(['old']);
-    expect(catalog.descriptions).toEqual(['The old skill.']);
+    expect(catalog.names).toEqual(digests(['old']));
+    expect(catalog.descriptions).toEqual(digests(['The old skill.']));
 
     const { home, classify } = await consumerFor(repo);
     skill(home, 'live', 'The live skill.');
@@ -488,8 +508,8 @@ describe('catalog CLI over isolated Git histories', () => {
     expect([...collectCatalog(repo).keys()].sort()).toEqual(['kept', 'old']);
 
     const catalog = outputCatalog(repo);
-    expect(catalog.names).toEqual(['old']);
-    expect(catalog.descriptions).toEqual(['The old skill.']);
+    expect(catalog.names).toEqual(digests(['old']));
+    expect(catalog.descriptions).toEqual(digests(['The old skill.']));
 
     const { home, classify } = await consumerFor(repo);
     for (const name of ['under-dev', 'under-main']) {
@@ -503,8 +523,8 @@ describe('catalog CLI over isolated Git histories', () => {
     git(repo, 'update-ref', '-d', 'refs/archive/genie-archive');
     const archive = git(repo, 'rev-parse', 'refs/heads/genie-archive').trim();
     const before = outputCatalog(repo);
-    expect(before.names).not.toContain('genie-branch');
-    expect(before.descriptions).not.toContain('Genie skill only an archived ref delivered.');
+    expect(before.names).not.toContain(legacySkillDigest('genie-branch'));
+    expect(before.descriptions).not.toContain(legacySkillDigest('Genie skill only an archived ref delivered.'));
 
     writeFileSync(
       join(repo, 'ref-provenance.json'),
@@ -548,15 +568,8 @@ describe('catalog CLI over isolated Git histories', () => {
       skill(repo, 'skills/demo', 'Demo, revised again.');
       commit(repo, 'revise both package trees');
       const catalog = outputCatalog(repo, provenance);
-      expect(catalog.names).toEqual(['genie-branch', 'genie-nested', 'genie-retired', 'recorded-only']);
-      expect(catalog.descriptions).toEqual([
-        'Demo, revised.',
-        'Demo.',
-        'Genie skill only an archived ref delivered.',
-        'Historical Genie plugin skill.',
-        'Historical Genie root skill.',
-        'Recorded from an unavailable Genie ref.',
-      ]);
+      expect(catalog.names).toEqual(digests(GENIE_HISTORY_NAMES));
+      expect(catalog.descriptions).toEqual(digests(['Demo, revised.', ...GENIE_HISTORY_DESCRIPTIONS]));
     },
   );
 
@@ -774,7 +787,7 @@ describe('catalog CLI over isolated Git histories', () => {
     // refusal is scoped to `--check`, so nothing here mentions it.
     const run = runCheck(origin);
     expect(run.stderr).not.toContain('shallow clone');
-    expect(run.stdout).toContain('LEGACY_SKILL_NAMES');
+    expect(run.stdout).toContain('LEGACY_SKILL_NAME_DIGESTS');
   });
 });
 
@@ -782,7 +795,7 @@ describe('recordedCatalog', () => {
   test('reads the committed catalog back, so a regeneration can only ever add to it', async () => {
     const recorded = await recordedCatalog();
 
-    expect(recorded.names).toContain('pm');
-    expect(recorded.descriptions).toContain(SHIPPED_PM_DESCRIPTION);
+    expect(recorded.names).toContain(legacySkillDigest('pm'));
+    expect(recorded.descriptions).toContain(legacySkillDigest(SHIPPED_PM_DESCRIPTION));
   });
 });
