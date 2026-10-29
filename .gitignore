@@ -3,6 +3,8 @@ node_modules/
 node_modules
 .pnp
 .pnp.js
+# A bun run with HOME unset caches packages under ./undefined/.bun (PR #3171 committed one)
+/undefined/
 
 # AGENTS.md.bak produced by migrateAgentToYaml (wish
 # dir-sync-frontmatter-refresh Group 2). Preserves pre-migration
