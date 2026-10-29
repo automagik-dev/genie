@@ -3,27 +3,43 @@
 // grant_wish makes the wish its own clone of the project, on a new wish/<slug> branch, and
 // hands the wish to a Tasks session there (rt.startTask): the team runs it, shows it as a
 // thread under Genie while it works, resumes it after a restart, and brings its final
-// report back to Genie's chat when it ends. When it ends, this module fetches the wish's
-// branch back into the project, and keeps the list of wishes, so ended ones stay listed
-// under Genie. A follow-up wish may be scoped to branches an earlier wish made (`branches`),
-// so it can repair and publish exactly those and nothing else.
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+// report back to Genie's chat when it ends. The wish starts from its repository's base as
+// the remote has it right now (binding.js), in a copy with no push route. When it ends,
+// this module counts what moved, fetches the branches that hold work back into the project,
+// and writes down the outcome and the evidence (wishes.js), so ended wishes stay listed
+// under Genie with what really happened: a local branch is never called done or delivered.
+// A follow-up wish may be scoped to branches an earlier wish made (`branches`), so it can
+// repair and publish exactly those and nothing else.
+import {
+  closeSync,
+  existsSync,
+  fsyncSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  writeSync,
+} from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, join } from 'node:path';
 import { defineTool } from '@deepseek-ai/dsh-tools';
+import { fetchBase, hasHttpUserinfo, remoteDisplay, resolveBinding } from './binding.js';
 import {
   addPublishRemote,
+  aheadOf,
   branchExists,
   cloneForWish,
+  commitOf,
   currentBranch,
   fetchWishBranch,
   gitProblem,
+  gitRunner,
   grantBranches,
-  headCommit,
   initRepo,
-  publishUrl,
   topLevel,
 } from './git.js';
+import { WISH_VERSION, awaitsEnd, endedState, newEvidence, noteCommand, taskOutcome, turnOutcome } from './wishes.js';
 
 export const GENIE_KIND = 'genie';
 export const GENIE_NAMES = ['Genie', 'Genie Bot', 'The Genie'];
@@ -35,7 +51,8 @@ const output = { schema: { type: 'string' }, render: (_args, value) => [{ type: 
 export const GENIE_INSTRUCTIONS = [
   'You are Genie: you grant wishes in your project, the folder you live in.',
   'Talk with the user in plain words. When they want something built, changed or fixed in the project, agree on the wish in a sentence or two, then call grant_wish with a short title and the whole wish written so it stands on its own.',
-  'Each wish runs as its own thread, in its own copy of the project on a branch wish/<name>, so your chat stays clean. When it ends, the branch is brought back into the project and its report comes back to you: tell the user in a line or two what was done and where (the branch), and that they can merge it when they are happy.',
+  "Each wish runs as its own thread, in its own copy of the project on a branch wish/<name> made from the project's base as its remote has it now, so your chat stays clean. A plain wish cannot push: it commits in its copy, and nothing is published or merged.",
+  'When it ends, its report comes back to you, and its row under you shows the outcome in one of these words: Local branch (it committed, and its branch was brought back into the project), No change (no branch moved), Stopped, Failed or Lost (the team no longer has its record). Tell the user that word and, in a line or two, what was done and where. For a local branch, say "local branch, not published": it is in the project for them to review, and nothing was pushed, merged or opened as a pull request unless a scoped follow-up says it published.',
   'When the user asks a follow-up wish to repair or publish branches an earlier wish made, pass exactly those names as grant_wish branches: that is the only scope in which a wish may push. Never give it the project branch it was made from, and never a branch the user did not name.',
   'If grant_wish answers that something is missing (git, a project folder), give the user exactly the fix it names.',
   'Do not do the wish yourself in this chat.',
@@ -104,7 +121,7 @@ export function wishBrief({ title, wish, folder, branch, base, branches = [], ca
   // has a remote; every other branch keeps the plain wish rule.
   const scope =
     branches.length === 0
-      ? ' Do not push, merge, or touch any other branch.'
+      ? ' This copy has no push route, by design: commit here, never merge or touch any other branch, and if the wish asked you to push or open a pull request, say in your final report that you could not.'
       : [
           ` This wish was also given these existing branches: ${branches.join(', ')}. Commit your repairs on them.`,
           canPublish
@@ -150,9 +167,17 @@ export function install(rt) {
     }
     return data;
   };
+  // Written whole to a temp file, flushed to disk, then renamed over the old one, so a crash
+  // leaves either the old list or the new one.
   const save = () => {
     const temp = `${file()}.tmp`;
-    writeFileSync(temp, `${JSON.stringify(data, null, 2)}\n`);
+    const fd = openSync(temp, 'w');
+    try {
+      writeSync(fd, `${JSON.stringify(data, null, 2)}\n`);
+      fsyncSync(fd);
+    } finally {
+      closeSync(fd);
+    }
     renameSync(temp, file());
   };
 
@@ -248,27 +273,26 @@ export function install(rt) {
       if (!made.ok) return { error: `Genie could not start a repository in ${folder}: ${made.error}` };
       top = await topLevel(folder);
     }
-    const base = await headCommit(top);
-    if (base === null)
-      return { error: `The repository ${top} has no commit yet. Make a first commit there, then ask again.` };
-    return { repo: top, base };
+    return { repo: top };
   }
 
   // The branches a follow-up wish may change besides its own: branches the project already has,
-  // never the one the project is on (the integration branch a wish is made from) nor main/master.
-  // Returns the clean scope, or the sentence to answer the Genie with.
-  async function scopedBranches(repo, branches) {
+  // never the one the project is on (the integration branch a wish is made from), nor the base
+  // wishes start from, nor main/master. Returns the clean scope, or the sentence to answer with.
+  async function scopedBranches(repo, branches, base, g) {
     if (branches === undefined) return [];
     if (!Array.isArray(branches) || branches.some((name) => typeof name !== 'string'))
       return 'The wish did not start: branches must be a list of branch names.';
-    const integration = await currentBranch(repo);
+    const integration = await currentBranch(repo, g);
     const scope = [];
     for (const raw of branches) {
       const name = raw.trim();
       if (name === '' || scope.includes(name)) continue;
       if (name === integration || name === 'main' || name === 'master')
         return `The wish did not start: ${name} is the project's integration branch, which a wish never pushes or merges. Name the branches an earlier wish made.`;
-      if (!(await branchExists(repo, name)))
+      if (name === base)
+        return `The wish did not start: ${name} is the branch wishes start from, which a wish never pushes or merges. Name the branches an earlier wish made.`;
+      if (!(await branchExists(repo, name, g)))
         return `The wish did not start: ${name} is not a branch in ${repo} to give it.`;
       scope.push(name);
     }
@@ -280,31 +304,71 @@ export function install(rt) {
     if (problem !== null) return problem;
     const where = await repositoryFor(bot);
     if (where.error) return where.error;
-    const { repo, base } = where;
-    const scope = await scopedBranches(repo, branches);
+    const { repo } = where;
+    // Every git command the host runs for this wish from here on is in its evidence.
+    const evidence = newEvidence();
+    const gitOptions = { env: {}, note: (command) => noteCommand(evidence, command) };
+    const g = gitRunner(gitOptions);
+    const bound = await resolveBinding(repo, g);
+    if (bound.error !== undefined) return `The wish did not start: ${bound.error}`;
+    gitOptions.env = bound.env;
+    const { binding } = bound;
+    const scope = await scopedBranches(repo, branches, binding.base, g);
     if (typeof scope === 'string') return scope;
+    // A scoped follow-up's copy gets the remote's URL as `publish` (#3184): one that carries
+    // credentials in it would copy them there, so it is refused instead.
+    if (scope.length > 0 && hasHttpUserinfo(bound.url)) {
+      const display = remoteDisplay(bound.url);
+      return `The wish did not start: the URL of the remote ${binding.remote} has a user name or password written into it, and a follow-up that publishes would copy it into its copy. Remove it (git remote set-url ${binding.remote} ${display}) and let a credential helper keep it (git config credential.helper <helper>), then ask again.`;
+    }
+    let baseSha = bound.sha;
+    if (binding.baseSource !== 'local') {
+      const fresh = await fetchBase(bound, g);
+      if (fresh.error !== undefined) return `The wish did not start: ${fresh.error}`;
+      baseSha = fresh.sha;
+    }
+    const root = join(wishesRoot(rt.teamFolder?.()), basename(repo));
     let slug = slugOf(title);
-    for (let n = 2; (await branchExists(repo, `wish/${slug}`)) || load().wishes.some((w) => w.slug === slug); n++) {
+    for (
+      let n = 2;
+      (await branchExists(repo, `wish/${slug}`, g)) ||
+      load().wishes.some((w) => w.slug === slug) ||
+      existsSync(join(root, slug));
+      n++
+    ) {
       slug = `${slugOf(title)}-${n}`;
     }
     const branch = `wish/${slug}`;
-    const root = join(wishesRoot(rt.teamFolder?.()), basename(repo));
     mkdirSync(root, { recursive: true });
     const folder = join(root, slug);
-    const made = await cloneForWish(repo, folder, branch, base);
-    if (!made.ok) return `The wish did not start: ${made.error}`;
-    // The given branches become local branches in the wish's copy; the project's real remote
+    const made = await cloneForWish(repo, folder, branch, baseSha, { g, plain: scope.length === 0 });
+    if (!made.ok) {
+      rmSync(folder, { recursive: true, force: true });
+      return `The wish did not start: ${made.error}`;
+    }
+    // The given branches become local branches in the wish's copy; the binding's remote
     // becomes its `publish` remote, since the copy's origin is only the project folder.
-    const publishTo = scope.length === 0 ? null : await publishUrl(repo);
+    const publishTo = scope.length === 0 ? null : bound.url;
+    const starts = {};
     if (scope.length > 0) {
-      const given = await grantBranches(folder, scope);
-      const published = publishTo === null ? { ok: true } : await addPublishRemote(folder, publishTo);
+      const given = await grantBranches(folder, scope, g);
+      const published = publishTo === null ? { ok: true } : await addPublishRemote(folder, publishTo, g);
       if (!given.ok || !published.ok) {
         rmSync(folder, { recursive: true, force: true });
         return `The wish did not start: ${given.error ?? published.error}`;
       }
+      for (const name of scope) starts[name] = await commitOf(folder, `refs/heads/${name}`, g, 'given-start');
     }
-    const text = wishBrief({ title, wish, folder, branch, base, branches: scope, canPublish: publishTo !== null });
+    evidence.baseSha = baseSha;
+    const text = wishBrief({
+      title,
+      wish,
+      folder,
+      branch,
+      base: baseSha,
+      branches: scope,
+      canPublish: publishTo !== null,
+    });
     // bots-dsh with startTask's cwd (automagik PR #9) opens the thread in its folder with
     // the Bots' preset; an older one ignores both and the brief's absolute path still holds.
     const sessionId = await rt.startTask({
@@ -315,45 +379,135 @@ export function install(rt) {
       agentPreset: 'standard',
     });
     const entry = {
+      v: WISH_VERSION,
       slug,
       title,
       branch,
       branches: scope,
+      starts,
       folder,
       repo,
-      base,
+      binding,
+      baseSha,
       sessionId,
       botId: bot.id,
       at: Date.now(),
+      state: 'working',
+      evidence,
     };
     const list = load().wishes;
     list.unshift(entry);
     list.splice(WISHES_KEPT);
     save();
+    // A first turn can end before the entry above was saved, while no listener knew the
+    // wish: the team's own record says so, and the wish is settled now, not at a restart.
+    const early = taskOutcome(rt.state?.tasks?.[sessionId]?.status);
+    if (early !== undefined) void settle(entry, early);
     await rt.save();
     return `Wish "${title}" is granted as a thread on branch ${branch}. Its report comes back to you as a message when it ends; do not wait or poll.`;
   }
 
-  // A wish's turn ends: its branch, and the branches it was given, come back into the project,
-  // once. A turn a restart cut is not an end (the team resumes it).
-  const bringBack = async (wish) => {
+  // A wish's turn ends with an outcome (wishes.js: done, stopped, failed, lost). In its copy,
+  // the host counts what moved: the wish branch against its base, each given branch against
+  // the commit it was given on. The given branches are fetched back on every end (#3184);
+  // the wish branch whenever it is ahead, whatever the outcome. Neither is called delivered.
+  async function classify(entry, outcome) {
+    if (!awaitsEnd(entry)) return;
+    const evidence = entry.evidence ?? newEvidence();
+    entry.evidence = evidence;
+    const g = gitRunner({ note: (command) => noteCommand(evidence, command) });
+    const { repo, folder, branch } = entry;
+    // A v1 record (granted before v2) names its base commit `base`.
+    const baseSha = entry.baseSha ?? entry.base;
     const errors = [];
-    for (const branch of [wish.branch, ...(wish.branches ?? [])]) {
-      const back = await fetchWishBranch(wish.repo, wish.folder, branch);
+    const head = await commitOf(folder, `refs/heads/${branch}`, g, 'wish-head');
+    const ahead =
+      head === null || typeof baseSha !== 'string' ? null : await aheadOf(folder, baseSha, head, g, 'wish-ahead');
+    const given = {};
+    for (const name of entry.branches ?? []) {
+      const start = entry.starts?.[name];
+      const tip = await commitOf(folder, `refs/heads/${name}`, g, 'given-head');
+      // A v1 scoped record has no start commits: its branch moved when fetching it back
+      // changes the project's branch.
+      const before = start === undefined ? await commitOf(repo, `refs/heads/${name}`, g, 'given-before') : undefined;
+      const back = await fetchWishBranch(repo, folder, name, g);
+      if (!back.ok) errors.push(`${name}: ${back.error}`);
+      let moved;
+      let count = null;
+      if (start === undefined) moved = (await commitOf(repo, `refs/heads/${name}`, g, 'given-after')) !== before;
+      else {
+        count = tip === null ? null : await aheadOf(folder, start, tip, g, 'given-ahead');
+        moved = tip !== null && tip !== start;
+      }
+      given[name] = { start: start ?? before ?? null, head: tip, ahead: count, moved, fetch: back.code };
+    }
+    if (ahead !== null && ahead > 0) {
+      const back = await fetchWishBranch(repo, folder, branch, g);
       if (!back.ok) errors.push(`${branch}: ${back.error}`);
     }
-    wish.delivered = errors.length === 0;
+    let state;
+    if (head === null || ahead === null) {
+      // What the copy holds cannot be read, so nothing is claimed for it.
+      errors.unshift(`${branch} could not be read in ${folder}`);
+      state = outcome === 'done' ? 'failed' : outcome;
+    } else state = endedState(outcome, ahead > 0 || Object.values(given).some((b) => b.moved));
+    Object.assign(evidence, { baseSha: baseSha ?? null, headSha: head, ahead });
+    if (Object.keys(given).length > 0) evidence.given = given;
+    entry.state = state;
+    entry.endedAt = Date.now();
     if (errors.length > 0) {
-      wish.deliveryError = errors.join('; ');
-      rt.warn?.('genie: wish %s stayed in %s: %s', wish.branch, wish.folder, wish.deliveryError);
-    }
+      entry.error = errors.join('; ');
+      rt.warn?.('genie: wish %s: %s', branch, entry.error);
+    } else entry.error = undefined; // JSON drops it
     save();
-  };
+  }
+
+  // Each wish is settled once, however its end is learnt (the live turn end, the startup pass,
+  // the check right after the grant): its session is claimed here, synchronously, before any
+  // await. A `lost` wish is the one exception: a task the team trimmed from its records can
+  // still be running, so its live end settles it again, after the lost pass.
+  const claims = new Map();
+  function settle(entry, outcome) {
+    const prior = claims.get(entry.sessionId);
+    if (prior !== undefined && (prior.outcome !== 'lost' || outcome === 'lost')) return prior.done;
+    const done = (prior?.done ?? Promise.resolve())
+      .then(() => classify(entry, outcome))
+      .catch((error) => rt.warn?.('genie: wish %s: %s', entry.branch, error?.message ?? error));
+    claims.set(entry.sessionId, { outcome, done });
+    return done;
+  }
+
+  // Live: the turn end this plugin receives says how the task ended. A turn a restart cut is
+  // no end (the team resumes it), nor is a blocked one (it goes on in a fresh part). The
+  // team's task record is not read here, so the order of the listeners does not matter.
   ctx.on?.('session/event', (session, event) => {
     if (event?.type !== 'turn/end' || rt.cutByRestart?.(event.data?.reason)) return;
-    const wish = load().wishes.find((entry) => entry.sessionId === session?.id && entry.delivered !== true);
-    if (wish !== undefined) void bringBack(wish).catch((error) => rt.warn?.('genie: %s', error?.message ?? error));
+    const outcome = turnOutcome(event.data?.reason);
+    if (outcome === undefined) return;
+    const wish = load().wishes.find((entry) => entry.sessionId === session?.id && awaitsEnd(entry));
+    if (wish !== undefined) void settle(wish, outcome);
   });
+
+  // Startup: a wish whose task ended while this plugin was not listening takes the team's
+  // recorded status, once the team's resume pass is over. Only on a host that writes the
+  // team, and only from a tasks record that was read: a wish missing from it is `lost`
+  // (the team keeps its newest 60 tasks), never done.
+  const reconciled = (async () => {
+    await rt.load();
+    if (typeof rt.resumesDone?.then !== 'function') return;
+    const resumes = await rt.resumesDone;
+    if (rt.readOnly() !== undefined || resumes === null || typeof resumes !== 'object') return;
+    if (Object.hasOwn(resumes, 'readOnly') || Object.hasOwn(resumes, 'failed')) return;
+    const tasks = rt.state?.tasks;
+    if (tasks === null || typeof tasks !== 'object') return;
+    const settling = [];
+    for (const entry of load().wishes) {
+      if (entry.v !== WISH_VERSION || entry.state !== 'working') continue;
+      const outcome = Object.hasOwn(tasks, entry.sessionId) ? taskOutcome(tasks[entry.sessionId]?.status) : 'lost';
+      if (outcome !== undefined) settling.push(settle(entry, outcome));
+    }
+    await Promise.all(settling);
+  })().catch((error) => rt.warn?.('genie: the wishes were not reconciled: %s', error?.message ?? error));
 
   // Adding a Genie: genie-create { folder } answers { bot: { id, name, color }, existed }.
   ctx.effect(() => rt.hooks.endpoint?.('genie-create', (body) => createGenie(body ?? {})), 'genie: create a Genie');
@@ -366,13 +520,15 @@ export function install(rt) {
           // Which Genie colors are worn, so a picker offers only the free ones.
           colors: GENIE_COLORS,
           taken: genieBots().map(genieColorOf),
-          wishes: load().wishes.map(({ slug, title, branch, sessionId, botId, at }) => ({
+          // A v2 wish carries its state (wishes.js), which the row shows instead of the task status.
+          wishes: load().wishes.map(({ slug, title, branch, sessionId, botId, at, state }) => ({
             slug,
             title,
             branch,
             sessionId,
             botId,
             at,
+            ...(state === undefined ? {} : { state }),
           })),
         },
       })),
@@ -383,7 +539,7 @@ export function install(rt) {
     defineTool({
       name: 'grant_wish',
       description:
-        'Genie only. Grants one wish in your project: a new thread works on it in its own copy of the project on a new branch, then reports back to you. Write the wish so it stands on its own: the thread cannot see this chat. A follow-up that must repair or publish branches an earlier wish made names them in branches: it may commit on, push and open PRs for exactly those, never merge.',
+        'Genie only. Grants one wish in your project: a new thread works on it in its own copy of the project, on a new branch from the base as the remote has it now, commits there without pushing, then reports back to you. Write the wish so it stands on its own: the thread cannot see this chat. A follow-up that must repair or publish branches an earlier wish made names them in branches: it may commit on, push and open PRs for exactly those, never merge.',
       parameters: {
         title: { type: 'string', required: true, description: 'A few words the user will see as the thread name' },
         wish: {
@@ -419,5 +575,12 @@ export function install(rt) {
     }),
   );
 
-  Object.assign(rt, { ensureGenie, createGenie, grantWish, genieWishes: () => load().wishes, genieReady: ready });
+  Object.assign(rt, {
+    ensureGenie,
+    createGenie,
+    grantWish,
+    genieWishes: () => load().wishes,
+    genieReady: ready,
+    genieReconciled: reconciled,
+  });
 }
