@@ -15,7 +15,7 @@
  * is proven by DESCRIPTION under a GENIE NAME instead. Every retired frontmatter
  * `description` a genie skill carried in shipped or proven archive history —
  * any name — minus what HEAD, origin/dev and origin/main ship today — is
- * embedded in `legacy-skills-catalog.ts`; a directory
+ * embedded in `legacy-skills-catalog.ts` as its digest (`legacy-skill-digest.ts`); a directory
  * outside the current inventory whose `SKILL.md` carries one of them AND whose
  * name is a retired genie skill name or a `genie-` prefixed one is genie's own,
  * and is retired backup-first like any other retired skill. Either half alone
@@ -27,7 +27,12 @@
  */
 import { lstatSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { LEGACY_MARKER_DIRS, LEGACY_SKILL_DESCRIPTIONS, LEGACY_SKILL_NAMES } from './legacy-skills-catalog.js';
+import { legacySkillDigest } from './legacy-skill-digest.js';
+import {
+  LEGACY_MARKER_DIRS,
+  LEGACY_SKILL_DESCRIPTION_DIGESTS,
+  LEGACY_SKILL_NAME_DIGESTS,
+} from './legacy-skills-catalog.js';
 import { SKILLS_CLI_AGENTS, agentSkillsHome } from './skills-agents.js';
 
 /**
@@ -45,13 +50,13 @@ export interface LegacySkillLeftover {
   kind: LegacySkillLeftoverKind;
 }
 
-const DESCRIPTIONS = new Set(LEGACY_SKILL_DESCRIPTIONS);
-const NAMES = new Set(LEGACY_SKILL_NAMES);
+const DESCRIPTIONS = new Set(LEGACY_SKILL_DESCRIPTION_DIGESTS);
+const NAMES = new Set(LEGACY_SKILL_NAME_DIGESTS);
 const MARKERS = new Set(LEGACY_MARKER_DIRS);
 
 /** A retired genie skill name, or the `genie-` prefix only genie's own plugin-era skills carried. */
 function isGenieSkillName(entry: string): boolean {
-  return NAMES.has(entry) || entry.startsWith('genie-');
+  return NAMES.has(legacySkillDigest(entry)) || entry.startsWith('genie-');
 }
 
 /**
@@ -111,7 +116,7 @@ export function classifyLegacySkillEntry(
   const description = readSkillDescription(path);
   if (description === null) return null;
   const genieName = isGenieSkillName(entry);
-  const genieDescription = DESCRIPTIONS.has(description);
+  const genieDescription = DESCRIPTIONS.has(legacySkillDigest(description));
   if (genieName && genieDescription) return { agentDir, entry, kind: 'proven' };
   if (genieName || genieDescription) return { agentDir, entry, kind: 'unproven' };
   return null;
