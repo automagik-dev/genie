@@ -21,10 +21,12 @@
  *     field (see `getAgentBaseDir`). `~/.agents` is the shared canonical home
  *     Codex reads; it is not a product home.
  *
- * Agents with no global skills home (`eve`), no home-relative detection
- * (`replit`, `promptscript`) or no detection at all (`universal`) are
- * deliberately absent: genie can never prove those are installed, so it never
- * names them.
+ * Agents with no global skills home (`eve`) or no home-relative detection
+ * (`replit`, `promptscript`) are deliberately absent: genie can never prove
+ * those are installed, so it never names them. `universal`, which the CLI never
+ * detects (`detectInstalled: false`), is the one row whose detection is genie's
+ * own: it stands for DeepSeek Harness, which reads `~/.agents/skills` and is not
+ * in the CLI's registry (see the row).
  *
  * Environment overrides the CLI honours (`CODEX_HOME`, `CLAUDE_CONFIG_DIR`,
  * `HERMES_HOME`, …) are deliberately NOT mirrored: they can only make genie's
@@ -125,6 +127,14 @@ export const SKILLS_CLI_AGENTS: readonly SkillsCliAgentSpec[] = [
   { agent: 'neovate', roots: [['.neovate']], skills: ['.neovate', 'skills'] },
   { agent: 'pochi', roots: [['.pochi']], skills: ['.pochi', 'skills'] },
   { agent: 'adal', roots: [['.adal']], skills: ['.adal', 'skills'] },
+  // Genie's own row, not the CLI's: DeepSeek Harness (DSH) serves `~/.agents/skills`
+  // (dsh-skill-filesystem's `user-agents` root, `$DSH_AGENTS_HOME` unset) and expands a typed
+  // `/name` itself, but skills.sh does not know it. The CLI's `universal` agent writes exactly
+  // that shared home (`isUniversalAgent`) and creates nothing else, verified against 1.5.23 in
+  // a scratch HOME. The roots are DSH's own home and the Automagik desktop app's, which runs
+  // DSH at `~/.automagik/desktop/dsh`; `$DSH_HOME` and `$AUTOMAGIK_HOME` are not mirrored, like
+  // every other override here.
+  { agent: 'universal', roots: [['.dsh'], ['.automagik', 'desktop', 'dsh']], skills: ['.agents', 'skills'] },
 ];
 
 /** Absolute global skills home this agent writes under `home`. */

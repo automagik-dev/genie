@@ -1,0 +1,53 @@
+{
+  "name": "@automagik/genie-dsh",
+  "version": "0.1.4",
+  "description": "Genie for DeepSeek Harness: a Genie Bot on the Automagik Bot team that grants wishes, each one a thread working in its own git worktree",
+  "keywords": ["dsh-plugin", "deepseek-harness", "dsh", "genie", "agents"],
+  "homepage": "https://github.com/automagik-dev/genie/tree/dev/plugins/genie-dsh#readme",
+  "bugs": {
+    "url": "https://github.com/automagik-dev/genie/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/automagik-dev/genie.git",
+    "directory": "plugins/genie-dsh"
+  },
+  "license": "MIT",
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./package.json": "./package.json"
+  },
+  "files": ["index.js", "src/host/", "client.js", "cordis.patch.yml", "README.md", "LICENSE"],
+  "scripts": {
+    "build": "node scripts/build-client.mjs",
+    "test": "node --import ./test/harness-resolve.mjs --test \"test/*.test.js\""
+  },
+  "engines": {
+    "dsh": ">=0.2.1-rc.2 <0.3.0"
+  },
+  "peerDependencies": {
+    "@automagik/bots-dsh": ">=3.3.0",
+    "@deepseek-ai/cordis": "*",
+    "@deepseek-ai/dsh-tools": "*"
+  },
+  "dsh": {
+    "client": {
+      "platform": "web",
+      "external": ["@automagik/bots-dsh/client"]
+    },
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2"
+  },
+  "peerDependenciesMeta": {
+    "@automagik/bots-dsh": {
+      "optional": true
+    }
+  }
+}

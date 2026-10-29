@@ -239,6 +239,47 @@ describe('wider drift is reported and tightened to the index mode', () => {
   });
 });
 
+describe('repair hands back the scan only while the tree is untouched (#3143)', () => {
+  test('nothing wider: the very scan comes back, nothing is logged', () => {
+    const fixture = makeFixture();
+    const wt = addWorktree(fixture, 'wish/demo-alpha');
+    chmodSync(join(wt, 'sub'), 0o700); // stricter: reported, never repaired
+    const scan = scanWorktreeModes(fixture.root);
+    const lines: string[] = [];
+
+    expect(repairWorktreeModes(fixture.root, { scan, logSink: (line) => lines.push(line) })).toBe(scan);
+    expect(lines).toEqual([]);
+  });
+
+  test('an enumeration failure comes back as-is; a missing root has no scan', () => {
+    const failed = { entries: [], enumerationError: 'not a git repository' };
+    const lines: string[] = [];
+
+    expect(repairWorktreeModes('/nonexistent', { scan: failed, logSink: (line) => lines.push(line) })).toBe(failed);
+    expect(lines).toEqual(['  \x1b[33m!\x1b[0m mode repair skipped: enumeration failed (not a git repository)']);
+    expect(repairWorktreeModes(null)).toBeNull();
+  });
+
+  test('any attempted tightening returns null, so the report re-reads the post-fix tree', () => {
+    const fixture = makeFixture();
+    const wt = addWorktree(fixture, 'wish/demo-alpha');
+    chmodSync(join(wt, 'a.txt'), 0o666);
+
+    expect(repairWorktreeModes(fixture.root, { logSink: () => {} })).toBeNull();
+    expect(modeOf(join(wt, 'a.txt'))).toBe(0o644);
+  });
+
+  test('checkWorktreeModes reports from a prior scan instead of walking the worktrees again', () => {
+    const fixture = makeFixture();
+    const wt = addWorktree(fixture, 'wish/demo-alpha');
+    const prior = scanWorktreeModes(fixture.root); // clean
+    chmodSync(join(wt, 'a.txt'), 0o666); // drift the prior scan cannot have seen
+
+    expect(checkWorktreeModes(fixture.root, prior)[0]?.status).toBe('pass');
+    expect(checkWorktreeModes(fixture.root)[0]?.detail).toContain('1 wider');
+  });
+});
+
 describe('tighten-only: stricter modes survive --fix untouched', () => {
   test('a 0600 file is reported but never widened', () => {
     const fixture = makeFixture();
@@ -769,5 +810,22 @@ describe('doctor wiring', () => {
     const summary = json.checks.find((check) => check.name === 'mode drift');
     expect(summary?.detail).toContain('1 stricter');
     expect(summary?.detail).not.toContain('wider');
+  });
+
+  test('doctor --fix with nothing wider reports exactly what detect-only reports', async () => {
+    const fixture = makeFixture();
+    isolate(fixture);
+    const wt = addWorktree(fixture, 'wish/demo-alpha');
+    writeFileSync(join(wt, 'scratch.txt'), 'work in progress\n'); // keeps the worktree out of the removal sweep
+    chmodSync(join(wt, 'sub'), 0o700);
+    const modeDrift = (output: string) =>
+      (JSON.parse(output) as { checks: Array<{ name: string }> }).checks.find((check) => check.name === 'mode drift');
+
+    const detect = await runDoctor(fixture, { json: true });
+    const fixed = await runDoctor(fixture, { json: true, fix: true });
+
+    expect(fixed.exitCode).toBe(detect.exitCode);
+    expect(modeDrift(fixed.output)).toEqual(modeDrift(detect.output));
+    expect(modeDrift(fixed.output)).toMatchObject({ status: 'pass', detail: expect.stringContaining('1 stricter') });
   });
 });

@@ -43,6 +43,17 @@ const BudgetsConfigSchema = z.object({
   maxCouncilsPerBrainstorm: z.number().int().nonnegative().max(3).default(1),
 });
 
+// Skills-channel configuration (issue #3148 option C).
+const SkillsConfigSchema = z.object({
+  /**
+   * skills.sh agent names (`hermes-agent`, `cursor`, …) genie never delivers
+   * skills to, even when detected. Default empty: absent means every detected
+   * agent, exactly as before the key existed. Dirs genie already delivered into
+   * an excluded agent's home are left in place.
+   */
+  excludeAgents: z.array(z.string()).default([]),
+});
+
 // Routing-matrix effort configuration
 const RoutingConfigSchema = z.object({
   maxAutoEffort: z.enum(['low', 'medium', 'high', 'xhigh']).default('xhigh'),
@@ -135,6 +146,7 @@ export const GenieConfigSchema = z.object({
   terminal: TerminalConfigSchema.default({}),
   logging: LoggingConfigSchema.default({}),
   budgets: BudgetsConfigSchema.default({}),
+  skills: SkillsConfigSchema.default({}),
   routing: RoutingConfigSchema.default({}),
   shell: ShellConfigSchema.default({}),
   shortcuts: ShortcutsConfigSchema.default({}),

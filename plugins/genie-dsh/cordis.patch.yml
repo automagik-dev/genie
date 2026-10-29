@@ -1,0 +1,8 @@
+# Mounts Genie beside the Bot team (@automagik/bots-dsh, row omni-ui), whose runtime it
+# injects as the omniTeam service; the browser half is discovered through the package's
+# dsh.client manifest and ./client export.
+#
+# Installed into someone's own DSH, this patch adds that row and changes nothing of theirs.
+- insert:
+    - id: genie
+      name: '@automagik/genie-dsh'

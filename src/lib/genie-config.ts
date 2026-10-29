@@ -45,6 +45,14 @@ function ensureGenieDir(): void {
  * Load genie config, returning defaults if not found
  */
 export async function loadGenieConfig(): Promise<GenieConfig> {
+  return loadGenieConfigSync();
+}
+
+/**
+ * Synchronous {@link loadGenieConfig}, for the seams that must stay synchronous
+ * (the skills channel runner `genie update` calls reads `skills.excludeAgents`).
+ */
+export function loadGenieConfigSync(): GenieConfig {
   const configPath = getGenieConfigPath();
   if (!existsSync(configPath)) {
     return GenieConfigSchema.parse({});

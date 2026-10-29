@@ -68,6 +68,7 @@ on:
       - 'bunfig.toml'
       - 'tsconfig.json'
       - 'scripts/build-binary.sh'
+      - 'scripts/ci/check-shipped-strings.sh'
       - 'scripts/json-top-level-string.js'
       - 'scripts/fresh-install-smoke.ts'
       - 'scripts/skills-lint.ts'
@@ -178,6 +179,13 @@ jobs:
           PLATFORM: ${{ matrix.platform }}
           VERSION: ${{ steps.ver.outputs.version }}
         run: bash scripts/build-binary.sh --platform "${PLATFORM}" --version "${VERSION}"
+
+      - name: Shipped strings (no private host, person or internal service)
+        shell: bash
+        env:
+          PLATFORM: ${{ matrix.platform }}
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: bash scripts/ci/check-shipped-strings.sh "dist/genie-${VERSION}-${PLATFORM}.tar.gz"
 
       - name: Smoke test (extract + --version on linux runners)
         if: matrix.platform == 'linux-x64-glibc' || matrix.platform == 'linux-arm64'

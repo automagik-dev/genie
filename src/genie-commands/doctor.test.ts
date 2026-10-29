@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -676,6 +677,74 @@ describe('checkV4Residue — accounting + uncertain keeps + json fix', () => {
     expect(existsSync(join(fxGenieHome, 'serve.pid'))).toBe(false);
     expect(parsed.checks.find((c) => c.name === 'v4 residue')?.status).toBe('pass'); // post-fix state
     expect(proc.stderr.toString()).toContain('Removed v4 residue'); // chatter rerouted, not lost
+  });
+
+  /**
+   * A tmp repo root with both repo-only cleanups armed — one merged, clean launch
+   * worktree and one tracked file wider than its index mode — then `doctor --fix
+   * --json` run from it as a user would. Issue #3143: those cleanups only run when
+   * the cwd is a git checkout, so the fixture-home test above never reaches their logSink.
+   */
+  function runFixJsonFromRepoRoot(plant: (repo: string) => void = () => {}) {
+    const repo = join(fxHome, 'repo');
+    const worktrees = join(fxHome, 'worktrees');
+    mkdirSync(repo, { recursive: true });
+    chmodSync(repo, 0o755); // the mode scan probes the worktree root against 0755; keep the planted drift umask-free
+    mkdirSync(worktrees, { recursive: true });
+    const git = (...args: string[]) => execFileSync('git', args, { cwd: repo, stdio: ['ignore', 'pipe', 'pipe'] });
+    git('init', '-q');
+    git('config', 'user.email', 'test@example.com');
+    git('config', 'user.name', 'Test');
+    git('config', 'commit.gpgsign', 'false');
+    writeFileSync(join(repo, 'README.md'), 'seed\n');
+    chmodSync(join(repo, 'README.md'), 0o644); // explicit index mode, independent of the host umask
+    git('add', 'README.md');
+    git('commit', '-q', '-m', 'seed');
+    git('branch', 'dev'); // integration branch containing the launch branch's tip
+    git('worktree', 'add', '-q', '-b', 'wish/demo-alpha', join(worktrees, 'demo-alpha')); // merged + clean
+    chmodSync(join(repo, 'README.md'), 0o666); // drift wider than the index
+    plant(repo);
+    const repoRoot = join(import.meta.dir, '..', '..');
+    // The success case asserts no check fails, so no host config root may override the fixture home.
+    const { CODEX_HOME: _codex, CLAUDE_CONFIG_DIR: _claude, HERMES_HOME: _hermes, ...hostEnv } = process.env;
+
+    const proc = Bun.spawnSync([process.execPath, join(repoRoot, 'src', 'genie.ts'), 'doctor', '--fix', '--json'], {
+      cwd: repo,
+      env: { ...hostEnv, HOME: fxHome, GENIE_HOME: fxGenieHome, GENIE_WORKTREES_DIR: worktrees },
+    });
+    const stdout = proc.stdout.toString();
+    const stderr = proc.stderr.toString();
+    // Whole stdout is exactly one document, whatever the verdict.
+    const json = JSON.parse(stdout) as { ok: boolean; checks: Array<{ name: string; status: string }> };
+    for (const message of ['Removing 1 merged, clean launch worktree', 'Tightening 1 wider-than-index mode']) {
+      expect(stderr).toContain(message);
+      expect(stdout).not.toContain(message);
+    }
+    expect(existsSync(join(worktrees, 'demo-alpha'))).toBe(false);
+    expect(statSync(join(repo, 'README.md')).mode & 0o777).toBe(0o644);
+    const status = (name: string) => json.checks.find((check) => check.name === name)?.status;
+    expect(status('launch worktrees')).toBe('pass'); // the report is the post-fix state
+    expect(status('mode drift')).toBe('pass');
+    return { exitCode: proc.exitCode, json, status };
+  }
+
+  test('doctor --fix --json from a repo root: cleanup chatter on stderr, post-fix JSON on stdout, exit 0', () => {
+    const { exitCode, json } = runFixJsonFromRepoRoot();
+
+    expect(json.checks.filter((check) => check.status === 'fail').map((check) => check.name)).toEqual([]);
+    expect(json.ok).toBe(true);
+    expect(exitCode).toBe(0);
+  });
+
+  test('doctor --fix --json with a failing check: still one JSON document, ok false, exit 1', () => {
+    const { exitCode, json, status } = runFixJsonFromRepoRoot((repo) => {
+      mkdirSync(join(repo, '.genie'), { recursive: true });
+      writeFileSync(join(repo, '.genie', 'genie.db'), 'not a sqlite database\n'); // untracked: no mode drift
+    });
+
+    expect(status('genie.db')).toBe('fail');
+    expect(json.ok).toBe(false);
+    expect(exitCode).toBe(1);
   });
 });
 
@@ -1387,6 +1456,48 @@ describe('doctor: skills.sh channel', () => {
     const agentDirs = byName(skillsChannelResults(), 'skills: agent dirs');
     expect(agentDirs.status).toBe('pass');
     expect(agentDirs.detail).toBe(`2/2 recorded homes complete @ ${releaseTag(VERSION)}`);
+  });
+
+  /**
+   * The install keeps an excluded agent's recorded home as removal authority but
+   * never writes it again, so once a release adds a skill it is incomplete for
+   * good: counting it would ask `genie update` for something it will not do.
+   */
+  test('a recorded home skills.excludeAgents takes out of delivery is named apart, never incomplete', () => {
+    seedAgentSkills(isolatedHome, ['.claude', 'skills'], ['alpha', 'beta']);
+    seedAgentSkills(isolatedHome, ['.hermes', 'skills'], ['alpha']);
+    const claude = join(isolatedHome, '.claude', 'skills');
+    const hermes = join(isolatedHome, '.hermes', 'skills');
+    seedSkillsRecord(process.env.GENIE_HOME as string, { agentDirs: [claude, hermes] });
+
+    const results = checkSkillsChannel({
+      home: isolatedHome,
+      genieHome: process.env.GENIE_HOME as string,
+      excludeAgents: ['hermes-agent'],
+    });
+    const agentDirs = byName(results, 'skills: agent dirs');
+    expect(agentDirs.status).toBe('pass');
+    expect(agentDirs.detail).toBe(
+      `1/1 recorded homes complete @ ${releaseTag(VERSION)}; 1 excluded by skills.excludeAgents: ${hermes}`,
+    );
+    // Without the exclusion the same home is the incomplete one it always was.
+    expect(byName(skillsChannelResults(), 'skills: agent dirs').status).toBe('warn');
+  });
+
+  test('a shared home another detected agent still writes is not excluded', () => {
+    seedAgentSkills(isolatedHome, ['.agents', 'skills'], ['alpha']);
+    mkdirSync(join(isolatedHome, '.codex'), { recursive: true });
+    mkdirSync(join(isolatedHome, '.dsh'), { recursive: true });
+    seedSkillsRecord(process.env.GENIE_HOME as string, { agentDirs: [join(isolatedHome, '.agents', 'skills')] });
+
+    const results = checkSkillsChannel({
+      home: isolatedHome,
+      genieHome: process.env.GENIE_HOME as string,
+      excludeAgents: ['universal'],
+    });
+    const agentDirs = byName(results, 'skills: agent dirs');
+    expect(agentDirs.status).toBe('warn');
+    expect(agentDirs.detail).not.toContain('excluded');
   });
 
   test('a record with nothing preserved emits no retirement check', () => {

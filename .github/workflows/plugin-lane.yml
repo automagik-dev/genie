@@ -1,0 +1,87 @@
+# Genie's plugin lane (scripts/plugin-lane.ts, plugin-lane/README.md): a genie-dsh version
+# that lands on dev is released on its own, with no Genie CLI release and no Automagik one.
+# The tarball goes on an immutable `genie-dsh-v<version>` release, never the Latest one, and
+# its tag does not match the `v*` CLI tags the release chain watches. The signed lane.json and
+# lane.json.sig are the only files of the `lane` branch, a new commit on it each time: this
+# repository's releases are immutable, so a rolling release cannot take new files.
+# A version already released keeps its tarball: a re-run only signs the lane again.
+name: genie-dsh plugin lane
+
+on:
+  push:
+    branches: [dev]
+    # The lane's own script and workflow too: a fix to either re-runs it, since a manual run
+    # needs the workflow on the default branch (main), and this one lives on dev.
+    paths: ['plugins/genie-dsh/**', 'scripts/plugin-lane.ts', '.github/workflows/plugin-lane.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: plugin-lane
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Publish genie-dsh to the plugin lane
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+
+      - name: Version
+        id: version
+        run: |
+          version="$(jq -r .version plugins/genie-dsh/package.json)"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "tag=genie-dsh-v${version}" >> "$GITHUB_OUTPUT"
+
+      - name: Tarball (released once per version)
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          mkdir -p dist
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern '*.tgz' --dir dist
+            bun scripts/plugin-lane.ts describe "dist/automagik-genie-dsh-${VERSION}.tgz" > dist/packed.json
+          else
+            bun scripts/plugin-lane.ts pack dist > dist/packed.json
+            gh release create "$TAG" "dist/automagik-genie-dsh-${VERSION}.tgz" \
+              --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --latest=false \
+              --title "genie-dsh ${VERSION}" \
+              --notes "genie-dsh ${VERSION} for the Automagik Bot team, served through the plugin lane."
+          fi
+          cat dist/packed.json
+
+      - name: Sign the lane
+        env:
+          PLUGIN_LANE_KEY: ${{ secrets.PLUGIN_LANE_KEY }}
+        run: |
+          bun scripts/plugin-lane.ts manifest dist/packed.json "$GITHUB_SHA" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > dist/lane.json
+          bun scripts/plugin-lane.ts sign dist/lane.json > dist/lane.json.sig
+          bun scripts/plugin-lane.ts verify dist/lane.json dist/lane.json.sig
+
+      - name: Publish the lane
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          remote="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          if git ls-remote --exit-code --heads "$remote" lane >/dev/null; then
+            git clone -q --depth 1 --branch lane "$remote" lane
+          else
+            git init -q -b lane lane
+          fi
+          cp dist/lane.json dist/lane.json.sig lane/
+          cd lane
+          git add lane.json lane.json.sig
+          git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+            commit -q -m "lane: genie-dsh ${VERSION}"
+          git push -q "$remote" HEAD:refs/heads/lane

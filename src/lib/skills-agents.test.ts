@@ -66,6 +66,34 @@ describe('the mirrored skills.sh 1.5.23 agent registry', () => {
     expect(selectSkillsCliAgents({ home }).agents).toEqual(['zed']);
   });
 
+  /**
+   * DSH reads `~/.agents/skills` but is not in the CLI's registry, so a host with only Claude Code
+   * and the Automagik desktop app got `~/.claude/skills` alone, and `/wish` in a DSH chat on
+   * another model reached dsh-oh-my-claude's bridge instead of DSH's own skill (2026-10-25).
+   */
+  test('a DeepSeek Harness host is detected and gets the shared ~/.agents/skills home, once', () => {
+    expect(agentSkillsHome(home, spec('universal'))).toBe(join(home, '.agents', 'skills'));
+    expect(agentProductInstalled(home, spec('universal'))).toBe(false);
+    mkdirSync(join(home, '.automagik', 'desktop', 'dsh'), { recursive: true });
+    mkdirSync(join(home, '.claude'), { recursive: true });
+    expect(selectSkillsCliAgents({ home })).toEqual({
+      agents: ['claude-code', 'universal'],
+      homes: [join(home, '.claude', 'skills'), join(home, '.agents', 'skills')],
+      recordedOnly: [],
+    });
+    // Beside Codex, which reads the same home, it is still one home.
+    mkdirSync(join(home, '.codex'), { recursive: true });
+    expect(selectSkillsCliAgents({ home }).homes).toEqual([
+      join(home, '.claude', 'skills'),
+      join(home, '.agents', 'skills'),
+    ]);
+  });
+
+  test('a DSH run on its own (~/.dsh) is detected too', () => {
+    mkdirSync(join(home, '.dsh'), { recursive: true });
+    expect(selectSkillsCliAgents({ home }).agents).toEqual(['universal']);
+  });
+
   test('detection is product-root existence, nothing else', () => {
     expect(agentProductInstalled(home, spec('openclaw'))).toBe(false);
     mkdirSync(join(home, '.moltbot'), { recursive: true });
@@ -114,6 +142,13 @@ describe('agentHomeIsIndependentlyDetected', () => {
     mkdirSync(agentsHome, { recursive: true });
     expect(agentHomeIsIndependentlyDetected(home, agentsHome, join(home, '.agents'))).toBe(false);
     mkdirSync(join(home, '.codex'), { recursive: true });
+    expect(agentHomeIsIndependentlyDetected(home, agentsHome, join(home, '.agents'))).toBe(true);
+  });
+
+  test('the desktop app protects the shared ~/.agents home as Codex does', () => {
+    const agentsHome = join(home, '.agents', 'skills');
+    mkdirSync(agentsHome, { recursive: true });
+    mkdirSync(join(home, '.automagik', 'desktop', 'dsh'), { recursive: true });
     expect(agentHomeIsIndependentlyDetected(home, agentsHome, join(home, '.agents'))).toBe(true);
   });
 });

@@ -7,7 +7,10 @@
  * that ever lived under a `skills/` directory on a shipped ref
  * ({@link historyRevisions}) or an explicitly proven Genie archive and is no
  * longer delivered, plus every frontmatter `description` any Genie skill shipped
- * under any name that NO currently shipped skill carries. A retired description
+ * under any name that NO currently shipped skill carries. "Currently shipped"
+ * is the union of HEAD, exact origin/dev and exact origin/main read through git
+ * ({@link currentSkills}), never the working tree: a skill live on a release
+ * branch but absent from HEAD is not retired (#3141). A retired description
  * under a genie name proves a directory is genie's own pre-record install — a
  * third party does not copy genie's description verbatim, and a user's fork of a
  * CURRENT skill keeps a current description, which is deliberately absent here.
@@ -39,10 +42,17 @@
  * while `--write` stays allowed. The check is an additive union, so it proves
  * a SUPERSET, never an exact match — see {@link CATALOG_CHECK_GAP}, which
  * every verdict prints.
+ *
+ * The file records digests, not text: each marker directory, name and description as
+ * {@link legacySkillDigest}, the same function the reader matches with, so the
+ * binary carries no retired skill's text. Union and subtraction happen on
+ * digests; this clone's history keeps the text only to name a missing entry
+ * in the `--check` verdict.
  */
 import { execFileSync } from 'node:child_process';
-import { readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
+import { legacySkillDigest } from '../src/lib/legacy-skill-digest.js';
 import { catalogGenieCommits } from './git-history-ownership.js';
 
 const ROOT = join(import.meta.dir, '..');
@@ -70,10 +80,14 @@ const SHIPPED_REMOTE_BRANCHES = ['refs/remotes/origin/main', 'refs/remotes/origi
  * Commit-bound Genie proof may opt additional exact archive tips into collection.
  */
 export function historyRevisions(root: string): string[] {
-  const shippedBranches = gitIn(root, 'for-each-ref', '--format=%(refname)', ...SHIPPED_REMOTE_BRANCHES)
+  return ['HEAD', '--tags', ...shippedRemoteBranches(root), '--glob=refs/archive/*'];
+}
+
+/** Exact origin/main and origin/dev when present; a descendant or lookalike ref never qualifies. */
+function shippedRemoteBranches(root: string): string[] {
+  return gitIn(root, 'for-each-ref', '--format=%(refname)', ...SHIPPED_REMOTE_BRANCHES)
     .split('\n')
     .filter((ref) => SHIPPED_REMOTE_BRANCHES.includes(ref));
-  return ['HEAD', '--tags', ...shippedBranches, '--glob=refs/archive/*'];
 }
 
 function parseDescription(markdown: string): string | null {
@@ -93,14 +107,6 @@ function parseDescription(markdown: string): string | null {
     return value.length > 0 ? value : null;
   }
   return null;
-}
-
-function currentSkillNames(): Set<string> {
-  return new Set(
-    readdirSync(join(ROOT, 'skills'), { withFileTypes: true })
-      .filter((entry) => entry.isDirectory())
-      .map((entry) => entry.name),
-  );
 }
 
 /**
@@ -149,20 +155,40 @@ export function collectCatalog(root: string = ROOT, provenance?: string): Map<st
   return catalog;
 }
 
-/** The descriptions the tree ships right now: a fork of a current skill carries one of these. */
-function currentDescriptions(): Set<string> {
-  const found = new Set<string>();
-  for (const name of currentSkillNames()) {
-    let markdown = '';
+export interface CurrentSkills {
+  /** Every `skills/<name>` directory a current tree carries. */
+  names: Set<string>;
+  /** Every parseable `skills/<name>/SKILL.md` description a current tree carries: a fork of a current skill keeps one. */
+  descriptions: Set<string>;
+}
+
+/**
+ * What ships right now: the union of HEAD, exact origin/dev and exact origin/main,
+ * read through git (ls-tree / cat-file), never the working tree. A revision that
+ * does not resolve (unborn HEAD, an absent release branch) contributes nothing.
+ */
+export function currentSkills(root: string = ROOT): CurrentSkills {
+  const names = new Set<string>();
+  const descriptions = new Set<string>();
+  const seenBlobs = new Set<string>();
+  for (const revision of ['HEAD', ...shippedRemoteBranches(root)]) {
     try {
-      markdown = readFileSync(join(ROOT, 'skills', name, 'SKILL.md'), 'utf8');
+      gitIn(root, 'rev-parse', '--verify', '--quiet', `${revision}^{tree}`);
     } catch {
       continue;
     }
-    const description = parseDescription(markdown);
-    if (description !== null) found.add(description);
+    for (const row of gitIn(root, 'ls-tree', '-r', '-t', '-z', revision, '--', 'skills/').split('\0')) {
+      const entry = /^\d+ (tree|blob) ([0-9a-f]+)\tskills\/([^/]+)(\/SKILL\.md)?$/.exec(row);
+      if (!entry) continue;
+      const [, type, object, name, skillFile] = entry as unknown as [string, string, string, string, string?];
+      if (type === 'tree' && skillFile === undefined) names.add(name);
+      if (type !== 'blob' || skillFile === undefined || seenBlobs.has(object)) continue;
+      seenBlobs.add(object);
+      const description = parseDescription(gitIn(root, 'cat-file', 'blob', object));
+      if (description !== null) descriptions.add(description);
+    }
   }
-  return found;
+  return { names, descriptions };
 }
 
 /**
@@ -175,12 +201,12 @@ function currentDescriptions(): Set<string> {
 export async function recordedCatalog(): Promise<{ names: string[]; descriptions: string[] }> {
   try {
     const module = (await import(OUTPUT)) as {
-      LEGACY_SKILL_NAMES?: readonly string[];
-      LEGACY_SKILL_DESCRIPTIONS?: readonly string[];
+      LEGACY_SKILL_NAME_DIGESTS?: readonly string[];
+      LEGACY_SKILL_DESCRIPTION_DIGESTS?: readonly string[];
     };
     return {
-      names: [...(module.LEGACY_SKILL_NAMES ?? [])],
-      descriptions: [...(module.LEGACY_SKILL_DESCRIPTIONS ?? [])],
+      names: [...(module.LEGACY_SKILL_NAME_DIGESTS ?? [])],
+      descriptions: [...(module.LEGACY_SKILL_DESCRIPTION_DIGESTS ?? [])],
     };
   } catch {
     // No catalog yet, or one this build cannot import: history alone is the source.
@@ -189,15 +215,20 @@ export async function recordedCatalog(): Promise<{ names: string[]; descriptions
 }
 
 export interface MergedCatalog {
+  /** Digests of the retired names, sorted. */
   names: string[];
+  /** Digests of the retired descriptions, sorted. */
   descriptions: string[];
+  /** The text of each digest this clone's history yields, to name it in a verdict. */
+  labels: Map<string, string>;
 }
 
 /**
  * The union-then-subtract the catalog is made of, as a pure function of its
  * four inputs: history ∪ what is already recorded, minus what the tree ships
  * today. `render` emits it and `--check` reports against it, so the file and
- * the verdict can never describe different sets.
+ * the verdict can never describe different sets. History and the current tree
+ * come as text and are digested here; `recorded` is already digests.
  */
 export function mergeCatalog(
   catalog: Map<string, Set<string>>,
@@ -205,36 +236,58 @@ export function mergeCatalog(
   current: Set<string>,
   shipping: Set<string>,
 ): MergedCatalog {
-  const names = [...new Set([...catalog.keys(), ...recorded.names])].filter((name) => !current.has(name)).sort();
-  const descriptions = [...new Set([...[...catalog.values()].flatMap((set) => [...set]), ...recorded.descriptions])]
-    .filter((description) => !shipping.has(description))
+  const labels = new Map<string, string>();
+  const digested = (values: Iterable<string>): string[] =>
+    [...values].map((value) => {
+      const digest = legacySkillDigest(value);
+      labels.set(digest, value);
+      return digest;
+    });
+  const currentDigests = new Set([...current].map(legacySkillDigest));
+  const shippingDigests = new Set([...shipping].map(legacySkillDigest));
+  const names = [...new Set([...digested(catalog.keys()), ...recorded.names])]
+    .filter((name) => !currentDigests.has(name))
     .sort();
-  return { names, descriptions };
+  const historyDescriptions = digested([...catalog.values()].flatMap((set) => [...set]));
+  const descriptions = [...new Set([...historyDescriptions, ...recorded.descriptions])]
+    .filter((description) => !shippingDigests.has(description))
+    .sort();
+  return { names, descriptions, labels };
 }
 
 export function render(
   catalog: Map<string, Set<string>>,
   recorded: { names: string[]; descriptions: string[] },
+  current: CurrentSkills = currentSkills(),
 ): string {
-  const { names, descriptions } = mergeCatalog(catalog, recorded, currentSkillNames(), currentDescriptions());
+  const { names, descriptions } = mergeCatalog(catalog, recorded, current.names, current.descriptions);
   const lines: string[] = [
     '// GENERATED by `bun scripts/legacy-skills-catalog.ts --write` from git history. Do not edit by hand.',
     '//',
     '// Every skill name genie shipped under a `skills/` directory in shipped or',
     '// proven archive history and no longer delivers, plus every description it',
-    '// carried under any name that no currently shipped skill carries. A directory',
-    '// in an agent home under a genie name whose description appears here is',
-    "// genie's own pre-record install (see `src/lib/legacy-skills.ts`).",
+    '// carried under any name that no currently shipped skill carries, each as its',
+    '// digest (`src/lib/legacy-skill-digest.ts`). A directory in an agent home under',
+    "// a genie name whose description digest appears here is genie's own pre-record",
+    '// install (see `src/lib/legacy-skills.ts`).',
     '',
-    "/** Genie-owned marker directories left by deleted runtimes; genie's by name alone. */",
-    `export const LEGACY_MARKER_DIRS: readonly string[] = ${JSON.stringify(MARKER_DIRS)};`,
-    '',
-    '/** Skill names genie once delivered and no longer does. */',
-    `export const LEGACY_SKILL_NAMES: readonly string[] = ${JSON.stringify(names)};`,
-    '',
-    '/** Every retired frontmatter `description` a genie skill ever shipped with, under any name. */',
-    'export const LEGACY_SKILL_DESCRIPTIONS: readonly string[] = [',
+    "/** The digest of each genie-owned marker directory a deleted runtime left; genie's by name alone. */",
+    'export const LEGACY_MARKER_DIR_DIGESTS: readonly string[] = [',
   ];
+  for (const marker of MARKER_DIRS.map(legacySkillDigest).sort()) lines.push(`  ${JSON.stringify(marker)},`);
+  lines.push(
+    '];',
+    '',
+    '/** The digest of every skill name genie once delivered and no longer does. */',
+    'export const LEGACY_SKILL_NAME_DIGESTS: readonly string[] = [',
+  );
+  for (const name of names) lines.push(`  ${JSON.stringify(name)},`);
+  lines.push(
+    '];',
+    '',
+    '/** The digest of every retired frontmatter `description` a genie skill ever shipped with, under any name. */',
+    'export const LEGACY_SKILL_DESCRIPTION_DIGESTS: readonly string[] = [',
+  );
   for (const description of descriptions) lines.push(`  ${JSON.stringify(description)},`);
   lines.push('];', '');
   return lines.join('\n');
@@ -251,9 +304,9 @@ export const CATALOG_CHECK_GAP =
 export interface CatalogCheckVerdict {
   /** True when the committed file differs from what a regeneration would write. */
   stale: boolean;
-  /** Names this clone's history yields that the committed catalog does not carry. */
+  /** Names this clone's history yields that the committed catalog does not carry (as text). */
   missingNames: string[];
-  /** Descriptions this clone's history yields that the committed catalog does not carry. */
+  /** Descriptions this clone's history yields that the committed catalog does not carry (as text). */
   missingDescriptions: string[];
   /** The exact lines the CLI prints, gap sentence last. */
   lines: string[];
@@ -269,8 +322,11 @@ export function evaluateCatalogCheck(
   catalog: { merged: MergedCatalog; recorded: { names: string[]; descriptions: string[] } },
 ): CatalogCheckVerdict {
   const { merged, recorded } = catalog;
-  const missingNames = merged.names.filter((name) => !recorded.names.includes(name));
-  const missingDescriptions = merged.descriptions.filter((description) => !recorded.descriptions.includes(description));
+  const label = (digest: string) => merged.labels.get(digest) ?? digest;
+  const missingNames = merged.names.filter((name) => !recorded.names.includes(name)).map(label);
+  const missingDescriptions = merged.descriptions
+    .filter((description) => !recorded.descriptions.includes(description))
+    .map(label);
   const stale = existing !== expected;
   const lines: string[] = [];
   if (stale) {
@@ -338,7 +394,8 @@ if (import.meta.main) {
   }
   const collected = collectCatalog(ROOT, provenance);
   const recorded = await recordedCatalog();
-  const rendered = render(collected, recorded);
+  const current = currentSkills(ROOT);
+  const rendered = render(collected, recorded, current);
 
   if (mode === '--write') {
     writeFileSync(OUTPUT, formatted(rendered), 'utf8');
@@ -351,7 +408,7 @@ if (import.meta.main) {
       // Missing counts as stale.
     }
     const verdict = evaluateCatalogCheck(existing, formatted(rendered), {
-      merged: mergeCatalog(collected, recorded, currentSkillNames(), currentDescriptions()),
+      merged: mergeCatalog(collected, recorded, current.names, current.descriptions),
       recorded,
     });
     const sink = verdict.stale ? process.stderr : process.stdout;

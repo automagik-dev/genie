@@ -27,7 +27,13 @@ import {
   verifyDeliveryEvidenceArtifact,
   verifyDownloadedDeliveryEvidence,
 } from '../lib/delivery-evidence-verify.js';
-import { contractPath, genieConfigExists, getGenieConfigPath, saveGenieConfig } from '../lib/genie-config.js';
+import {
+  contractPath,
+  genieConfigExists,
+  getGenieConfigPath,
+  loadGenieConfigSync,
+  saveGenieConfig,
+} from '../lib/genie-config.js';
 import {
   type InstallStagingDirectoryGuard,
   admitExternalInstallStaging,
@@ -2657,7 +2663,13 @@ export function runUpdateSkillsChannel(
   selection: IntegrationSelection,
   emit: (line: string) => void,
 ): SkillsChannelConvergenceResult {
-  return runSkillsChannelConvergence({ selection, version: VERSION, genieHome: GENIE_HOME, log: emit });
+  return runSkillsChannelConvergence({
+    selection,
+    version: VERSION,
+    genieHome: GENIE_HOME,
+    log: emit,
+    excludeAgents: loadGenieConfigSync().skills.excludeAgents,
+  });
 }
 
 export type WorkflowsChannelRunner = (

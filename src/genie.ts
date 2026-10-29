@@ -32,6 +32,7 @@ import { printErr, runUnderBrokenPipeGuard, writeErr } from './lib/term-output.j
 import { VERSION } from './lib/version.js';
 import { registerConfigCommand } from './term-commands/config.js';
 import { registerContextCommand } from './term-commands/context.js';
+import { registerDesktopCommand } from './term-commands/desktop.js';
 import { registerIdeaCommand } from './term-commands/idea.js';
 import { registerInitCommand } from './term-commands/init.js';
 import { registerMetricsCommand } from './term-commands/metrics.js';
@@ -262,6 +263,7 @@ registerV5TaskCommands(program);
 registerV5BoardCommands(program);
 registerContextCommand(program);
 registerConfigCommand(program);
+registerDesktopCommand(program);
 registerIdeaCommand(program);
 registerMikroCommands(program);
 registerMetricsCommand(program);
