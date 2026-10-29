@@ -28,7 +28,7 @@ import {
   probeCodexGeniePlugin,
   resolveGitProjectRoots,
 } from '../lib/codex-project-mcp.js';
-import { loadGenieConfig, resolveConfigKey } from '../lib/genie-config.js';
+import { loadGenieConfig, loadGenieConfigSync, resolveConfigKey } from '../lib/genie-config.js';
 import { resolveClaudeDir, resolveGenieHome as resolveGlobalGenieHome } from '../lib/genie-home.js';
 import { MACHINE_LOCAL_GENIE_PATHS } from '../term-commands/init.js';
 
@@ -38,6 +38,7 @@ import {
   KNOWN_AGENT_SKILL_HOMES,
   type SkillsInstallRecord,
   type SkillsWorkflowsInstall,
+  excludedAgentHomes,
   inspectSkillsInstallRecord,
   inventoryFromSkillsDir,
   isSafeSkillName,
@@ -786,11 +787,20 @@ const SKILLS_AGENT_DIRS_SUGGESTION = 'Run `genie update` to reinstall the skills
  * doctor could only see four of the 57. This line closes that gap: it compares
  * the record's own inventory against each recorded home and says how many are
  * complete, naming up to five that are not. Warn-level and read-only.
+ *
+ * A home `skills.excludeAgents` takes out of delivery is named apart and never
+ * counted incomplete: the record keeps it as removal authority, but nothing
+ * writes it, so `genie update` could never answer that warning.
  */
-function evaluateRecordedAgentDirs(record: SkillsInstallRecord | null): CheckResult | null {
+function evaluateRecordedAgentDirs(
+  record: SkillsInstallRecord | null,
+  excludedHomes: ReadonlySet<string>,
+): CheckResult | null {
   if (record === null || record.inventory.length === 0) return null;
-  const dirs = [...new Set(record.agentDirs)];
-  if (dirs.length === 0) return null;
+  const recorded = [...new Set(record.agentDirs)];
+  if (recorded.length === 0) return null;
+  const dirs = recorded.filter((dir) => !excludedHomes.has(dir));
+  const excluded = recorded.filter((dir) => excludedHomes.has(dir));
   const incomplete: string[] = [];
   for (const dir of dirs) {
     if (!isDirectory(dir)) {
@@ -801,7 +811,11 @@ function evaluateRecordedAgentDirs(record: SkillsInstallRecord | null): CheckRes
     if (present < record.inventory.length) incomplete.push(`${dir} (${present}/${record.inventory.length})`);
   }
   const complete = dirs.length - incomplete.length;
-  const detail = `${complete}/${dirs.length} recorded homes complete @ ${record.ref}`;
+  const excludedNote =
+    excluded.length === 0
+      ? ''
+      : `; ${excluded.length} excluded by skills.excludeAgents: ${namedWithRemainder(excluded)}`;
+  const detail = `${complete}/${dirs.length} recorded homes complete @ ${record.ref}${excludedNote}`;
   if (incomplete.length === 0) return { name: 'skills: agent dirs', status: 'pass', detail };
   return {
     name: 'skills: agent dirs',
@@ -822,7 +836,13 @@ function evaluateRecordedAgentDirs(record: SkillsInstallRecord | null): CheckRes
  * to compare against and the single record-less warning is the whole answer.
  */
 export function checkSkillsChannel(
-  options: { home?: string; genieHome?: string; nowMs?: () => number } = {},
+  options: {
+    home?: string;
+    genieHome?: string;
+    nowMs?: () => number;
+    /** `skills.excludeAgents`; read from the global config when omitted. */
+    excludeAgents?: readonly string[];
+  } = {},
 ): CheckResult[] {
   const home = resolveHostHome(options.home);
   const genieHome = options.genieHome ?? resolveGlobalGenieHome();
@@ -870,7 +890,11 @@ export function checkSkillsChannel(
     binaryTag,
   };
   for (const spec of KNOWN_AGENT_SKILL_HOMES) results.push(evaluateAgentSkillHome(spec, context));
-  const agentDirs = evaluateRecordedAgentDirs(record);
+  const excludeAgents = options.excludeAgents ?? loadGenieConfigSync().skills.excludeAgents;
+  const agentDirs = evaluateRecordedAgentDirs(
+    record,
+    new Set(excludedAgentHomes(home, excludeAgents, record?.agentDirs ?? [])),
+  );
   if (agentDirs !== null) results.push(agentDirs);
   const retirement = evaluatePreservedRetirements(record);
   if (retirement !== null) results.push(retirement);
