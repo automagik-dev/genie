@@ -149,6 +149,9 @@ test('the same title twice gets its own branch', async () => {
   await grant(tools, genie.id, { title: 'Fix it', wish: 'one' });
   const second = await grant(tools, genie.id, { title: 'Fix it', wish: 'two' });
   assert.match(second, /wish\/fix-it-2/);
+  // A copy's folder left on disk with no branch and no record is skipped too, never reused.
+  mkdirSync(join(dir, 'wishes', 'genie', 'left-behind'), { recursive: true });
+  assert.match(await grant(tools, genie.id, { title: 'Left behind', wish: 'three' }), /wish\/left-behind-2/);
 });
 
 // Issue #3182: a follow-up authorized to repair and publish the branches an earlier wish made
