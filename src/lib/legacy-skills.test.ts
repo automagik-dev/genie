@@ -125,7 +125,7 @@ describe('classifyLegacySkillEntry', () => {
 
   test('a skill whose name only resembles a retired one is not genie’s', () => {
     // Exact equality, as before the catalog was hashed: case and extra characters count.
-    seedSkill('PM', `---\nname: PM\ndescription: An unrelated PM helper\n---`);
+    seedSkill('PM', '---\nname: PM\ndescription: An unrelated PM helper\n---');
     seedSkill('pm2', '---\nname: pm2\ndescription: Process manager notes\n---');
     seedSkill('pm-notes', `---\nname: pm-notes\ndescription: "${SHIPPED_PM_DESCRIPTION} "\n---`);
     expect(classifyLegacySkillEntry(agentDir, 'PM', [])).toBeNull();
