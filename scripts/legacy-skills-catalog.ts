@@ -43,7 +43,7 @@
  * a SUPERSET, never an exact match — see {@link CATALOG_CHECK_GAP}, which
  * every verdict prints.
  *
- * The file records digests, not text: each name and description as
+ * The file records digests, not text: each marker directory, name and description as
  * {@link legacySkillDigest}, the same function the reader matches with, so the
  * binary carries no retired skill's text. Union and subtraction happen on
  * digests; this clone's history keeps the text only to name a missing entry
@@ -271,12 +271,16 @@ export function render(
     "// a genie name whose description digest appears here is genie's own pre-record",
     '// install (see `src/lib/legacy-skills.ts`).',
     '',
-    "/** Genie-owned marker directories left by deleted runtimes; genie's by name alone. */",
-    `export const LEGACY_MARKER_DIRS: readonly string[] = ${JSON.stringify(MARKER_DIRS)};`,
+    "/** The digest of each genie-owned marker directory a deleted runtime left; genie's by name alone. */",
+    'export const LEGACY_MARKER_DIR_DIGESTS: readonly string[] = [',
+  ];
+  for (const marker of MARKER_DIRS.map(legacySkillDigest).sort()) lines.push(`  ${JSON.stringify(marker)},`);
+  lines.push(
+    '];',
     '',
     '/** The digest of every skill name genie once delivered and no longer does. */',
     'export const LEGACY_SKILL_NAME_DIGESTS: readonly string[] = [',
-  ];
+  );
   for (const name of names) lines.push(`  ${JSON.stringify(name)},`);
   lines.push(
     '];',

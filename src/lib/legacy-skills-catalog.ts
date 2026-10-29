@@ -7,8 +7,10 @@
 // a genie name whose description digest appears here is genie's own pre-record
 // install (see `src/lib/legacy-skills.ts`).
 
-/** Genie-owned marker directories left by deleted runtimes; genie's by name alone. */
-export const LEGACY_MARKER_DIRS: readonly string[] = ['.genie-codex-fallback-retirement'];
+/** The digest of each genie-owned marker directory a deleted runtime left; genie's by name alone. */
+export const LEGACY_MARKER_DIR_DIGESTS: readonly string[] = [
+  '60b9dae3b55ed45f4cee1f4f1adcb0f1ab184e698467062f0cd6461f86fe5187',
+];
 
 /** The digest of every skill name genie once delivered and no longer does. */
 export const LEGACY_SKILL_NAME_DIGESTS: readonly string[] = [

@@ -29,7 +29,7 @@ import { lstatSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { legacySkillDigest } from './legacy-skill-digest.js';
 import {
-  LEGACY_MARKER_DIRS,
+  LEGACY_MARKER_DIR_DIGESTS,
   LEGACY_SKILL_DESCRIPTION_DIGESTS,
   LEGACY_SKILL_NAME_DIGESTS,
 } from './legacy-skills-catalog.js';
@@ -52,7 +52,7 @@ export interface LegacySkillLeftover {
 
 const DESCRIPTIONS = new Set(LEGACY_SKILL_DESCRIPTION_DIGESTS);
 const NAMES = new Set(LEGACY_SKILL_NAME_DIGESTS);
-const MARKERS = new Set(LEGACY_MARKER_DIRS);
+const MARKERS = new Set(LEGACY_MARKER_DIR_DIGESTS);
 
 /** A retired genie skill name, or the `genie-` prefix only genie's own plugin-era skills carried. */
 function isGenieSkillName(entry: string): boolean {
@@ -112,7 +112,7 @@ export function classifyLegacySkillEntry(
   if (inventory.includes(entry)) return null;
   const path = join(agentDir, entry);
   if (!isPhysicalDirectory(path)) return null;
-  if (MARKERS.has(entry)) return { agentDir, entry, kind: 'marker' };
+  if (MARKERS.has(legacySkillDigest(entry))) return { agentDir, entry, kind: 'marker' };
   const description = readSkillDescription(path);
   if (description === null) return null;
   const genieName = isGenieSkillName(entry);
