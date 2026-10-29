@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { legacySkillDigest } from './legacy-skill-digest.js';
 import {
-  LEGACY_MARKER_DIRS,
+  LEGACY_MARKER_DIR_DIGESTS,
   LEGACY_SKILL_DESCRIPTION_DIGESTS,
   LEGACY_SKILL_NAME_DIGESTS,
 } from './legacy-skills-catalog.js';
@@ -66,11 +66,12 @@ describe('legacy skills catalog', () => {
     const review = readSkillDescription(join(import.meta.dir, '..', '..', 'skills', 'review'));
     expect(review).not.toBeNull();
     expect(LEGACY_SKILL_DESCRIPTION_DIGESTS).not.toContain(legacySkillDigest(review as string));
-    expect(LEGACY_MARKER_DIRS).toEqual(['.genie-codex-fallback-retirement']);
+    expect(LEGACY_MARKER_DIR_DIGESTS).toEqual([legacySkillDigest('.genie-codex-fallback-retirement')]);
   });
 
   test('carries digests only, and still carries every retired skill, the one it must not name included', () => {
-    for (const entry of [...LEGACY_SKILL_NAME_DIGESTS, ...LEGACY_SKILL_DESCRIPTION_DIGESTS]) {
+    const entries = [...LEGACY_MARKER_DIR_DIGESTS, ...LEGACY_SKILL_NAME_DIGESTS, ...LEGACY_SKILL_DESCRIPTION_DIGESTS];
+    for (const entry of entries) {
       expect(entry).toMatch(/^[0-9a-f]{64}$/);
     }
     expect(LEGACY_SKILL_NAME_DIGESTS).toContain(RETIRED_NAME_DIGEST);
