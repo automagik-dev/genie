@@ -329,9 +329,11 @@ test('T2: a failing fetch from a URL with a credential is refused without the cr
 
 // ---- T3 branch policy ----
 
+// The genie CLI run from this checkout, as `bun src/genie.ts context --plan`.
+const CONTEXT_PLAN = [GENIE_CLI, 'context', '--plan'];
 const cliBranch = (repo) =>
   JSON.parse(
-    execFileSync('bun', [GENIE_CLI, 'context', '--plan'], {
+    execFileSync('bun', CONTEXT_PLAN, {
       cwd: repo,
       encoding: 'utf8',
       env: { ...process.env, GENIE_HOME: join(dir, 'genie-home') },
