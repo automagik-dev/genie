@@ -64,7 +64,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { homedir } from 'node:os';
-import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { z } from 'zod';
 import { atomicRenameDirectoryNoClobber, fsyncParentDir, fsyncPath } from './atomic-fs.js';
 import { resolveGenieHome } from './genie-home.js';
@@ -1422,6 +1422,48 @@ function applyAgentExclusion(
 }
 
 /**
+ * The skills homes `skills.excludeAgents` takes out of delivery: an excluded
+ * agent's home that no agent still selected writes (a shared home such as
+ * `~/.agents/skills` stays delivered while one does). It applies the same
+ * {@link applyAgentExclusion} `runSkillsInstall` does, so `genie doctor` never
+ * asks `genie update` to complete a home the install will not write.
+ */
+export function excludedAgentHomes(
+  home: string,
+  excludeAgents: readonly string[] | undefined,
+  recordedDirs: readonly string[] = [],
+): string[] {
+  const detected = selectSkillsCliAgents({ home, recordedDirs });
+  const kept = applyAgentExclusion(home, detected, excludeAgents);
+  return detected.homes.filter((dir) => !kept.homes.includes(dir));
+}
+
+/**
+ * What the previous record said about the homes `skills.excludeAgents` took out
+ * of this run, carried forward. Nothing writes those homes now, so neither the
+ * floor nor the discovery scan can name them, yet the genie dirs delivered there
+ * earlier are still on disk: dropping the home would take `genie uninstall`'s
+ * removal authority over them with it. Their digests and skip receipts are the
+ * previous run's, the last ones genie can vouch for, kept only for skills this
+ * release still delivers: a dropped skill's dir was retired from the previous
+ * record before this point.
+ */
+function excludedRecordedHomes(
+  previous: SkillsInstallRecord | null,
+  excluded: readonly string[],
+  inventory: readonly string[],
+): Required<Pick<SkillsInstallRecord, 'agentDirs' | 'dirDigests' | 'skipped'>> {
+  if (previous === null) return { agentDirs: [], dirDigests: {}, skipped: [] };
+  const homes = new Set(excluded.filter((dir) => previous.agentDirs.includes(dir) && isDirectory(dir)));
+  const carried = (path: string) => homes.has(dirname(path)) && inventory.includes(basename(path));
+  return {
+    agentDirs: [...homes],
+    dirDigests: Object.fromEntries(Object.entries(previous.dirDigests ?? {}).filter(([path]) => carried(path))),
+    skipped: (previous.skipped ?? []).filter((entry) => carried(entry.dir)),
+  };
+}
+
+/**
  * `warnings` rides BOTH variants on purpose: the collision snapshot runs before
  * the spawn, so a foreign skill directory can be copied into
  * `<GENIE_HOME>/state-backups/…` and the install then fail. Dropping the
@@ -2470,6 +2512,11 @@ export function runSkillsInstall(options: SkillsInstallOptions): SkillsInstallOu
   // `skills.excludeAgents` is applied here, before the foreign-dir skip, the
   // spawn plan, the collision snapshot and the agent-dir scan read `selection`.
   const selection = applyAgentExclusion(home, targets.selection, options.excludeAgents, warnings);
+  const excluded = excludedRecordedHomes(
+    previous,
+    targets.selection.homes.filter((dir) => !selection.homes.includes(dir)),
+    inventory,
+  );
   remedy = skillsInstallRemedy(skillsRoot, selection.agents);
   // Never invent a home: with no agent installed there is nothing to write to.
   if (selection.agents.length === 0) {
@@ -2539,6 +2586,7 @@ export function runSkillsInstall(options: SkillsInstallOptions): SkillsInstallOu
   // One receipt per path: agents sharing a home share its skipped dirs.
   const skippedDirs = new Map(skipped.map((entry) => [entry.dir, entry.skill]));
   const dirDigests = digestInstalledSkillDirs(agents.dirs, inventory, new Set(skippedDirs.keys()));
+  const skippedReceipts = [...excluded.skipped, ...[...skippedDirs].map(([dir, skill]) => ({ dir, skill }))];
   // A zero exit that wrote no verifiable skill directory anywhere is not a
   // success. It is the one replacement check retirement can no longer make for
   // itself now that it runs first: the retired bytes are already archived and
@@ -2560,15 +2608,16 @@ export function runSkillsInstall(options: SkillsInstallOptions): SkillsInstallOu
       agentDirs: [
         ...agents.dirs.filter((dir) => !prunedDirs.has(dir)),
         ...vanished.filter((dir) => !agents.dirs.includes(dir) && !prunedDirs.has(dir)),
+        ...excluded.agentDirs.filter((dir) => !agents.dirs.includes(dir) && !prunedDirs.has(dir)),
       ],
-      dirDigests,
+      dirDigests: { ...excluded.dirDigests, ...dirDigests },
       // `collisionBackups` ACCUMULATES: `state-backups/` roots are never
       // removed, so a record that rewrote the list from scratch (the pre-fix
       // behaviour) left roots on disk with nothing naming them by the next run.
       ...collisionRecordFields(previous, collisionOutcome),
       // The receipt that keeps the next run's identity check from reading a
       // skipped foreign dir as genie's own recorded pair.
-      ...(skippedDirs.size > 0 ? { skipped: [...skippedDirs].map(([dir, skill]) => ({ dir, skill })) } : {}),
+      ...(skippedReceipts.length > 0 ? { skipped: skippedReceipts } : {}),
       ...(preserved.length > 0 ? { preserved } : {}),
       // This run named its agents explicitly from products already installed,
       // so it created no product home — the durable fact that stops the next

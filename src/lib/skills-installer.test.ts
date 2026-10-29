@@ -780,6 +780,48 @@ describe('runSkillsInstall', () => {
     }
   });
 
+  /**
+   * The excluded home is still on disk with the genie dir an earlier install put
+   * there, so the record keeps naming it: `agentDirs` is `genie uninstall`'s
+   * removal authority, and nothing writes that home this run for the floor or
+   * the discovery scan to find it again.
+   */
+  test('an excluded agent keeps its recorded home, digests and skip receipts in the record', () => {
+    fixtureSkillsTree(['research', 'wish']);
+    const hermes = join(home, '.hermes', 'skills');
+    mkdirSync(join(hermes, 'wish'), { recursive: true });
+    writeFileSync(join(hermes, 'wish', 'SKILL.md'), '# wish\n', 'utf8');
+    mkdirSync(join(hermes, 'research'), { recursive: true });
+    writeFileSync(join(hermes, 'research', 'SKILL.md'), '# the operator research category\n', 'utf8');
+    const wishDigest = computeSkillDirDigest(join(hermes, 'wish')) as string;
+    writeSkillsInstallRecord(genieHome, {
+      ref: 'v5.260830.15',
+      cliVersion: SKILLS_CLI_VERSION,
+      inventory: ['research', 'wish', 'gone'],
+      agentDirs: [hermes],
+      // `gone` is a skill this release no longer ships: its receipt is not carried.
+      dirDigests: { [join(hermes, 'wish')]: wishDigest, [join(hermes, 'gone')]: wishDigest },
+      skipped: [{ dir: join(hermes, 'research'), skill: 'research' }],
+      installedAt: '2026-08-30T00:00:00.000Z',
+    });
+
+    const outcome = runSkillsInstall({
+      version: VERSION_UNDER_TEST,
+      genieHome,
+      home,
+      which: alwaysFound,
+      spawn: argvCopyRunner(),
+      excludeAgents: ['hermes-agent'],
+    });
+
+    expect(outcome.ok).toBe(true);
+    const record = readSkillsInstallRecord(genieHome) as SkillsInstallRecord;
+    expect(record.agentDirs).toContain(hermes);
+    expect(record.dirDigests?.[join(hermes, 'wish')]).toBe(wishDigest);
+    expect(record.dirDigests?.[join(hermes, 'gone')]).toBeUndefined();
+    expect(record.skipped).toContainEqual({ dir: join(hermes, 'research'), skill: 'research' });
+  });
+
   test('an unknown skills.excludeAgents name is reported on its own line and changes nothing else', () => {
     fixtureSkillsTree(['research', 'wish']);
     mkdirSync(join(home, '.hermes', 'skills'), { recursive: true });

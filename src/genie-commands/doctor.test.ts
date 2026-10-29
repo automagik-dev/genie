@@ -1458,6 +1458,48 @@ describe('doctor: skills.sh channel', () => {
     expect(agentDirs.detail).toBe(`2/2 recorded homes complete @ ${releaseTag(VERSION)}`);
   });
 
+  /**
+   * The install keeps an excluded agent's recorded home as removal authority but
+   * never writes it again, so once a release adds a skill it is incomplete for
+   * good: counting it would ask `genie update` for something it will not do.
+   */
+  test('a recorded home skills.excludeAgents takes out of delivery is named apart, never incomplete', () => {
+    seedAgentSkills(isolatedHome, ['.claude', 'skills'], ['alpha', 'beta']);
+    seedAgentSkills(isolatedHome, ['.hermes', 'skills'], ['alpha']);
+    const claude = join(isolatedHome, '.claude', 'skills');
+    const hermes = join(isolatedHome, '.hermes', 'skills');
+    seedSkillsRecord(process.env.GENIE_HOME as string, { agentDirs: [claude, hermes] });
+
+    const results = checkSkillsChannel({
+      home: isolatedHome,
+      genieHome: process.env.GENIE_HOME as string,
+      excludeAgents: ['hermes-agent'],
+    });
+    const agentDirs = byName(results, 'skills: agent dirs');
+    expect(agentDirs.status).toBe('pass');
+    expect(agentDirs.detail).toBe(
+      `1/1 recorded homes complete @ ${releaseTag(VERSION)}; 1 excluded by skills.excludeAgents: ${hermes}`,
+    );
+    // Without the exclusion the same home is the incomplete one it always was.
+    expect(byName(skillsChannelResults(), 'skills: agent dirs').status).toBe('warn');
+  });
+
+  test('a shared home another detected agent still writes is not excluded', () => {
+    seedAgentSkills(isolatedHome, ['.agents', 'skills'], ['alpha']);
+    mkdirSync(join(isolatedHome, '.codex'), { recursive: true });
+    mkdirSync(join(isolatedHome, '.dsh'), { recursive: true });
+    seedSkillsRecord(process.env.GENIE_HOME as string, { agentDirs: [join(isolatedHome, '.agents', 'skills')] });
+
+    const results = checkSkillsChannel({
+      home: isolatedHome,
+      genieHome: process.env.GENIE_HOME as string,
+      excludeAgents: ['universal'],
+    });
+    const agentDirs = byName(results, 'skills: agent dirs');
+    expect(agentDirs.status).toBe('warn');
+    expect(agentDirs.detail).not.toContain('excluded');
+  });
+
   test('a record with nothing preserved emits no retirement check', () => {
     seedAgentSkills(isolatedHome, ['.claude', 'skills'], ['alpha', 'beta']);
     seedSkillsRecord(process.env.GENIE_HOME as string);
