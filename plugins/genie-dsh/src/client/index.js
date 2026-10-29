@@ -1,11 +1,12 @@
 // Genie's browser half: the wishes Genie granted that have ended, listed under Genie's row
-// in the wide sidebar with their outcome (a failed one names why on hover). Running wishes already show there as the team's
+// in the wide sidebar with their outcome (a local branch, no change, stopped, failed or lost;
+// a failed one names why on hover). Running wishes already show there as the team's
 // task threads (bots-dsh sidebar.js); an ended task leaves that list, so this row keeps the
 // latest ended wishes in reach. A row opens the wish's thread.
 import { createElement as h } from 'react';
 import { botChildren, chatSuggestions } from './core.js';
 import { registerSuggestions } from './suggestions.js';
-import { endedWishesOf, outcomeOf } from './wishes.js';
+import { endedWishesOf, markOf, outcomeOf } from './wishes.js';
 
 export function GenieWishes({ bot, roster, actions }) {
   if (bot?.kind !== 'genie') return null;
@@ -27,7 +28,7 @@ export function GenieWishes({ bot, roster, actions }) {
           title: `${wish.title} · ${outcome.full} · ${wish.branch}`,
           onClick: () => actions.openSession(wish.sessionId),
         },
-        h('span', { className: 'bt-thread-age', 'aria-hidden': true }, outcome.state === 'done' ? '✓' : '✕'),
+        h('span', { className: 'bt-thread-age', 'aria-hidden': true }, markOf(outcome)),
         h('span', { className: 'bt-thread-title' }, wish.title),
         h('span', { className: 'bt-thread-age' }, outcome.short),
       );

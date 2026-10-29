@@ -1,7 +1,7 @@
 {
   "name": "@automagik/genie-dsh",
-  "version": "0.1.4",
-  "description": "Genie for DeepSeek Harness: a Genie Bot on the Automagik Bot team that grants wishes, each one a thread working in its own git worktree",
+  "version": "0.2.0",
+  "description": "Genie for DeepSeek Harness: a Genie Bot on the Automagik Bot team that grants wishes, each one a thread working in its own copy of the project, from a fresh base",
   "keywords": ["dsh-plugin", "deepseek-harness", "dsh", "genie", "agents"],
   "homepage": "https://github.com/automagik-dev/genie/tree/dev/plugins/genie-dsh#readme",
   "bugs": {
