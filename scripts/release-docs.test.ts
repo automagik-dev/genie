@@ -1198,6 +1198,21 @@ describe('Group E release and documentation contracts', () => {
     expect(work).toContain('user-approved simplification invalidates superseded evidence and requires fresh review');
   });
 
+  test('a correction carries its type from diagnosis to verification', () => {
+    const report = read('skills/report/SKILL.md');
+    const fix = read('skills/fix/SKILL.md');
+    const verify = read('skills/verify/SKILL.md');
+    const review = read('skills/review/SKILL.md');
+
+    expect(report).toContain('Correction type: <root / containment / guard');
+    expect(report).toContain('is recommended only together with the follow-up that removes the root');
+    expect(fix).toContain('`correction=root` or `correction=containment`');
+    expect(fix).toContain('a gap closed by containment is never reported as a root fix');
+    expect(verify).toContain('| A cause is removed |');
+    expect(verify).toContain('which a containment also achieves');
+    expect(review).toContain('without naming the follow-up that removes the root, is a MEDIUM gap');
+  });
+
   test('fix owns repair budgets and callers carry its policy across handoffs', () => {
     const fix = read('skills/fix/SKILL.md');
     for (const contract of [
