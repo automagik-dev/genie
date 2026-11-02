@@ -1,5 +1,7 @@
 # Design: Genie v7 foundations — a repository-bound wish that starts from upstream and never overclaims
 
+> **Status (2026-11-02): SUPERSEDED by genie-v7-tasks.** The owner decided on 2026-11-02 that coding moves to Herdr, DSH is for work, and the orchestrator is the one entity in both. This design shipped as #3189 (`plugins/genie-dsh`, `wish/<slug>` branches in `--local` clones); genie-v7-tasks, the task contract for Herdr worktrees, replaces it. The fresh-fetched base and the push lockout carry over into that contract; the genie-dsh clone path is dropped. The design text below is unchanged. The review evidence at the end covers that text as reviewed on 2026-10-29; this note was added later and is not part of the reviewed content, so its digest no longer matches the file.
+
 | Field | Value |
 |-------|-------|
 | **Slug** | `genie-v7-foundations` |
