@@ -16,6 +16,7 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { convergeAuxiliaryTree } from '../genie-commands/auxiliary-trees.js';
 import {
   INSTALL_PAYLOAD_COMPAT_MEMBERS,
   INSTALL_PAYLOAD_MEMBERS,
@@ -162,6 +163,36 @@ describe('installer payload member contract', () => {
     expect(promote(fixture).outcome).toBe('committed');
     for (const name of INSTALL_PAYLOAD_COMPAT_MEMBERS) expect(readdirSync(join(fixture.bin, name))).toEqual([]);
     assertGeneration(fixture.bin, '2.0.0');
+  });
+
+  test('genie-rs rides plugins/ at mode 0755 through promotion and convergence, with the 8 members unchanged', () => {
+    // genie-v7-tasks T8: build-binary.sh stages plugins/genie-rs/bin/genie-rs at 0755 inside the
+    // frozen `plugins` member; promotion and the <GENIE_HOME>/plugins convergence must keep the bit,
+    // because that converged path is the one the TS front door resolves.
+    const fixture = makeFixture();
+    const staged = join(fixture.staging, 'plugins', 'genie-rs', 'bin', 'genie-rs');
+    mkdirSync(join(fixture.staging, 'plugins', 'genie-rs', 'bin'), { recursive: true, mode: 0o755 });
+    chmodSync(join(fixture.staging, 'plugins', 'genie-rs'), 0o755);
+    chmodSync(join(fixture.staging, 'plugins', 'genie-rs', 'bin'), 0o755);
+    writeFileSync(staged, '#!/bin/sh\necho genie-rs\n');
+    chmodSync(staged, 0o755); // the create mode is umask-filtered; the test needs exactly 0755
+    expect(readdirSync(fixture.staging).sort()).toEqual([...INSTALL_PAYLOAD_MEMBERS]);
+
+    expect(promote(fixture).outcome).toBe('committed');
+
+    const promoted = join(fixture.bin, 'plugins', 'genie-rs', 'bin', 'genie-rs');
+    expect(lstatSync(promoted).isFile()).toBe(true);
+    expect(lstatSync(promoted).mode & 0o777).toBe(0o755);
+    expect(readFileSync(promoted, 'utf8')).toBe('#!/bin/sh\necho genie-rs\n');
+    for (const name of INSTALL_PAYLOAD_MEMBERS) expect(existsSync(join(fixture.bin, name))).toBe(true);
+
+    const outcome = convergeAuxiliaryTree({
+      label: 'plugins',
+      source: join(fixture.bin, 'plugins'),
+      destination: join(fixture.home, 'plugins'),
+    });
+    expect(outcome.status).toBe('refreshed');
+    expect(lstatSync(join(fixture.home, 'plugins', 'genie-rs', 'bin', 'genie-rs')).mode & 0o777).toBe(0o755);
   });
 });
 
