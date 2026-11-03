@@ -1,0 +1,5 @@
+# Source: ~/workspace/repos/rth/rust-toolchain.toml (Unfold's toolchain). The release targets are
+# added where they are built (group 1c), so a plain checkout installs no cross target.
+[toolchain]
+channel = "1.94.0"
+components = ["rustfmt", "clippy"]

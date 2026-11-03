@@ -1,0 +1,13 @@
+# genie-part parity fixture: Unfold's part declarations, frozen and normalized.
+# Written by the re-pin step in crates/genie-part/README.md; never edit it by hand.
+unfold bench/staging/agentd-rc5.13.3/ws/crates/rth-tools
+source src/parts.rs sha256=a74c06184150197a2f52ab527bd0a60efb6ee62e8838ddc12c255608c4fdc044
+source src/authority.rs sha256=f44cf2286c6b07bf1892a1ff22c96a8dbb97e008c8a1cf94ff9827b23b8e93d2
+source src/profile.rs sha256=d505eb3a5355860de3510aa1443ddc33c62cff79b945fab6027a652002a532c4
+body sha256=725745962f91fa33e32c07a001eb0a9f3654ab759aaaddb3fdcebcb0c6c5ee00
+item src/parts.rs PartOutput #[derive(Debug,Clone,PartialEq,Eq)]pub struct PartOutput{pub text:String,pub is_error:bool}
+item src/parts.rs Part pub trait Part:Send+Sync{fn manifest(&self)->&PartManifest;fn digest(&self)->&str;fn schema(&self,tool:&str)->Option<(String,Value)>;fn asks(&self,tool:&str)->bool;fn call<'a>(&'a self,tool:&'a str,args:Map<String,Value>)->BoxFuture<'a,Result<PartOutput,String>>;}
+item src/authority.rs SCHEMA pub const SCHEMA:&str="rth-part/v1";
+item src/authority.rs PartTool #[derive(Debug,Clone,PartialEq,Eq,Serialize,Deserialize)]#[serde(deny_unknown_fields)]pub struct PartTool{pub name:String,pub effect:Effect,#[serde(default,skip_serializing_if="Option::is_none")]pub description:Option<String>}
+item src/authority.rs PartManifest #[derive(Debug,Clone,PartialEq,Eq,Serialize,Deserialize)]#[serde(deny_unknown_fields)]pub struct PartManifest{pub schema:String,pub id:String,pub version:String,pub title:String,pub tools:Vec<PartTool>}
+item src/profile.rs Effect #[derive(Debug,Clone,Copy,PartialEq,Eq,Serialize,Deserialize)]#[serde(rename_all="snake_case")]pub enum Effect{None,Reversible,Irreversible}

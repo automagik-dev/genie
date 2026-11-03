@@ -1,0 +1,16 @@
+[package]
+name = "genie-part"
+description = "Unfold's part contract (rth-tools), mirrored field for field"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+sha2.workspace = true
