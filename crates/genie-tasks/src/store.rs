@@ -454,6 +454,60 @@ impl Store {
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
+    /// The `v7_tasks` row of `task_key` in this project, if any.
+    pub fn task(&self, task_key: &str) -> Result<Option<TaskRow>, Error> {
+        Ok(self.tasks()?.into_iter().find(|t| t.task_key == task_key))
+    }
+
+    /// The latest `created` event whose worktree is `worktree`: the task a worktree belongs to.
+    pub fn created_in(&self, worktree: &str) -> Result<Option<StoredEvent>, Error> {
+        Ok(self.events()?.into_iter().rev().find(|e| e.event == TaskEvent::Created && e.worktree == worktree))
+    }
+
+    /// Tx 1 of `start`: reserve the next `gn-<seq>` in one short `BEGIN IMMEDIATE`, with no git or
+    /// network inside it. The sequence is past every reservation and every `gn-` task already
+    /// recorded (forge-sync may have seen one first), so an id is never reused.
+    pub fn reserve_gn(&self) -> Result<String, Error> {
+        let project = self.location.project.as_str();
+        let at = self.clock.now();
+        retry_busy(|| {
+            self.conn.execute_batch("BEGIN IMMEDIATE")?;
+            let body = || -> rusqlite::Result<String> {
+                let seq: i64 = self.conn.query_row(
+                    "SELECT 1 + max(coalesce((SELECT max(seq) FROM v7_task_ids WHERE project = ?1), 0), \
+                     coalesce((SELECT max(CAST(substr(task, 4) AS INTEGER)) FROM v7_tasks \
+                     WHERE project = ?1 AND task GLOB 'gn-[0-9]*'), 0))",
+                    [project],
+                    |r| r.get(0),
+                )?;
+                let task = format!("gn-{seq}");
+                self.conn.execute(
+                    "INSERT INTO v7_task_ids (project, seq, task, reserved_at) VALUES (?1, ?2, ?3, ?4)",
+                    params![project, seq, task, at],
+                )?;
+                Ok(task)
+            };
+            match body().and_then(|task| self.conn.execute_batch("COMMIT").map(|()| task)) {
+                Ok(task) => Ok(task),
+                Err(e) => {
+                    let _ = self.conn.execute_batch("ROLLBACK");
+                    Err(e.into())
+                }
+            }
+        })
+    }
+
+    /// A failed `start` marks its reservation abandoned: the gap stays, the id is never reused.
+    pub fn abandon_gn(&self, task: &str) -> Result<(), Error> {
+        retry_busy(|| {
+            self.conn.execute(
+                "UPDATE v7_task_ids SET abandoned = 1 WHERE project = ?1 AND task = ?2",
+                [self.location.project.as_str(), task],
+            )?;
+            Ok(())
+        })
+    }
+
     /// The transaction body: dedupe, apply, insert, upsert. The caller owns BEGIN/COMMIT.
     fn record_tx(&self, project: &str, key: &str, dedupe: &str, row: &EventRow) -> Result<Option<StoredEvent>, Error> {
         let seen: Option<i64> = self

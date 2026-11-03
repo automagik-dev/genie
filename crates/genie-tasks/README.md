@@ -2,8 +2,8 @@
 
 Genie's v7 task record, as a library: the pure state machine, its Rust-owned tables in the per-repo
 `.genie/genie.db`, and the machine-wide `<GENIE_HOME>/tasks.jsonl` export usagemeter reads. Licensed
-Apache-2.0. The `genie-rs` verbs over it (`forge-sync`, `export --rebuild`, `status`, `list`, `start`,
-`push`) arrive in later groups of the `genie-v7-tasks` wish.
+Apache-2.0. It also owns the `start` and `push` verbs (below); the `genie-rs` binary dispatches
+`forge-sync`, `export --rebuild`, `status`, `list`, `start` and `push` over it.
 
 ## State machine
 
@@ -65,3 +65,30 @@ descriptor. `export::rebuild(genie_home, projects)` takes the exclusive lock, on
 project's events, keeps every other project's rows, and replaces the file by temp + fsync + rename. An
 event committed before that read but appended after the rename appears twice; readers dedupe on
 `dedupe_key`. The locks are `std::fs::File::lock_shared` / `File::lock`; no crate.
+
+## Start and push
+
+`start(repo, genie_home, opts, notes)` never defaults to the current directory. Before any fetch it
+refuses (exit 2, nothing written) an id whose task is `opened` or `merged`, a shared config with
+`core.bare = true` or `core.worktree`, and a request with no title to name the branch (an id falls back
+to its recorded title). The base is a local `dev`, else `origin/HEAD`'s branch, as
+`src/lib/v5/base-state.ts` resolves it, and it is always fetched:
+
+1. `git fetch --no-tags --no-write-fetch-head --refmap= origin +refs/heads/<base>:refs/genie/start/<secs>-<pid>-<n>`,
+   peeled, then deleted (one retry; a leftover older than 10 minutes is swept by the next start). A failed
+   fetch exits 1 and never falls back to a local ref.
+2. An id-less task reserves `gn-<seq>` in one short `BEGIN IMMEDIATE` (`Store::reserve_gn`).
+3. `git worktree add --no-track -b <type>/<id>-<slug> <repo>.worktrees/<id>-<slug> <base sha>`.
+4. `extensions.worktreeConfig=true` once per repository (one line on `notes`), then per worktree
+   `remote.origin.pushurl = genie-no-push://use-genie-rs-push` and `genie.base = <base>`.
+5. The `created` event, `commit` = the base sha.
+
+A failure after 2 abandons the reservation (the gap stays); after 3 it also removes the worktree and
+branch; neither writes an event. A git failure that names another start's work in flight (a
+`refs/genie/start/` ref, a half-written `.git/worktrees/<name>/commondir`) is retried a few times, which
+is what lets 32 starts run at once.
+
+`push(dir, genie_home, branch)` finds the task by the `created` event whose worktree contains `dir`, and
+pushes `HEAD:refs/heads/<recorded branch>` to the main checkout's `git remote get-url --push origin`,
+passed as argv. It refuses (exit 2) a requested or checked-out branch that is not the recorded one, or
+is `dev`, `main`, `master` or the recorded base.
