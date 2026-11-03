@@ -115,6 +115,9 @@ genie task export                     # Emit the complete DB state as JSON
 genie task export --write             # Write .genie/roadmap.json (diverged-sync resolution: keep local board)
 genie task import [--replace]         # Restore genie.db from .genie/roadmap.json (resolution: take snapshot)
 genie task sync                       # Three-way reconcile genie.db <-> roadmap.json (run by git hooks on pull/commit); when both sides moved but only card timelines differ, events are unioned by identity and republished (`merged`) — the card conversation is global state
+genie task forge-sync                 # genie-rs forge-sync: record opened/merged/closed PRs/MRs via gh/glab, one pass (tail passed through untouched)
+genie task v7-status <id>             # genie-rs status: one v7 task, its lane and events (GENIE_RS_BIN → <GENIE_HOME>/plugins/genie-rs/bin → target/release)
+genie task v7-list                    # genie-rs list: this repository's v7 tasks with their lanes
 ```
 
 `--agent` names a roster agent (`claude|codex|pi|hermes|prime`) and requires `--why`;

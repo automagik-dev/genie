@@ -2213,3 +2213,70 @@ describe('a stale orchestration.mode from the retired Orca mode', () => {
     },
   );
 });
+
+// T6 (genie-v7-tasks 1b): the genie-rs pass-through against a stub GENIE_RS_BIN that echoes its
+// argv one token per line and exits with GENIE_RS_STUB_EXIT, so it runs on both CI legs without
+// cargo and never skips (review MEDIUM-1). Group 2 reuses `writeGenieRsStub` for start and push.
+function writeGenieRsStub(path: string): string {
+  writeFileSync(path, `#!/bin/sh\nfor a in "$@"; do printf '%s\\n' "$a"; done\nexit "\${GENIE_RS_STUB_EXIT:-0}"\n`, {
+    mode: 0o755,
+  });
+  return path;
+}
+
+function echoed(stdout: string): string[] {
+  return stdout.split('\n').filter((line) => line !== '');
+}
+
+describe('genie-rs pass-through (T6)', () => {
+  for (const code of [0, 1, 2]) {
+    test(`forge-sync runs genie-rs with --project and --json intact and returns its exit ${code}`, async () => {
+      const stub = writeGenieRsStub(join(repo, 'genie-rs-stub'));
+      const r = await cliEnv(
+        repo,
+        { GENIE_RS_BIN: stub, GENIE_RS_STUB_EXIT: String(code) },
+        'forge-sync',
+        '--project',
+        repo,
+        '--json',
+      );
+      expect(r.code).toBe(code);
+      expect(echoed(r.stdout)).toEqual(['forge-sync', '--project', repo, '--json']);
+    });
+  }
+
+  test('v7-status and v7-list hand their tails to genie-rs status and list', async () => {
+    const stub = writeGenieRsStub(join(repo, 'genie-rs-stub'));
+    const status = await cliEnv(repo, { GENIE_RS_BIN: stub, GENIE_RS_STUB_EXIT: '2' }, 'v7-status', 'gh-11', '--json');
+    expect(status.code).toBe(2);
+    expect(echoed(status.stdout)).toEqual(['status', 'gh-11', '--json']);
+    const list = await cliEnv(repo, { GENIE_RS_BIN: stub }, 'v7-list', '--project', repo, '--json');
+    expect(list.code).toBe(0);
+    expect(echoed(list.stdout)).toEqual(['list', '--project', repo, '--json']);
+  });
+
+  test('with no binary it exits 1 and names the fix', async () => {
+    const missing = join(repo, 'no-such-genie-rs');
+    const r = await cliEnv(repo, { GENIE_RS_BIN: missing }, 'forge-sync', '--json');
+    expect(r.code).toBe(1);
+    expect(r.stdout).toBe('');
+    const lines = r.stderr.trim().split('\n');
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain(`GENIE_RS_BIN=${missing} does not exist`);
+    expect(lines[0]).toContain("run 'genie update'");
+    expect(lines[0]).toContain("'cargo build --release -p genie-rs'");
+  });
+
+  test("the installed payload's plugins/genie-rs/bin/genie-rs is used when GENIE_RS_BIN is unset", async () => {
+    const home = mkdtempSync(join(tmpdir(), 'genie-rs-home-'));
+    try {
+      await mkdir(join(home, 'plugins', 'genie-rs', 'bin'), { recursive: true });
+      writeGenieRsStub(join(home, 'plugins', 'genie-rs', 'bin', 'genie-rs'));
+      const r = await cliEnv(repo, { GENIE_RS_BIN: '', GENIE_HOME: home, GENIE_RS_STUB_EXIT: '1' }, 'v7-list');
+      expect(r.code).toBe(1);
+      expect(echoed(r.stdout)).toEqual(['list']);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+});

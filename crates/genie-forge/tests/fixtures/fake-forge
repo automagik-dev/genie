@@ -1,0 +1,36 @@
+#!/bin/sh
+# The fake gh and fake glab of the genie-forge and genie-rs tests, copied under both names into a
+# per-test directory that also holds its canned replies (parallel tests share one environment, so
+# the directory, not a variable, carries them). Shell builtins only: it runs with a PATH that holds
+# nothing but that directory.
+#   list.json             the PR/MR list reply
+#   commits-<number>.json one PR/MR's commits reply (absent: an empty list)
+#   logged-out            present: `auth status` fails
+#   calls.log             one line per call, appended
+dir=${0%/*}
+printf '%s\n' "$*" >>"$dir/calls.log"
+case $1 in
+auth)
+  if [ -f "$dir/logged-out" ]; then exit 1; fi
+  exit 0
+  ;;
+api) ;;
+*)
+  printf 'fake forge: unsupported command %s\n' "$1" >&2
+  exit 2
+  ;;
+esac
+case $2 in
+*/commits*)
+  n=${2%/commits*}
+  file=$dir/commits-${n##*/}.json
+  ;;
+*) file=$dir/list.json ;;
+esac
+if [ ! -f "$file" ]; then
+  printf '[]\n'
+  exit 0
+fi
+while IFS= read -r line || [ -n "$line" ]; do
+  printf '%s\n' "$line"
+done <"$file"

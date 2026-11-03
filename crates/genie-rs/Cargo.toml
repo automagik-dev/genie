@@ -1,0 +1,17 @@
+[package]
+name = "genie-rs"
+description = "Genie's Rust front door: forge-sync, export --rebuild, status and list over the v7 task record"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+genie-forge.workspace = true
+genie-tasks.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+rusqlite.workspace = true
