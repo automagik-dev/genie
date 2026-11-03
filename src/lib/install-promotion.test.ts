@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
+import { spawnSync } from 'node:child_process';
 import {
   chmodSync,
   existsSync,
@@ -9,6 +10,7 @@ import {
   readFileSync,
   readdirSync,
   readlinkSync,
+  realpathSync,
   renameSync,
   rmSync,
   symlinkSync,
@@ -899,5 +901,163 @@ describe('installer promotion transaction', () => {
     } finally {
       closeInstallStagingDirectory(guard);
     }
+  });
+});
+
+// Bun 1.4 caches process.cwd() lazily and does not see the libc fchdir that binds the payload copy to
+// the held stage, so its cached cwd could stay inside the stage after the kernel cwd was restored
+// (#3194). Each case runs admission in a FRESH child process: the runner's own cwd cache is never
+// touched (no afterEach(process.chdir) papering over a leak), the child's cache starts empty, and
+// the child never reads process.cwd() before admission. process.execPath keeps the child on the
+// same Bun that runs this file, so the 1.3.x and 1.4.x legs each prove their own runtime.
+const ADMISSION_CHILD = `
+const { admitExternalInstallStaging, closeInstallStagingDirectory, removeInstallStagingDirectory } = await import(process.env.INSTALL_PROMOTION_MODULE);
+import { fstatSync, lstatSync, readdirSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { join } from 'node:path';
+const [mode, home, external, randomId, extra1, extra2] = process.argv.slice(2);
+const stage = join(home, 'bin', '.install-staging-' + randomId);
+const identity = (s) => s.dev + ':' + s.ino;
+const cwdNow = () => { try { return process.cwd(); } catch (error) { return 'THROW:' + error.code; } };
+const options = { genieHome: home, externalStagingRoot: external, expectedVersion: '2.0.0', randomId: () => randomId, verifyVersion: () => true };
+const out = { mode };
+if (mode === 'cwd-renamed') renameSync(extra1, extra2);
+if (mode === 'cwd-deleted') rmSync(extra1, { recursive: true });
+if (mode === 'swap') {
+  options.afterPayloadMemberCopied = (member) => {
+    if (member !== 'VERSION') return;
+    out.inWindowCwd = cwdNow();
+    renameSync(stage, extra1);
+    symlinkSync(extra2, stage);
+  };
+  try { admitExternalInstallStaging(options); out.admitted = true; } catch (error) { out.error = error.name + ': ' + error.message; }
+  out.cwd = cwdNow();
+  console.log(JSON.stringify(out));
+  process.exit(0);
+}
+const guard = admitExternalInstallStaging(options);
+out.cwd = cwdNow();
+out.dotIdentity = identity(statSync('.', { bigint: true }));
+if (mode === 'landing') {
+  out.stageBinding = identity(fstatSync(guard.directoryFd, { bigint: true })) === identity(lstatSync(guard.stagingRoot, { bigint: true }));
+  out.stageMembers = readdirSync(guard.stagingRoot).sort();
+  writeFileSync(join(process.cwd(), 'caller-sentinel'), 'caller\\n');
+  out.stageMembersAfterCallerWrite = readdirSync(guard.stagingRoot).sort();
+}
+if (mode === 'spawn') {
+  closeInstallStagingDirectory(guard);
+  rmSync(stage, { recursive: true });
+  const child = spawnSync(process.execPath, ['--version'], { cwd: process.cwd(), encoding: 'utf8' });
+  out.spawn = child.error ? String(child.error) : child.status;
+} else {
+  removeInstallStagingDirectory(guard);
+  closeInstallStagingDirectory(guard);
+}
+console.log(JSON.stringify(out));
+`;
+
+interface AdmissionChildFixture {
+  root: string;
+  home: string;
+  external: string;
+  cwd: string;
+  child: string;
+}
+
+function admissionChildFixture(): AdmissionChildFixture {
+  const root = realpathSync(makeRoot());
+  const home = join(root, 'home');
+  const external = join(root, 'external');
+  const cwd = join(root, 'caller-cwd');
+  mkdirSync(join(home, 'bin'), { recursive: true, mode: 0o700 });
+  mkdirSync(external, { mode: 0o700 });
+  mkdirSync(cwd, { mode: 0o700 });
+  writePayload(external, '2.0.0');
+  const child = join(root, 'admission-child.mjs');
+  writeFileSync(child, ADMISSION_CHILD);
+  return { root, home, external, cwd, child };
+}
+
+function runAdmissionChild(
+  fixture: AdmissionChildFixture,
+  mode: string,
+  randomId: string,
+  extra: string[] = [],
+): Record<string, unknown> {
+  const result = spawnSync(
+    process.execPath,
+    [fixture.child, mode, fixture.home, fixture.external, randomId, ...extra],
+    {
+      cwd: fixture.cwd,
+      encoding: 'utf8',
+      env: { ...process.env, INSTALL_PROMOTION_MODULE: join(import.meta.dir, 'install-promotion.ts') },
+    },
+  );
+  if (result.status !== 0) throw new Error(`admission child failed (${result.status}): ${result.stderr}`);
+  return JSON.parse(result.stdout.trim().split('\n').at(-1) ?? '');
+}
+
+describe('admission leaves the runtime cwd where the caller had it (Bun 1.3 and 1.4)', () => {
+  test('(a) process.cwd() after admission is the caller cwd, read first in a fresh process', () => {
+    const fixture = admissionChildFixture();
+    const out = runAdmissionChild(fixture, 'cwd', 'a1a1a1a1-a1a1-4a1a-8a1a-a1a1a1a1a1a1');
+    expect(out.cwd).toBe(fixture.cwd);
+  });
+
+  test('(b) members land under the held stage and a process.cwd()-derived write lands in the caller cwd', () => {
+    const fixture = admissionChildFixture();
+    const out = runAdmissionChild(fixture, 'landing', 'b2b2b2b2-b2b2-4b2b-8b2b-b2b2b2b2b2b2');
+    const members = [...INSTALL_PAYLOAD_MEMBERS].sort();
+    expect(out.stageBinding).toBe(true);
+    expect(out.stageMembers).toEqual(members);
+    expect(out.stageMembersAfterCallerWrite).toEqual(members);
+    expect(readdirSync(fixture.cwd)).toEqual(['caller-sentinel']);
+  });
+
+  test('(c) a stage swapped mid-copy for a symlink never receives a write; later members follow the held fd', () => {
+    const fixture = admissionChildFixture();
+    const randomId = 'c3c3c3c3-c3c3-4c3c-8c3c-c3c3c3c3c3c3';
+    const quarantined = join(fixture.home, 'bin', '.quarantined-held-stage');
+    const victim = join(fixture.root, 'victim');
+    mkdirSync(victim, { mode: 0o700 });
+    writeFileSync(join(victim, 'sentinel'), 'safe\n');
+    const out = runAdmissionChild(fixture, 'swap', randomId, [quarantined, victim]);
+    expect(out.admitted).toBeUndefined();
+    expect(String(out.error)).toStartWith('InstallPromotionError: ');
+    expect(readdirSync(victim)).toEqual(['sentinel']);
+    expect(readFileSync(join(victim, 'sentinel'), 'utf8')).toBe('safe\n');
+    expect(readdirSync(quarantined).sort()).toEqual([...INSTALL_PAYLOAD_MEMBERS].sort());
+    expect(readFileSync(join(quarantined, 'plugins', 'generation.txt'), 'utf8')).toBe('2.0.0:plugins\n');
+    expect(readdirSync(fixture.cwd)).toEqual([]);
+    expect(out.cwd).toBe(fixture.cwd);
+  });
+
+  test('(d) admission run from a renamed caller cwd succeeds and stays in that directory', () => {
+    const fixture = admissionChildFixture();
+    const renamed = join(fixture.root, 'caller-cwd-renamed');
+    const out = runAdmissionChild(fixture, 'cwd-renamed', 'd4d4d4d4-d4d4-4d4d-8d4d-d4d4d4d4d4d4', [
+      fixture.cwd,
+      renamed,
+    ]);
+    // Bun 1.3.11 keeps reporting the path it last saw; either name is the caller's directory, never the stage.
+    expect([fixture.cwd, renamed]).toContain(String(out.cwd));
+    expect(out.dotIdentity).toBe(`${lstatSync(renamed).dev}:${lstatSync(renamed).ino}`);
+  });
+
+  test('(d) admission run from a deleted caller cwd succeeds without re-resolving a path', () => {
+    const fixture = admissionChildFixture();
+    const before = lstatSync(fixture.cwd);
+    const out = runAdmissionChild(fixture, 'cwd-deleted', 'd5d5d5d5-d5d5-4d5d-8d5d-d5d5d5d5d5d5', [fixture.cwd]);
+    // The kernel cwd, proven by the descriptor, is the authority. process.cwd() is not asserted: a
+    // directory with no name left cannot be re-entered, so Bun 1.4 keeps whatever its view last held
+    // (1.3.11 keeps the deleted path). This guards against a path-based restore that would throw.
+    expect(out.dotIdentity).toBe(`${before.dev}:${before.ino}`);
+  });
+
+  test('(e) a spawn using process.cwd() after the stage is removed succeeds', () => {
+    const fixture = admissionChildFixture();
+    const out = runAdmissionChild(fixture, 'spawn', 'e5e5e5e5-e5e5-4e5e-8e5e-e5e5e5e5e5e5');
+    expect(out.spawn).toBe(0);
+    expect(out.cwd).toBe(fixture.cwd);
   });
 });
