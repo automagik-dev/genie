@@ -48,7 +48,22 @@ export function catalogGenieCommits(
   history: readonly string[],
   retirementHistory: readonly string[],
   provenance?: string,
+  trustedGenieRoot?: string,
 ): Set<string> {
+  if (trustedGenieRoot !== undefined && !/^[0-9a-f]{40}$/.test(trustedGenieRoot)) {
+    throw new Error('--trusted-genie-root requires one full lowercase commit SHA');
+  }
+  if (trustedGenieRoot !== undefined) {
+    let resolved: string;
+    try {
+      resolved = git('rev-parse', '--verify', `${trustedGenieRoot}^{commit}`).trim();
+    } catch {
+      throw new Error('--trusted-genie-root must resolve to an available local commit');
+    }
+    if (resolved !== trustedGenieRoot) {
+      throw new Error('--trusted-genie-root must identify an exact local commit, not a tag object');
+    }
+  }
   const imports = new Map(mikroImports(git, history).map((entry) => [entry.commit, entry]));
   const graph = historyGraph(git, history);
   const sourceTips = new Set<string>();
@@ -57,120 +72,113 @@ export function catalogGenieCommits(
     .trim()
     .split('\n')
     .filter(Boolean);
-  const owned = new Set<string>();
-  // The collector runs in a Genie checkout. Independent refs cannot authenticate
-  // proof blobs before their own provenance has been established.
-  visitHistory(graph, imports, [git('rev-parse', 'HEAD^{commit}').trim()], owned);
-
-  const headSource = catalogHeadSourceCommits(graph, imports, owned);
-  const tainted = sourceDescendants(graph, imports, headSource);
-  const proofOwned = new Set([...owned].filter((commit) => !tainted.has(commit)));
+  const head = historyClosure(graph, imports, [git('rev-parse', 'HEAD^{commit}').trim()]);
+  if (trustedGenieRoot !== undefined && !head.has(trustedGenieRoot)) {
+    throw new Error('--trusted-genie-root must belong to validated-cut HEAD ancestry');
+  }
+  const anchor = historyClosure(graph, imports, trustedGenieRoot === undefined ? [] : [trustedGenieRoot]);
   const refs = referenceTips(git, graph);
+  // Parse ALL negative roles before authentication; document Genie claims cannot authenticate themselves.
   const declared =
     provenance === undefined
       ? { genieRoots: [], sourceRefs: new Set<string>() }
-      : provenReferences(git, provenance, proofOwned, refs);
-  // An independently authenticated archive can explain shared source ancestry;
-  // neither that archive nor an ordinary mixed HEAD can authenticate its own proof.
-  const provenGenie = new Set<string>();
-  visitHistory(graph, imports, [...declared.genieRoots], provenGenie);
-  for (const commit of headSource) {
-    if (owned.has(commit) && !provenGenie.has(commit)) {
-      throw new Error(
-        `ambiguous source-crossing HEAD history at ${commit}; use validated imports or independent proof`,
-      );
+      : referenceProposals(git, provenance, refs, trustedGenieRoot === undefined ? head : anchor);
+  const sourceSeeds = [...sourceTips];
+  const sourceRefCommits = new Set<string>();
+  for (const [ref, commit] of refs) {
+    if (declared.sourceRefs.has(ref)) {
+      sourceSeeds.push(commit);
+      sourceRefCommits.add(commit);
     }
   }
-  // visitHistory consumes its stack; retain exact proof roots for the eligibility walk.
-  visitHistory(graph, imports, [...declared.genieRoots], owned);
-  const sourceSeeds = [...sourceTips];
+  const rawSource = historyClosure(graph, new Map(), sourceSeeds);
+  const bootstrapNegative = new Set([...rawSource].filter((commit) => !anchor.has(commit)));
+  const tainted = sourceDescendants(graph, imports, bootstrapNegative);
+  const authority = new Set(
+    [...head].filter((commit) => !tainted.has(commit) && (trustedGenieRoot === undefined || anchor.has(commit))),
+  );
+  if (provenance !== undefined && !authority.has(provenance.slice(0, 40))) {
+    throw new Error(
+      `reference provenance authority is not independently Genie-owned: ${provenance.slice(0, 40)}; supply an operator-reviewed --trusted-genie-root`,
+    );
+  }
+  // Authority is frozen. Exact independently authenticated positive roots grant history, never reauthentication.
+  const proven = historyClosure(graph, imports, declared.genieRoots);
+  const negative = new Set([...bootstrapNegative].filter((commit) => !proven.has(commit)));
+  if ([...head].some((commit) => negative.has(commit))) {
+    throw new Error(
+      'ambiguous source-crossing HEAD history; supply an operator-reviewed --trusted-genie-root or independent proof',
+    );
+  }
+  const known = new Set([...anchor, ...head, ...proven]);
+  let source = sourceConnectedHistory(graph, imports, sourceSeeds, known);
+  // A different shipped root may not retroactively authenticate an unknown source ref.
   for (const [ref, commit] of refs) {
-    if (declared.sourceRefs.has(ref)) sourceSeeds.push(commit);
+    if (
+      roots.includes(commit) &&
+      source.connected.has(commit) &&
+      !known.has(commit) &&
+      !sourceTips.has(commit) &&
+      !declared.sourceRefs.has(ref)
+    ) {
+      throw new Error(`ambiguous history reference ${ref} at ${commit}; supply commit-bound --ref-provenance`);
+    }
   }
   const retirementRoots = git('rev-list', '--no-walk', ...retirementHistory)
     .trim()
     .split('\n')
     .filter(Boolean);
-  let source =
-    sourceSeeds.length > 0
-      ? sourceConnectedHistory(graph, imports, sourceSeeds, owned)
-      : { connected: new Set<string>(), boundary: new Set<string>(), genieBoundary: new Set<string>() };
-  // Source-only and mixed roots cannot establish their own Genie side. Independently
-  // eligible shipped history can: a divergent shipped tag/branch need not be in HEAD.
-  // Keep this witness set separate from the later all-ref ownership walk, and never
-  // use it to authenticate proof blobs (which were already checked against HEAD).
-  const boundaryWitnesses = new Set(owned);
-  visitHistory(
-    graph,
-    imports,
-    retirementRoots.filter((root) => !source.connected.has(root) && !source.boundary.has(root)),
-    boundaryWitnesses,
-  );
-  if (sourceSeeds.length > 0) source = sourceConnectedHistory(graph, imports, sourceSeeds, boundaryWitnesses);
-  const sourceConnected = source.connected;
-  visitHistory(
-    graph,
-    imports,
-    roots.filter((root) => !sourceConnected.has(root) && !source.boundary.has(root)),
-    owned,
-  );
-
+  const eligible = new Set([...head, ...proven]);
+  // Each shipped root is checked against the SAME frozen negative/known sets: no mutual-root bootstrap.
+  for (const root of retirementRoots) {
+    if (sourceTips.has(root) || sourceRefCommits.has(root)) continue;
+    if (source.connected.has(root) && !known.has(root)) continue; // The all-ref gate below names the ambiguity.
+    const lineage = historyClosure(graph, imports, [root]);
+    if ([...lineage].some((commit) => negative.has(commit))) {
+      throw new Error(
+        `ambiguous shipped mixed history at ${root}; supply --trusted-genie-root or commit-bound --ref-provenance`,
+      );
+    }
+    for (const commit of lineage) eligible.add(commit);
+  }
+  const witnesses = new Set([...known, ...eligible]);
+  source = sourceConnectedHistory(graph, imports, sourceSeeds, witnesses);
   const rootSet = new Set(roots);
   const namedRoots = new Set<string>();
   for (const [ref, commit] of refs) {
     namedRoots.add(commit);
-    // An unshipped mixed branch grants no authority without proof. Waive ambiguity
-    // only when its non-source parents are independently Genie-owned; an unrelated
-    // foreign parent must not authenticate itself merely by merging known source.
     if (
       rootSet.has(commit) &&
-      !owned.has(commit) &&
+      !witnesses.has(commit) &&
       !sourceTips.has(commit) &&
       !declared.sourceRefs.has(ref) &&
-      !source.genieBoundary.has(commit)
+      (source.connected.has(commit) || (source.boundary.has(commit) && !source.genieBoundary.has(commit)))
     ) {
       throw new Error(`ambiguous history reference ${ref} at ${commit}; supply commit-bound --ref-provenance`);
     }
   }
   for (const root of roots) {
-    if (!owned.has(root) && !sourceTips.has(root) && !namedRoots.has(root)) {
+    if (
+      !witnesses.has(root) &&
+      !sourceTips.has(root) &&
+      !namedRoots.has(root) &&
+      (source.connected.has(root) || source.boundary.has(root))
+    ) {
       throw new Error(`ambiguous unnamed history root ${root}; cannot establish reference provenance`);
     }
   }
-  for (const root of retirementRoots) {
-    if (source.boundary.has(root) && !owned.has(root)) {
-      throw new Error(`ambiguous shipped mixed history at ${root}; supply commit-bound --ref-provenance`);
-    }
-  }
-  const eligibleRoots = retirementRoots.filter((root) => owned.has(root));
-  eligibleRoots.push(...declared.genieRoots);
-  // Ownership of an unmerged Genie ref does not mean its skills ever shipped.
-  // All-ref validation is complete; reuse its visited set for the eligible walk.
-  owned.clear();
-  visitHistory(graph, imports, eligibleRoots, owned);
-  return owned;
+  if ([...eligible].some((commit) => negative.has(commit))) throw new Error('ambiguous final retirement history');
+  return eligible;
 }
 
-/** Catalog bootstrap only: off-HEAD imports cannot disown legitimate current Genie history. */
-function catalogHeadSourceCommits(
+function historyClosure(
   graph: ReadonlyMap<string, readonly string[]>,
   imports: ReadonlyMap<string, MikroImport>,
-  headHistory: ReadonlySet<string>,
+  roots: readonly string[],
 ): Set<string> {
-  const sourceOnly = new Set<string>();
-  for (const imported of imports.values()) {
-    if (!headHistory.has(imported.commit)) continue;
-    const genie = new Set<string>();
-    const source = new Set<string>();
-    visitHistory(graph, imports, [imported.genieParent], genie);
-    visitHistory(graph, new Map(), [imported.split], source);
-    // Keep each import's evidence: a later import cannot reclassify an older
-    // source crossing as Genie merely by including it in its first-parent history.
-    for (const commit of source) {
-      if (!genie.has(commit)) sourceOnly.add(commit);
-    }
-  }
-  return sourceOnly;
+  const closure = new Set<string>();
+  visitHistory(graph, imports, [...roots], closure);
+  return closure;
 }
 
 /** A proof on source or its ordinary mixed descendants is not independent authority. */
@@ -284,8 +292,8 @@ function sourceConnectedHistory(
     const parents = graph.get(commit);
     if (!parents) throw new Error(`incomplete source ancestry at ${commit}`);
     connected.add(commit);
-    // A validated import joins source to Genie; never cross it back into Genie history.
-    if (!imports.has(commit)) ancestors.push(...parents);
+    // Source data remains raw ancestry: nested metadata cannot hide source commits.
+    ancestors.push(...parents);
   }
 
   // Process every parent before its children. Git's row order (and the order of
@@ -337,7 +345,7 @@ function sourceConnectedHistory(
   return { connected, boundary, genieBoundary };
 }
 
-function provenanceRecords(git: ReadGitHistory, selector: string, owned: ReadonlySet<string>): unknown[] {
+function provenanceRecords(git: ReadGitHistory, selector: string, candidate: ReadonlySet<string>): unknown[] {
   const match = /^([0-9a-f]{40}):(.+)$/.exec(selector);
   const commit = match?.[1];
   const path = match?.[2];
@@ -352,8 +360,9 @@ function provenanceRecords(git: ReadGitHistory, selector: string, owned: Readonl
   ) {
     throw new Error('reference provenance must select an exact commit and canonical non-Mikro root blob (SHA:path)');
   }
-  // Proof cannot bootstrap its own authority from a source commit or a nested foreign destination.
-  if (!owned.has(commit)) throw new Error(`reference provenance authority is not independently Genie-owned: ${commit}`);
+  // Preliminary reachability is necessary, not authentication: negative roles still constrain it below.
+  if (!candidate.has(commit))
+    throw new Error(`reference provenance authority is not independently Genie-owned: ${commit}`);
   const document: unknown = JSON.parse(git('show', selector));
   if (
     !document ||
@@ -368,16 +377,16 @@ function provenanceRecords(git: ReadGitHistory, selector: string, owned: Readonl
   return document.refs;
 }
 
-function provenReferences(
+function referenceProposals(
   git: ReadGitHistory,
   selector: string,
-  owned: ReadonlySet<string>,
   refs: ReadonlyMap<string, string>,
+  candidate: ReadonlySet<string>,
 ): { genieRoots: string[]; sourceRefs: Set<string> } {
   const genieRoots: string[] = [];
   const sourceRefs = new Set<string>();
   const seen = new Set<string>();
-  for (const value of provenanceRecords(git, selector, owned)) {
+  for (const value of provenanceRecords(git, selector, candidate)) {
     const entry = value as { ref?: unknown; commit?: unknown; owner?: unknown } | null;
     if (
       !entry ||
