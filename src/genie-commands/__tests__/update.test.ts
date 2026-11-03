@@ -2436,9 +2436,9 @@ describe('manual post-update convergence (2026-07-11 cascade regression)', () =>
             if (!('skipped' in borrowed)) borrowed.release();
             expect(existsSync(lease.path)).toBe(true);
           } finally {
-            if (previousPath === undefined) process.env.GENIE_LIFECYCLE_LEASE_PATH = undefined;
+            if (previousPath === undefined) Reflect.deleteProperty(process.env, 'GENIE_LIFECYCLE_LEASE_PATH');
             else process.env.GENIE_LIFECYCLE_LEASE_PATH = previousPath;
-            if (previousOwner === undefined) process.env.GENIE_LIFECYCLE_LEASE_OWNER = undefined;
+            if (previousOwner === undefined) Reflect.deleteProperty(process.env, 'GENIE_LIFECYCLE_LEASE_OWNER');
             else process.env.GENIE_LIFECYCLE_LEASE_OWNER = previousOwner;
           }
         },

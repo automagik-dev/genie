@@ -321,7 +321,7 @@ describe('runWorkflowsChannelConvergence — the Claude config dir', () => {
       expect(readSkillsInstallRecord(genieHome)?.workflows?.dir).toBe(join(configDir, 'workflows'));
       expect(lines.at(-1)).toContain(join(configDir, 'workflows'));
     } finally {
-      if (previous === undefined) process.env.CLAUDE_CONFIG_DIR = undefined;
+      if (previous === undefined) Reflect.deleteProperty(process.env, 'CLAUDE_CONFIG_DIR');
       else process.env.CLAUDE_CONFIG_DIR = previous;
     }
   });
