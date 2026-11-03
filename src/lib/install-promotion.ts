@@ -15,6 +15,7 @@ import {
   readFileSync,
   readSync,
   readdirSync,
+  statSync,
   writeFileSync,
 } from 'node:fs';
 import { basename, dirname, join, relative, resolve, sep } from 'node:path';
@@ -148,6 +149,8 @@ export interface AdmitExternalInstallStagingOptions extends CreateInstallStaging
   expectedVersion: string;
   verifyVersion?: (context: InstallVersionVerificationContext) => boolean | undefined;
   dependencies?: InstallPromotionDependencies;
+  /** Deterministic race seam inside the descriptor-bound copy, after each payload member lands. Production callers should omit it. */
+  afterPayloadMemberCopied?: (member: InstallPayloadMember) => void;
 }
 
 interface HeldInstallStagingDirectory extends InstallStagingDirectoryGuard {
@@ -715,11 +718,17 @@ export function verifyAdmittedInstallStagingPayload(guardValue: InstallStagingDi
   }
 }
 
-function copyPayloadIntoHeldStaging(externalStagingRoot: string, guard: InstallStagingDirectoryGuard): void {
+function copyPayloadIntoHeldStaging(
+  externalStagingRoot: string,
+  guard: InstallStagingDirectoryGuard,
+  afterPayloadMemberCopied?: (member: InstallPayloadMember) => void,
+): void {
   const cwdFd = openSync('.', constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
   let entered = false;
   let operationError: unknown;
   let restoreFailed = false;
+  let resyncError: unknown;
+  let resyncFailed = false;
   try {
     if (installStagingAtApi().changeDirectory(guard.directoryFd) !== 0) {
       throw new InstallPromotionError('could not bind payload copy to the held install staging directory');
@@ -734,6 +743,7 @@ function copyPayloadIntoHeldStaging(externalStagingRoot: string, guard: InstallS
         dereference: false,
         verbatimSymlinks: true,
       });
+      afterPayloadMemberCopied?.(name);
     }
     const binaryFd = openSync('genie', constants.O_RDONLY | constants.O_NOFOLLOW);
     try {
@@ -758,12 +768,39 @@ function copyPayloadIntoHeldStaging(externalStagingRoot: string, guard: InstallS
   } finally {
     if (entered && installStagingAtApi().changeDirectory(cwdFd) !== 0) {
       restoreFailed = true;
+    } else if (entered) {
+      // The libc fchdir is invisible to the runtime: Bun 1.4 caches process.cwd() lazily and kept
+      // reporting the held stage after the restore (#3194), so every later spawn with an explicit
+      // cwd: process.cwd() hit ENOENT once the stage moved. A runtime-level chdir('.') resyncs that
+      // view. '.' resolves against the kernel cwd the descriptor restore just set, never a saved
+      // path string, so a renamed caller directory cannot be re-resolved into a planted one.
+      try {
+        process.chdir('.');
+      } catch (error) {
+        // A deleted caller cwd has no name for getcwd to report, so the runtime view cannot resync
+        // (Bun 1.4 throws ENOENT, 1.3.11 an unknown error). The kernel cwd is still the caller's,
+        // and the identity check below proves it; refusing here would fail an update 1.3 completes.
+        resyncError = error;
+      }
+      try {
+        const runtime = statSync('.', { bigint: true });
+        const held = fstatSync(cwdFd, { bigint: true });
+        resyncFailed = runtime.dev !== held.dev || runtime.ino !== held.ino;
+      } catch (error) {
+        resyncFailed = true;
+        resyncError = error;
+      }
     }
     closeSync(cwdFd);
   }
   if (restoreFailed) {
     throw new InstallPromotionError('could not restore the working directory after descriptor-bound staging', {
       cause: operationError,
+    });
+  }
+  if (resyncFailed) {
+    throw new InstallPromotionError('the runtime working directory does not match the restored descriptor', {
+      cause: operationError ?? resyncError,
     });
   }
   if (operationError !== undefined) throw operationError;
@@ -824,7 +861,7 @@ export function admitExternalInstallStaging(options: AdmitExternalInstallStaging
   });
   try {
     options.afterCreated?.();
-    copyPayloadIntoHeldStaging(externalStagingRoot, guard);
+    copyPayloadIntoHeldStaging(externalStagingRoot, guard, options.afterPayloadMemberCopied);
     verifyInstallStagingDirectory(guard);
     const externalAfter = verifyPayloadLayout(externalStagingRoot, dependencies);
     assertSamePayloadGeneration(externalBefore, externalAfter);
