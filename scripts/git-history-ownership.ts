@@ -91,7 +91,9 @@ export function catalogGenieCommits(
       sourceRefCommits.add(commit);
     }
   }
-  const rawSource = historyClosure(graph, new Map(), sourceSeeds);
+  // Raw source ancestry plus every source-only descendant: a descendant is trusted only inside the
+  // anchor or an exact proof, so an ordinary HEAD merge can never extend source trust.
+  const rawSource = sourceConnectedHistory(graph, imports, sourceSeeds, anchor).connected;
   const bootstrapNegative = new Set([...rawSource].filter((commit) => !anchor.has(commit)));
   const tainted = sourceDescendants(graph, imports, bootstrapNegative);
   const authority = new Set(
