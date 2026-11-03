@@ -597,6 +597,95 @@ describe('catalog CLI over isolated Git histories', () => {
     expect(refused.stderr).toContain('ambiguous shipped mixed history');
   });
 
+  test.each([
+    'refs/tags/shipped-side',
+    'refs/archive/shipped-side',
+    'refs/remotes/origin/dev',
+    'refs/remotes/origin/main',
+  ])('a divergent shipped lineage witnesses an unshipped mixed branch without changing the catalog (%s)', (ref) => {
+    const repo = seedOrigin();
+    const base = git(repo, 'rev-parse', 'HEAD').trim();
+    const side = sideRef(repo, base, ref, 'shipped-side', true);
+    const { split } = importMikro(repo, false);
+    const before = outputCatalog(repo);
+    expect(before.names).toContain(legacySkillDigest('shipped-side'));
+    skill(repo, 'skills/mixed-only', 'Unshipped mixed branch identity.');
+    git(repo, 'add', '-A');
+    const tree = git(repo, 'write-tree').trim();
+    const merge = git(
+      repo,
+      'commit-tree',
+      tree,
+      '-p',
+      side,
+      '-p',
+      split,
+      '-m',
+      'mix divergent shipped and source',
+    ).trim();
+    const descendant = git(repo, 'commit-tree', tree, '-p', merge, '-m', 'continue mixed branch').trim();
+    git(repo, 'update-ref', 'refs/remotes/origin/mixed-shipped-side', merge);
+    git(repo, 'update-ref', 'refs/remotes/origin/mixed-shipped-descendant', descendant);
+    expect(outputCatalog(repo)).toEqual(before);
+  });
+
+  test.each([
+    'refs/tags/shared-source-side',
+    'refs/archive/shared-source-side',
+    'refs/remotes/origin/dev',
+    'refs/remotes/origin/main',
+  ])('a source-connected selected root cannot bootstrap a boundary witness (%s)', (ref) => {
+    const repo = seedOrigin();
+    const base = git(repo, 'rev-parse', 'HEAD').trim();
+    const side = sideRef(repo, base, ref, 'shared-source-side', true);
+    const { split, provenance } = importMikro(repo, true);
+    if (provenance === undefined) throw new Error('shared source fixture requires archive provenance');
+    const before = runCheck(repo, '--ref-provenance', provenance);
+    expect(before.code).toBe(1);
+    expect(before.stdout).toBe('');
+    expect(before.stderr).toContain(`ambiguous history reference ${ref}`);
+    const merge = git(
+      repo,
+      'commit-tree',
+      `${side}^{tree}`,
+      '-p',
+      side,
+      '-p',
+      split,
+      '-m',
+      'shared source merge',
+    ).trim();
+    git(repo, 'update-ref', 'refs/remotes/origin/shared-source-mixed', merge);
+    const after = runCheck(repo, '--ref-provenance', provenance);
+    expect(after.code).toBe(1);
+    expect(after.stdout).toBe('');
+    expect(after.stderr).toContain('ambiguous history reference');
+  });
+
+  test('an arbitrary unshipped divergent lineage cannot witness a mixed boundary', () => {
+    const repo = seedOrigin();
+    const base = git(repo, 'rev-parse', 'HEAD').trim();
+    const side = sideRef(repo, base, 'refs/remotes/origin/unshipped-side', 'unshipped-side', true);
+    const { split } = importMikro(repo, false);
+    expectGenieHistory(outputCatalog(repo));
+    const merge = git(
+      repo,
+      'commit-tree',
+      `${side}^{tree}`,
+      '-p',
+      side,
+      '-p',
+      split,
+      '-m',
+      'unproved mixed branch',
+    ).trim();
+    git(repo, 'update-ref', 'refs/remotes/origin/unproved-mixed', merge);
+    const refused = runCheck(repo);
+    expect(refused.code).toBe(1);
+    expect(refused.stdout).toBe('');
+    expect(refused.stderr).toContain('ambiguous history reference refs/remotes/origin/unproved-mixed');
+  });
+
   test.each([false, true])('reconvergent source closure is independent of sibling row order (swap: %s)', (swap) => {
     const repo = seedOrigin();
     const { split } = importMikro(repo, false);

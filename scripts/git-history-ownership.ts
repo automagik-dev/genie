@@ -73,10 +73,26 @@ export function catalogGenieCommits(
   for (const [ref, commit] of refs) {
     if (declared.sourceRefs.has(ref)) sourceSeeds.push(commit);
   }
-  const source =
+  const retirementRoots = git('rev-list', '--no-walk', ...retirementHistory)
+    .trim()
+    .split('\n')
+    .filter(Boolean);
+  let source =
     sourceSeeds.length > 0
       ? sourceConnectedHistory(graph, imports, sourceSeeds, owned)
       : { connected: new Set<string>(), boundary: new Set<string>(), genieBoundary: new Set<string>() };
+  // Source-only and mixed roots cannot establish their own Genie side. Independently
+  // eligible shipped history can: a divergent shipped tag/branch need not be in HEAD.
+  // Keep this witness set separate from the later all-ref ownership walk, and never
+  // use it to authenticate proof blobs (which were already checked against HEAD).
+  const boundaryWitnesses = new Set(owned);
+  visitHistory(
+    graph,
+    imports,
+    retirementRoots.filter((root) => !source.connected.has(root) && !source.boundary.has(root)),
+    boundaryWitnesses,
+  );
+  if (sourceSeeds.length > 0) source = sourceConnectedHistory(graph, imports, sourceSeeds, boundaryWitnesses);
   const sourceConnected = source.connected;
   visitHistory(
     graph,
@@ -107,10 +123,6 @@ export function catalogGenieCommits(
       throw new Error(`ambiguous unnamed history root ${root}; cannot establish reference provenance`);
     }
   }
-  const retirementRoots = git('rev-list', '--no-walk', ...retirementHistory)
-    .trim()
-    .split('\n')
-    .filter(Boolean);
   for (const root of retirementRoots) {
     if (source.boundary.has(root) && !owned.has(root)) {
       throw new Error(`ambiguous shipped mixed history at ${root}; supply commit-bound --ref-provenance`);
