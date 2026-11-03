@@ -69,9 +69,17 @@ jobs:
   # runs in one process with a plain `bun test` — no skip flag, no file
   # sharding, because the test harness no longer boots a database.
   unit:
-    name: Unit (build + typecheck + lint + dead-code + test)
+    name: Unit (build + typecheck + lint + dead-code + test) — bun ${{ matrix.bun }}
     runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 10
+    # Both supported Bun lines, every entry required: the Quality Gate below
+    # needs this job, and a matrix job's result is `success` only when every
+    # entry succeeded (fail-fast off, so one red line never hides the other).
+    # The floor stays engines.bun >=1.3.10; 1.4.4 is the newest line (#3194).
+    strategy:
+      fail-fast: false
+      matrix:
+        bun: ["1.3.11", "1.4.4"]
 
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
@@ -89,7 +97,7 @@ jobs:
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
-          bun-version: "1.4.4"
+          bun-version: ${{ matrix.bun }}
 
       # Pinned Node 22: parts of the suite spawn `node` (the design-review
       # evidence tool the fresh-install smoke runs, and the node-targeted
@@ -165,9 +173,17 @@ jobs:
   # on the linux runner (which is also the only place `blacksmith` runners
   # exist). macOS runners are slower and un-cached, hence the wider timeout.
   unit-darwin:
-    name: Unit (darwin — build + typecheck + test)
+    name: Unit (darwin — build + typecheck + test) — bun ${{ matrix.bun }}
     runs-on: macos-latest
     timeout-minutes: 25
+    # Both supported Bun lines, every entry required: the Quality Gate below
+    # needs this job, and a matrix job's result is `success` only when every
+    # entry succeeded (fail-fast off, so one red line never hides the other).
+    # The floor stays engines.bun >=1.3.10; 1.4.4 is the newest line (#3194).
+    strategy:
+      fail-fast: false
+      matrix:
+        bun: ["1.3.11", "1.4.4"]
 
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
@@ -177,7 +193,7 @@ jobs:
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
-          bun-version: "1.4.4"
+          bun-version: ${{ matrix.bun }}
 
       # Same pin as the linux leg: parts of the suite spawn `node`.
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
@@ -230,7 +246,7 @@ jobs:
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
-          bun-version: "1.4.4"
+          bun-version: "1.3.11"
 
       - name: Install dependencies
         env:
@@ -268,7 +284,7 @@ jobs:
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
-          bun-version: "1.4.4"
+          bun-version: "1.3.11"
 
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
