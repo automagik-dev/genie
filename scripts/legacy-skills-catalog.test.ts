@@ -1,6 +1,19 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  constants,
+  accessSync,
+  appendFileSync,
+  cpSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { legacySkillDigest } from '../src/lib/legacy-skill-digest.js';
@@ -200,6 +213,11 @@ describe('catalog CLI over isolated Git histories', () => {
   }
 
   function seedRepo(prefix: string): string {
+    try {
+      accessSync(join(ROOT, 'node_modules', '.bin', 'biome'), constants.X_OK);
+    } catch {
+      throw new Error('catalog fixtures require the installed Biome formatter; run bun install --frozen-lockfile');
+    }
     const dir = mkdtempSync(join(tmpdir(), prefix));
     scratch.push(dir);
     mkdirSync(join(dir, 'scripts'), { recursive: true });
@@ -221,8 +239,29 @@ describe('catalog CLI over isolated Git histories', () => {
     git(dir, 'config', 'user.name', 'Test');
     git(dir, 'config', 'commit.gpgsign', 'false');
     git(dir, 'config', 'core.hooksPath', '/dev/null');
+    // Use the real locked install, never bunx's shared download cache. Exclude the
+    // symlink before any add -A so dependencies cannot become delivery history.
+    appendFileSync(join(dir, '.git', 'info', 'exclude'), '\n/node_modules\n');
+    symlinkSync(join(ROOT, 'node_modules'), join(dir, 'node_modules'), 'dir');
     return dir;
   }
+
+  test('fixture formatter uses the installed package without adding dependencies to history', () => {
+    const repo = seedRepo('catalog-local-formatter-');
+    expect(realpathSync(join(repo, 'node_modules', '.bin', 'biome'))).toBe(
+      realpathSync(join(ROOT, 'node_modules', '.bin', 'biome')),
+    );
+    const installed = JSON.parse(readFileSync(join(ROOT, 'node_modules', '@biomejs', 'biome', 'package.json'), 'utf8'));
+    const version = spawnSync('bunx', ['--no-install', 'biome', '--version'], { cwd: repo, encoding: 'utf8' });
+    expect(version.status).toBe(0);
+    expect(version.stderr).toBe('');
+    expect(version.stdout.trim()).toBe(`Version: ${installed.version}`);
+    skill(repo, 'skills/kept', 'A fixture skill.');
+    commit(repo, 'fixture with excluded local dependencies');
+    expect(git(repo, 'check-ignore', 'node_modules').trim()).toBe('node_modules');
+    expect(git(repo, 'ls-files', '--', 'node_modules')).toBe('');
+    expect(git(repo, 'ls-tree', '-r', '--name-only', 'HEAD', '--', 'node_modules')).toBe('');
+  });
 
   const RECORDED_ONLY_DESCRIPTION = 'Recorded from an unavailable Genie ref.';
 
