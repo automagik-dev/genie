@@ -14,7 +14,7 @@ import { join } from 'node:path';
  * that its removal cost `publish` exactly one edge.
  *
  * Parser: `Bun.YAML.parse`, so no python/PyYAML and no new dependency. It is a
- * Bun builtin (present on the 1.3.11 CI pin and the 1.3.14 dev machines); the
+ * Bun builtin (present on the 1.4.4 CI pin and dev machines); the
  * first assertion below fails with an explicit message if that ever stops
  * being true, rather than throwing an opaque TypeError.
  */

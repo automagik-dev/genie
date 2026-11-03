@@ -184,7 +184,7 @@ Missing or partial provider usage is unknown: an observed subtotal is not a comp
 See the [agent schema](mikro/docs/agent-yaml-schema.md) and
 [standalone upgrade boundary](UPGRADING.md#standalone-mikro-source-runtime).
 
-Repository checks use Bun 1.3.11 or newer, matching CI: subtree test pruning relies on `test.pathIgnorePatterns`. This development prerequisite does not change Genie's existing CLI runtime floor.
+Repository checks and the Genie CLI runtime both require Bun 1.4.4 or newer, matching CI: `engines.bun` declares the floor and `genie doctor` enforces it.
 
 ```bash
 bun run check
