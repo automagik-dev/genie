@@ -36,17 +36,27 @@ impl Forge {
     }
 }
 
-/// The `origin` remote, split into host and repository path (`owner/repo`, or nested GitLab groups).
+/// The `origin` remote's credential-free identity: host and repository path (`owner/repo`, or nested
+/// GitLab groups). The URL itself is never kept: it may carry userinfo (a token), and Genie stores
+/// no credential (Decision 7).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Remote {
-    pub url: String,
     pub host: String,
     pub path: String,
 }
 
-/// `https://host/o/r(.git)`, `ssh://user@host:port/o/r`, or scp-like `user@host:o/r.git`.
+impl Remote {
+    /// `host/path`: what the cache records the origin as.
+    pub fn id(&self) -> String {
+        format!("{}/{}", self.host, self.path)
+    }
+}
+
+/// `https://host/o/r(.git)`, `ssh://user@host:port/o/r`, or scp-like `user@host:o/r.git`. Userinfo,
+/// port, query and fragment are dropped.
 pub fn parse_remote(url: &str) -> Option<Remote> {
     let url = url.trim();
+    let url = url.split(['?', '#']).next()?;
     let (host, path) = match url.split_once("://") {
         Some((_, rest)) => {
             let (authority, path) = rest.split_once('/')?;
@@ -63,7 +73,7 @@ pub fn parse_remote(url: &str) -> Option<Remote> {
     if host.is_empty() || !path.contains('/') {
         return None;
     }
-    Some(Remote { url: url.to_string(), host: host.to_ascii_lowercase(), path: path.to_string() })
+    Some(Remote { host: host.to_ascii_lowercase(), path: path.to_string() })
 }
 
 /// The project's `origin` remote. Runs git with the process PATH; never call it under a lock.
@@ -76,7 +86,10 @@ pub fn origin(project: &Path) -> Result<Remote, Error> {
             project.display()
         )));
     }
-    parse_remote(&url).ok_or_else(|| Error::Remote(format!("origin {url} names no forge host and repository")))
+    // The message never echoes the URL: it may carry a token.
+    parse_remote(&url).ok_or_else(|| {
+        Error::Remote(format!("the 'origin' remote of {} names no forge host and repository", project.display()))
+    })
 }
 
 /// A forge CLI bound to one remote. `path` replaces PATH for the CLI's process only.
@@ -110,8 +123,11 @@ impl Cli {
         })
     }
 
-    fn api(&self, endpoint: &str) -> Result<Value, Error> {
-        let mut args = vec!["api", endpoint];
+    /// One `api` call's stdout. `flags` go before the endpoint (gh's `--paginate`, `--jq`).
+    fn call(&self, flags: &[&str], endpoint: &str) -> Result<Vec<u8>, Error> {
+        let mut args = vec!["api"];
+        args.extend(flags);
+        args.push(endpoint);
         if self.forge == Forge::Gitlab {
             args.extend(["--hostname", &self.host]);
         }
@@ -126,7 +142,11 @@ impl Cli {
                 self.login()
             )));
         }
-        serde_json::from_slice(&out.stdout)
+        Ok(out.stdout)
+    }
+
+    fn api(&self, endpoint: &str) -> Result<Value, Error> {
+        serde_json::from_slice(&self.call(&[], endpoint)?)
             .map_err(|e| Error::Reply(format!("{} api {endpoint}: the reply is not JSON ({e})", self.forge.program())))
     }
 
@@ -162,39 +182,96 @@ impl Cli {
         Ok(prs)
     }
 
-    /// `pushed_after_open`: the PR's commits whose committer date is after the PR was opened. `None`
-    /// when the forge cannot say: a full page (the list may be truncated) or a commit with no
-    /// readable date. A CLI failure is an error, never a guessed count.
-    pub fn pushed_after_open(&self, pr: &Pr) -> Result<Option<i64>, Error> {
-        let (endpoint, date) = match self.forge {
-            Forge::Github => {
-                (format!("repos/{}/pulls/{}/commits?per_page={PAGE}", self.repo, pr.number), "/commit/committer/date")
-            }
-            Forge::Gitlab => (
-                format!(
-                    "projects/{}/merge_requests/{}/commits?per_page={PAGE}",
-                    self.repo.replace('/', "%2F"),
-                    pr.number
-                ),
-                "/committed_date",
-            ),
-        };
-        let reply = self.api(&endpoint)?;
-        let commits = reply.as_array().ok_or_else(|| Error::Reply(format!("{endpoint}: the reply is not a list")))?;
-        if commits.len() >= PAGE {
-            return Ok(None);
+    /// `pushed_after_open` for a merged PR/MR: the commits pushed to it after it opened, from the
+    /// forge's own push record, never from commit dates (a commit made before the open and pushed after
+    /// it keeps its old date). `None` whenever the forge cannot establish the count: never 0 for unknown.
+    pub fn pushed_after_open(&self, pr: &Pr) -> Option<i64> {
+        match self.forge {
+            Forge::Github => self.github_pushed_after_open(pr),
+            Forge::Gitlab => self.gitlab_pushed_after_open(pr),
         }
-        let opened = pr.created();
-        let mut after = 0;
-        for commit in commits {
-            match commit.pointer(date).and_then(Value::as_str).and_then(parse_time) {
-                Some(t) if t > opened => after += 1,
-                Some(_) => {}
-                None => return Ok(None),
-            }
-        }
-        Ok(Some(after))
     }
+
+    /// GitHub: the head ref's `push` and `force_push` activity between the open and the merge, each
+    /// counted as `compare(before...after).ahead_by` (for a force push, the new commits not in the old
+    /// head). `None` for a head in another repository (a fork's pushes are not in this repository's
+    /// activity), for activity that does not reach back to the open, for a ref recreated while open,
+    /// and for any call that fails or answers without the count.
+    fn github_pushed_after_open(&self, pr: &Pr) -> Option<i64> {
+        if !pr.head_repo.eq_ignore_ascii_case(&self.repo) {
+            return None;
+        }
+        let (opened, merged) = (pr.created(), parse_time(&pr.merged_at)?);
+        let endpoint = format!(
+            "repos/{}/activity?ref={}&per_page={PAGE}",
+            self.repo,
+            encode(&format!("refs/heads/{}", pr.branch))
+        );
+        let out = self.call(&["--paginate", "--jq", ".[]"], &endpoint).ok()?;
+        let mut reaches_back = false;
+        let mut pushed = 0;
+        for line in String::from_utf8_lossy(&out).lines().filter(|l| !l.trim().is_empty()) {
+            let activity: Value = serde_json::from_str(line).ok()?;
+            let at = activity.get("timestamp").and_then(Value::as_str).and_then(parse_time)?;
+            if at <= opened {
+                reaches_back = true;
+                continue;
+            }
+            if at > merged {
+                continue;
+            }
+            match activity.get("activity_type").and_then(Value::as_str)? {
+                "push" | "force_push" => {
+                    let before = activity.get("before").and_then(Value::as_str)?;
+                    let after = activity.get("after").and_then(Value::as_str)?;
+                    if before.bytes().all(|b| b == b'0') {
+                        return None;
+                    }
+                    let compare = self.api(&format!("repos/{}/compare/{before}...{after}", self.repo)).ok()?;
+                    pushed += compare.get("ahead_by")?.as_i64()?;
+                }
+                "branch_creation" | "branch_deletion" => return None,
+                _ => {}
+            }
+        }
+        reaches_back.then_some(pushed)
+    }
+
+    /// GitLab: the MR's diff versions. The oldest is the MR as opened; each later version adds the
+    /// commits `compare(previous head, its head)` lists. `None` for no versions, a full page (the
+    /// list may be truncated), or any call that fails or answers without the commits.
+    fn gitlab_pushed_after_open(&self, pr: &Pr) -> Option<i64> {
+        let project = self.repo.replace('/', "%2F");
+        let reply =
+            self.api(&format!("projects/{project}/merge_requests/{}/versions?per_page={PAGE}", pr.number)).ok()?;
+        let items = reply.as_array()?;
+        let mut versions = items
+            .iter()
+            .map(|v| Some((v.get("id")?.as_i64()?, v.get("head_commit_sha")?.as_str()?.to_string())))
+            .collect::<Option<Vec<_>>>()?;
+        if versions.is_empty() || versions.len() >= PAGE {
+            return None;
+        }
+        versions.sort();
+        let mut pushed = 0;
+        for pair in versions.windows(2) {
+            let endpoint = format!("projects/{project}/repository/compare?from={}&to={}", pair[0].1, pair[1].1);
+            let commits = self.api(&endpoint).ok()?.get("commits")?.as_array()?.len();
+            pushed += i64::try_from(commits).ok()?;
+        }
+        Some(pushed)
+    }
+}
+
+/// Percent-encode a query value (RFC 3986 unreserved characters pass through).
+fn encode(value: &str) -> String {
+    value
+        .bytes()
+        .map(|b| match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => char::from(b).to_string(),
+            _ => format!("%{b:02X}"),
+        })
+        .collect()
 }
 
 /// Pick the CLI for the remote: github.com is `gh`; any other host is `glab` when glab reports a
@@ -232,6 +309,9 @@ pub struct Pr {
     pub branch: String,
     pub state: PrState,
     pub head: String,
+    /// GitHub: the head branch's repository (`owner/repo`); another repository is a fork.
+    #[serde(default)]
+    pub head_repo: String,
     /// The merge commit of a merged PR (GitLab: the merge, else squash, else head sha).
     pub merge_commit: String,
     pub created_at: String,
@@ -275,6 +355,7 @@ impl Pr {
             branch: text(v, branch),
             state: state.unwrap_or(PrState::Open),
             head: text(v, head),
+            head_repo: text(v, "/head/repo/full_name"),
             merge_commit,
             created_at: text(v, "/created_at"),
             updated_at: text(v, "/updated_at"),

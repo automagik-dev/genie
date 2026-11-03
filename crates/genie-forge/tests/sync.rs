@@ -25,6 +25,15 @@ fn at(offset: i64) -> String {
     genie_forge::client::rfc3339(t0() + offset)
 }
 
+/// `at(offset)` with a fractional-second suffix such as `.200` (GitLab's timestamps carry one).
+fn at_frac(offset: i64, frac: &str) -> String {
+    let whole = at(offset);
+    format!("{}{frac}Z", &whole[..whole.len() - 1])
+}
+
+/// A credential that must never reach a file genie-forge writes or a line it prints.
+const FAKE_TOKEN: &str = "FAKE_TOKEN_9f3c";
+
 /// One canned PR/MR. `state` is open, merged or closed; times are seconds after `T0`.
 #[derive(Clone)]
 struct Case {
@@ -34,11 +43,17 @@ struct Case {
     state: &'static str,
     head: &'static str,
     updated: i64,
+    /// A fractional-second suffix for `updated_at` (`.200`), or `''`.
+    frac: &'static str,
 }
 
 fn case(n: u64, branch: &'static str, title: &'static str, state: &'static str, head: &'static str) -> Case {
-    Case { n, branch, title, state, head, updated: 600 }
+    Case { n, branch, title, state, head, updated: 600, frac: "" }
 }
+
+/// One push to a PR's head after it opened: (`push` or `force_push`, seconds after `T0`, commits it
+/// adds; `None` makes the forge fail the count call).
+type Push = (&'static str, i64, Option<u64>);
 
 struct Fx {
     repo: PathBuf,
@@ -48,6 +63,14 @@ struct Fx {
 }
 
 fn fixture(tag: &str, forge: Forge) -> Fx {
+    let origin = match forge {
+        Forge::Github => "https://github.com/o/r.git",
+        Forge::Gitlab => "git@gitlab.example.com:grp/sub/proj.git",
+    };
+    fixture_at(tag, forge, origin)
+}
+
+fn fixture_at(tag: &str, forge: Forge, origin: &str) -> Fx {
     let root = std::env::temp_dir().join(format!(
         "genie-forge-{tag}-{}-{}",
         std::process::id(),
@@ -60,10 +83,6 @@ fn fixture(tag: &str, forge: Forge) -> Fx {
     }
     let git = |args: &[&str]| assert!(Command::new("git").args(args).current_dir(&repo).status().unwrap().success());
     git(&["init", "-q", "-b", "main"]);
-    let origin = match forge {
-        Forge::Github => "https://github.com/o/r.git",
-        Forge::Gitlab => "git@gitlab.example.com:grp/sub/proj.git",
-    };
     git(&["remote", "add", "origin", origin]);
     fs::create_dir_all(repo.join(".genie")).unwrap();
     let db = rusqlite::Connection::open(repo.join(".genie/genie.db")).unwrap();
@@ -89,6 +108,7 @@ impl Fx {
 
     fn render(&self, c: &Case) -> Value {
         let created = at(c.n as i64);
+        let updated = at_frac(c.updated, c.frac);
         let done = (c.state != "open").then(|| at(c.updated));
         let merged = (c.state == "merged").then(|| at(c.updated));
         let merge_sha = format!("merge-{}", c.n);
@@ -96,15 +116,15 @@ impl Fx {
             Forge::Github => json!({
                 "number": c.n, "html_url": self.url(c.n), "title": c.title,
                 "state": if c.state == "open" { "open" } else { "closed" },
-                "head": {"ref": c.branch, "sha": c.head}, "merge_commit_sha": merge_sha,
-                "created_at": created, "updated_at": at(c.updated), "merged_at": merged, "closed_at": done,
+                "head": {"ref": c.branch, "sha": c.head, "repo": {"full_name": "o/r"}}, "merge_commit_sha": merge_sha,
+                "created_at": created, "updated_at": updated, "merged_at": merged, "closed_at": done,
             }),
             Forge::Gitlab => json!({
                 "iid": c.n, "web_url": self.url(c.n), "title": c.title,
                 "state": if c.state == "open" { "opened" } else { c.state },
                 "source_branch": c.branch, "sha": c.head,
                 "merge_commit_sha": merged.as_ref().map(|_| merge_sha), "squash_commit_sha": null,
-                "created_at": created, "updated_at": at(c.updated), "merged_at": merged, "closed_at": done,
+                "created_at": created, "updated_at": updated, "merged_at": merged, "closed_at": done,
             }),
         }
     }
@@ -118,16 +138,60 @@ impl Fx {
         fs::write(self.bin.join("list.json"), Value::Array(items).to_string()).unwrap();
     }
 
-    /// The commits reply for PR `n`; `None` dates are commits the forge gives no date for.
-    fn commits(&self, n: u64, dates: &[Option<String>]) {
-        let items: Vec<Value> = dates
-            .iter()
-            .map(|d| match self.forge {
-                Forge::Github => json!({"sha": "c", "commit": {"committer": {"date": d}}}),
-                Forge::Gitlab => json!({"id": "c", "committed_date": d}),
-            })
-            .collect();
-        fs::write(self.bin.join(format!("commits-{n}.json")), Value::Array(items).to_string()).unwrap();
+    /// The forge's push record for PR `c`. GitHub: head-ref activity (a `branch_creation` before the
+    /// open when `reaches_back`) plus one compare per push. GitLab: diff versions (none when not
+    /// `reaches_back`) plus one compare per later version.
+    fn pushes(&self, c: &Case, pushes: &[Push], reaches_back: bool) {
+        let write = |name: String, body: String| fs::write(self.bin.join(name), body).unwrap();
+        let compare = |n: Option<u64>, ok: Value| n.map_or("!fail".to_string(), |_| ok.to_string());
+        match self.forge {
+            Forge::Github => {
+                let mut lines = Vec::new();
+                if reaches_back {
+                    let created = json!({"activity_type": "branch_creation", "timestamp": at(c.n as i64 - 5),
+                        "before": "0000000000000000000000000000000000000000", "after": "start"});
+                    lines.push(created.to_string());
+                }
+                for (i, (kind, offset, n)) in pushes.iter().enumerate() {
+                    let (before, after) = (format!("b{}-{i}", c.n), format!("a{}-{i}", c.n));
+                    let item =
+                        json!({"activity_type": kind, "timestamp": at(*offset), "before": before, "after": after});
+                    lines.push(item.to_string());
+                    write(format!("compare-{before}...{after}.json"), compare(*n, json!({"ahead_by": n})));
+                }
+                lines.reverse();
+                write(format!("activity-refs%2Fheads%2F{}.json", c.branch.replace('/', "%2F")), lines.join("\n"));
+            }
+            Forge::Gitlab => {
+                if !reaches_back {
+                    return;
+                }
+                let head = |i: usize| format!("v{}-{i}", c.n);
+                let versions: Vec<Value> =
+                    (0..=pushes.len()).map(|i| json!({"id": i + 1, "head_commit_sha": head(i)})).rev().collect();
+                write(format!("versions-{}.json", c.n), Value::Array(versions).to_string());
+                for (i, (_, _, n)) in pushes.iter().enumerate() {
+                    let commits: Vec<Value> = (0..n.unwrap_or(0)).map(|k| json!({"id": format!("c{k}")})).collect();
+                    write(
+                        format!("compare-{}...{}.json", head(i), head(i + 1)),
+                        compare(*n, json!({"commits": commits})),
+                    );
+                }
+            }
+        }
+    }
+
+    /// Every file under `<GENIE_HOME>`, as bytes.
+    fn home_files(&self) -> Vec<(PathBuf, Vec<u8>)> {
+        let mut out = Vec::new();
+        let mut dirs = vec![self.home.clone()];
+        while let Some(dir) = dirs.pop() {
+            for entry in fs::read_dir(dir).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() { dirs.push(path) } else { out.push((path.clone(), fs::read(path).unwrap())) }
+            }
+        }
+        out
     }
 
     fn sync(&self, now: i64) -> Result<Report, genie_forge::Error> {
@@ -159,16 +223,19 @@ impl Fx {
 
 fn first_run(forge: Forge) {
     let fx = fixture("first", forge);
+    let (c2, c4) = (
+        case(2, "fix/gh-12-sync-hangs", "fix: sync hangs", "merged", "head-2"),
+        case(4, "chore/bump", "chore(version): bump to 6.1 [auto-version]", "merged", "head-4"),
+    );
     fx.serve(&[
         case(1, "feat/gh-11-add-sync", "feat(forge): add sync", "open", "head-1"),
-        case(2, "fix/gh-12-sync-hangs", "fix: sync hangs", "merged", "head-2"),
+        c2.clone(),
         case(3, "docs/gh-13-memory-note", "docs(memory): note the rule", "closed", "head-3"),
-        case(4, "chore/bump", "chore(version): bump to 6.1 [auto-version]", "merged", "head-4"),
+        c4.clone(),
         case(5, "release/v6.2", "release: v6.2", "open", "head-5"),
     ]);
-    fx.commits(1, &[Some(at(-30))]);
-    fx.commits(2, &[Some(at(-60)), Some(at(60)), Some(at(120))]);
-    fx.commits(4, &[None]);
+    fx.pushes(&c2, &[("push", 60, Some(2))], true);
+    fx.pushes(&c4, &[("push", 60, Some(1))], false);
 
     let report = fx.sync(t0() + 1_000).unwrap();
     assert_eq!((report.appended, report.duplicates, report.skipped.len(), report.cached), (5, 0, 0, false));
@@ -189,8 +256,8 @@ fn first_run(forge: Forge) {
     assert_eq!((e1.commit.as_str(), e2.commit.as_str(), e3.commit.as_str()), ("head-1", "merge-2", "head-3"));
     assert_eq!(
         [e1.pushed_after_open, e2.pushed_after_open, e3.pushed_after_open, e4.pushed_after_open],
-        [Some(0), Some(2), Some(0), None],
-        "0 and 2 counted; a commit the forge gives no date for is unknown, never 0"
+        [None, Some(2), None, None],
+        "only a merge carries the count; a history that does not reach back to the open is unknown, never 0"
     );
     assert_eq!(e4.task_key, format!("pr:{}:{}", forge.as_str(), fx.url(4)), "an untracked branch is keyed by its url");
     assert!(fx.events().iter().all(|e| e.forge == forge.as_str()));
@@ -198,7 +265,8 @@ fn first_run(forge: Forge) {
     let rows = fx.export();
     assert_eq!(rows.len(), 5);
     let row4 = rows.iter().find(|r| r["url"] == fx.url(4)).unwrap();
-    assert!(row4["task"].is_null(), "M3: an untracked PR's export row carries task: null, not ''");
+    assert_eq!(row4.get("task"), Some(&Value::Null), "M3: an untracked PR's export row carries task: null, not ''");
+    assert_eq!(row4.get("pushed_after_open"), Some(&Value::Null), "unknown exports null, never 0");
     assert_eq!(rows.iter().find(|r| r["url"] == fx.url(1)).unwrap()["task"], "gh-11");
 
     // Within 60 s: the cached reply, no forge call at all.
@@ -305,6 +373,10 @@ fn a_reopened_pr_merged_after_its_close_is_skipped_reported_and_the_rest_commits
     assert_eq!(fx.of(30).len(), 1, "nothing is written for the refused event");
     assert_eq!(fx.of(31).len(), 1);
 
+    let forge_dir = fx.home.join("cache/forge");
+    let names: Vec<String> =
+        fs::read_dir(&forge_dir).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
+    assert!(names.iter().any(|n| n.ends_with(".cursor.json")), "the cursor has its own file: {names:?}");
     let next = fx.sync(t0() + 1_122).unwrap();
     assert!(next.skipped.is_empty(), "the cursor advanced, so the next run does not re-report it");
     assert_eq!(next.appended, 0);
@@ -375,6 +447,8 @@ fn task_ids_types_exclusions_remotes_and_timestamps() {
         assert_eq!((remote.host.as_str(), remote.path.as_str()), (host, path));
     }
     assert!(parse_remote("/srv/git/repo").is_none());
+    let tokened = parse_remote(&format!("https://ci-user:{FAKE_TOKEN}@github.com/o/r.git?x=1")).unwrap();
+    assert_eq!(tokened.id(), "github.com/o/r", "the identity drops userinfo and query");
     assert_eq!(parse_time("2026-11-03T04:20:05Z"), parse_time("2026-11-03T06:20:05.123+02:00"));
     assert_eq!(genie_forge::client::rfc3339(parse_time("2024-02-29T23:59:59Z").unwrap()), "2024-02-29T23:59:59Z");
     assert_eq!(parse_time("2026-13-01T00:00:00Z"), None);
@@ -398,4 +472,103 @@ fn the_part_declares_forge_sync_reversible_and_reports_a_refusal_as_an_error_out
     let out = out.unwrap();
     assert!(out.is_error && out.text.contains("genie task list"), "{}", out.text);
     assert!(fx.calls().is_empty());
+}
+
+fn pushed(fx: &Fx, n: u64) -> Option<i64> {
+    let rows = fx.of(n);
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    rows[0].pushed_after_open
+}
+
+#[test]
+fn pushed_after_open_counts_pushes_from_the_forge_record_never_commit_dates() {
+    let fx = fixture("pushes", Forge::Github);
+    let merged = |n, branch| Case { updated: 900, ..case(n, branch, "fix: x", "merged", "head") };
+    let (later, forced, fork, failed, unknown) = (
+        merged(7, "fix/gh-7-old-commit"),
+        merged(8, "fix/gh-8-forced"),
+        merged(9, "fix/gh-9-fork"),
+        merged(10, "fix/gh-10-gone"),
+        merged(11, "fix/gh-11-old"),
+    );
+    // A commit created before the open and pushed after it: the push record counts it, whatever its date.
+    fx.pushes(&later, &[("push", 300, Some(1)), ("push", 1_000, Some(4))], true);
+    fx.pushes(&forced, &[("force_push", 300, Some(2)), ("push", 400, Some(1))], true);
+    fx.pushes(&fork, &[("push", 300, Some(1))], true);
+    fx.pushes(&failed, &[("force_push", 300, None)], true);
+    fx.pushes(&unknown, &[("push", 300, Some(1))], false);
+    let mut items: Vec<Value> = [&later, &forced, &fork, &failed, &unknown].iter().map(|c| fx.render(c)).collect();
+    items[2]["head"]["repo"]["full_name"] = json!("someone/r");
+    fx.serve_values(items);
+
+    let report = fx.sync(t0() + 1_000).unwrap();
+    assert_eq!(report.appended, 5);
+    assert_eq!(pushed(&fx, 7), Some(1), "one push after the open, the push after the merge ignored");
+    assert_eq!(pushed(&fx, 8), Some(3), "a force push counts the commits it adds");
+    assert_eq!(pushed(&fx, 9), None, "a fork's pushes are not in this repository's record");
+    assert_eq!(pushed(&fx, 10), None, "a force push whose new commits cannot be computed is unknown");
+    assert_eq!(pushed(&fx, 11), None, "a record that does not reach back to the open is unknown");
+    let rows = fx.export();
+    let row = |n: u64| rows.iter().find(|r| r["url"] == fx.url(n)).unwrap().clone();
+    assert_eq!(
+        (row(8).get("pushed_after_open"), row(11).get("pushed_after_open")),
+        (Some(&json!(3)), Some(&Value::Null))
+    );
+    assert!(!fx.calls().iter().any(|c| c.contains("/commits")), "commit lists and their dates are never read");
+}
+
+#[test]
+fn a_gitlab_force_push_counts_the_commits_its_version_adds() {
+    let fx = fixture("versions", Forge::Gitlab);
+    let mr = Case { updated: 900, ..case(12, "fix/gl-12-forced", "fix: x", "merged", "head") };
+    fx.pushes(&mr, &[("force_push", 300, Some(2)), ("push", 400, Some(1))], true);
+    fx.serve(&[mr]);
+    fx.sync(t0() + 1_000).unwrap();
+    assert_eq!(pushed(&fx, 12), Some(3));
+}
+
+#[test]
+fn a_state_change_inside_the_same_second_is_never_lost() {
+    let fx = fixture("same-second", Forge::Github);
+    let pr = |n, state| Case { updated: 100, ..case(n, "fix/gh-50-race", "fix: race", state, "head-50") };
+    let other = |n, state| Case { updated: 100, ..case(n, "fix/gh-51-race", "fix: race", state, "head-51") };
+    fx.serve(&[pr(50, "open"), other(51, "open")]);
+    assert_eq!(fx.sync(t0() + 1_000).unwrap().appended, 2);
+    // Both finish in the second the first sync already saw: same updated_at, new state.
+    fx.serve(&[pr(50, "merged"), other(51, "closed")]);
+    let report = fx.sync(t0() + 1_061).unwrap();
+    assert_eq!((report.appended, report.skipped.len()), (2, 0));
+    let kinds = |n| fx.of(n).iter().map(|e| e.event.as_str()).collect::<Vec<_>>();
+    assert_eq!((kinds(50), kinds(51)), (vec!["opened", "merged"], vec!["opened", "closed"]));
+    let again = fx.sync(t0() + 1_122).unwrap();
+    assert_eq!((again.appended, again.duplicates, again.skipped.len()), (0, 0, 0), "unchanged PRs are not reprocessed");
+}
+
+#[test]
+fn a_change_inside_a_fractional_second_is_never_lost() {
+    let fx = fixture("fraction", Forge::Gitlab);
+    let mr = |state, frac| Case { updated: 100, frac, ..case(60, "fix/gl-60-frac", "fix: frac", state, "head-60") };
+    fx.serve(&[mr("open", ".200")]);
+    fx.sync(t0() + 1_000).unwrap();
+    fx.serve(&[mr("merged", ".700")]);
+    assert_eq!(fx.sync(t0() + 1_061).unwrap().appended, 1);
+    assert_eq!(fx.of(60).iter().map(|e| e.event.as_str()).collect::<Vec<_>>(), ["opened", "merged"]);
+}
+
+#[test]
+fn a_token_in_the_origin_url_is_never_stored_or_printed() {
+    let fx = fixture_at("token", Forge::Github, &format!("https://ci-user:{FAKE_TOKEN}@github.com/o/r.git"));
+    let pr = Case { updated: 900, ..case(1, "fix/gh-1-x", "fix: x", "merged", "head") };
+    fx.pushes(&pr, &[("push", 300, Some(1))], true);
+    fx.serve(&[pr]);
+    fx.sync(t0() + 1_000).unwrap();
+    let files = fx.home_files();
+    assert!(files.iter().any(|(p, _)| p.to_string_lossy().ends_with(".cursor.json")), "{files:?}");
+    for (path, bytes) in &files {
+        let text = String::from_utf8_lossy(bytes);
+        assert!(!text.contains(FAKE_TOKEN) && !text.contains("ci-user"), "{} carries the credential", path.display());
+    }
+    let bad = fixture_at("token-bad", Forge::Github, &format!("https://ci-user:{FAKE_TOKEN}@github.com"));
+    let err = bad.sync(t0() + 1_000).unwrap_err();
+    assert!(!err.to_string().contains(FAKE_TOKEN), "{err}");
 }

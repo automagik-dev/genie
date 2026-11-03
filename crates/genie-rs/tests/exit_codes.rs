@@ -141,7 +141,7 @@ fn t5_forge_sync_exits_0_and_list_status_and_rebuild_read_what_it_recorded() {
     assert_eq!(code(&status), 0);
     let status: Value = serde_json::from_slice(&status.stdout).unwrap();
     assert_eq!(status["events"][0]["commit"], "head-1");
-    assert_eq!(status["events"][0]["pushed_after_open"], 0);
+    assert_eq!(status["events"][0].get("pushed_after_open"), Some(&Value::Null), "only a merge carries the count");
 
     fs::remove_file(fx.home.join("tasks.jsonl")).unwrap();
     let rebuilt = fx.run(&["export", "--rebuild", "--project", fx.repo.to_str().unwrap()]);
@@ -227,4 +227,44 @@ fn the_stdio_seam_runs_the_same_dispatch() {
     assert_eq!(lines[0], json!({"ready": true}));
     assert_eq!((lines[1]["code"].as_i64(), lines[1]["stdout"].as_str()), (Some(0), Some("[]\n")));
     assert_eq!(lines[2]["code"], 2);
+}
+
+#[test]
+fn a_token_in_the_origin_url_reaches_neither_genie_home_nor_stderr() {
+    const TOKEN: &str = "FAKE_TOKEN_77ab";
+    let fx = fixture("token", true);
+    let set_origin = |url: String| {
+        let status = Command::new("git").args(["remote", "set-url", "origin", &url]).current_dir(&fx.repo).status();
+        assert!(status.unwrap().success());
+    };
+    set_origin(format!("https://ci-user:{TOKEN}@github.com/o/r.git"));
+    fx.serve(&[pr(30, "fix/gh-30-flaky", "closed", "2026-11-01T10:05:00Z")]);
+    assert_eq!(code(&fx.run(&["forge-sync"])), 0);
+    fs::remove_file(fx.home.join("tasks.jsonl")).unwrap();
+    let forge_dir = fx.home.join("cache/forge");
+    for entry in fs::read_dir(&forge_dir).unwrap() {
+        let path = entry.unwrap().path();
+        if !path.to_string_lossy().ends_with(".cursor.json") {
+            fs::remove_file(path).unwrap(); // expire the reply, keep the cursor
+        }
+    }
+    fx.serve(&[pr(30, "fix/gh-30-flaky", "merged", "2026-11-01T10:09:00Z")]);
+    let out = fx.run(&["forge-sync"]);
+    assert_eq!(code(&out), 0);
+    assert!(stderr(&out).contains("refused closed -> merged"), "{}", stderr(&out));
+    let mut files = 0;
+    for entry in fs::read_dir(&forge_dir).unwrap() {
+        let bytes = fs::read(entry.unwrap().path()).unwrap();
+        assert!(!String::from_utf8_lossy(&bytes).contains(TOKEN));
+        files += 1;
+    }
+    assert_eq!(files, 2, "the reply cache and the cursor");
+    for out in [&out, &fx.run(&["forge-sync", "--json"])] {
+        assert!(!stderr(out).contains(TOKEN) && !String::from_utf8_lossy(&out.stdout).contains(TOKEN));
+    }
+
+    set_origin(format!("https://ci-user:{TOKEN}@github.com"));
+    let out = fx.run(&["forge-sync"]);
+    assert_eq!(code(&out), 1, "{}", stderr(&out));
+    assert!(stderr(&out).contains("names no forge host") && !stderr(&out).contains(TOKEN), "{}", stderr(&out));
 }
