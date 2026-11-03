@@ -5,7 +5,7 @@ Claude Code overlay: read and follow the canonical shared repository contract in
 ## Commands
 
 ```bash
-bun run check        # Full gate: typecheck + lint + dead-code + test
+bun run check        # Full gate: typecheck + lint + dead-code + test + cargo test --locked (fails, never skips, without cargo)
 bun run build        # Bundle to dist/genie.js (bun target, minified, single file)
 bun run typecheck    # tsc --noEmit
 bun run lint         # biome check .
@@ -118,6 +118,8 @@ genie task sync                       # Three-way reconcile genie.db <-> roadmap
 genie task forge-sync                 # genie-rs forge-sync: record opened/merged/closed PRs/MRs via gh/glab, one pass (tail passed through untouched)
 genie task v7-status <id>             # genie-rs status: one v7 task, its lane and events (GENIE_RS_BIN → <GENIE_HOME>/plugins/genie-rs/bin → target/release)
 genie task v7-list                    # genie-rs list: this repository's v7 tasks with their lanes
+genie task start <gh-N|gl-N>          # genie-rs start: a task worktree at <repo>.worktrees/<id>-<slug> from the freshly fetched base, branch <type>/<id>-<slug>, plain `git push` locked out; `--title` mints a gn-<seq> id, `--lead` required; prints {task, branch, worktree, lead, base_sha}; 2 for an opened or merged task, 1 for a failed fetch
+genie task push                       # genie-rs push: from a task worktree, HEAD to its recorded branch only (2 for any other branch, dev, main, master or the base)
 ```
 
 `--agent` names a roster agent (`claude|codex|pi|hermes|prime`) and requires `--why`;

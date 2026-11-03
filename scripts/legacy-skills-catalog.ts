@@ -28,6 +28,13 @@
  *   bun scripts/legacy-skills-catalog.ts --write
  *   bun scripts/legacy-skills-catalog.ts --check   # exits 1 when the file is stale
  *   bun scripts/legacy-skills-catalog.ts --check --ref-provenance SHA:root-proof.json
+ *   bun scripts/legacy-skills-catalog.ts --check --trusted-genie-root FULL_SHA --ref-provenance SHA:root-proof.json
+ *
+ * Shared-source ambiguity now refuses unless an operator supplies --trusted-genie-root:
+ * one exact local commit in validated-cut HEAD ancestry. Its FULL ordinary-parent
+ * ancestor closure is trusted, not its descendants. A broad/wrong anchor knowingly
+ * trusts broad/wrong history. Never infer an anchor from imports or proof documents.
+ * This ownership anchor alone does not opt unshipped archives into retirement.
  *
  * An explicit proof blob has `{ version: 1, refs: [{ ref, commit, owner }] }`,
  * with owner `genie` or `source` and each commit equal to that ref's current
@@ -114,10 +121,14 @@ function parseDescription(markdown: string): string | null {
  * All refs validate source-edge ownership; only eligible owned commits contribute.
  * Both CLI modes and callers use this one derivation.
  */
-export function collectCatalog(root: string = ROOT, provenance?: string): Map<string, Set<string>> {
+export function collectCatalog(
+  root: string = ROOT,
+  provenance?: string,
+  trustedGenieRoot?: string,
+): Map<string, Set<string>> {
   const catalog = new Map<string, Set<string>>();
   const readGit = (...args: string[]) => gitIn(root, ...args);
-  const eligible = catalogGenieCommits(readGit, ['--all'], historyRevisions(root), provenance);
+  const eligible = catalogGenieCommits(readGit, ['--all'], historyRevisions(root), provenance, trustedGenieRoot);
   const commits = readGit('log', '--all', '--pretty=format:%H', '--', 'skills/*/SKILL.md', '*/skills/*/SKILL.md')
     .split('\n')
     .filter((line) => /^[0-9a-f]{40}$/.test(line));
@@ -378,21 +389,42 @@ function isShallowClone(): boolean {
 // Only the CLI walks git history, shells out to biome and exits: importing this module
 // (the tests inject a synthetic catalog into `render`) must do none of that.
 if (import.meta.main) {
-  const mode = process.argv[2];
-  // Before ANY work: a shallow --check cannot prove what it claims.
+  let mode: '--check' | '--write' | undefined;
+  let provenance: string | undefined;
+  let trustedGenieRoot: string | undefined;
+  for (let index = 2; index < process.argv.length; index++) {
+    const arg = process.argv[index];
+    if (arg === '--check' || arg === '--write') {
+      if (mode !== undefined) throw new Error('supply at most one --check or --write mode');
+      mode = arg;
+    } else if (arg === '--ref-provenance' || arg === '--trusted-genie-root') {
+      const value = process.argv[++index];
+      if (
+        !value ||
+        value.startsWith('-') ||
+        (arg === '--ref-provenance' ? provenance : trustedGenieRoot) !== undefined
+      ) {
+        throw new Error(
+          `${arg} requires one ${arg === '--ref-provenance' ? 'exact commit-bound SHA:root-path selector' : 'full lowercase commit SHA'}`,
+        );
+      }
+      if (arg === '--ref-provenance') provenance = value;
+      else trustedGenieRoot = value;
+    } else {
+      throw new Error(`unknown catalog argument: ${arg}`);
+    }
+  }
+  // Before collection: a shallow --check cannot prove what it claims, regardless of flag order.
   if (mode === '--check' && isShallowClone()) {
     process.stderr.write(`${SHALLOW_REFUSAL}\n`);
     process.exit(1);
   }
-  const provenanceIndex = process.argv.indexOf('--ref-provenance', 2);
-  const provenance = provenanceIndex === -1 ? undefined : process.argv[provenanceIndex + 1];
-  if (
-    provenanceIndex !== -1 &&
-    (provenanceIndex !== process.argv.lastIndexOf('--ref-provenance') || !provenance || provenance.startsWith('--'))
-  ) {
-    throw new Error('--ref-provenance requires one exact commit-bound SHA:root-path selector');
+  const collected = collectCatalog(ROOT, provenance, trustedGenieRoot);
+  if (trustedGenieRoot !== undefined) {
+    process.stderr.write(
+      `legacy-skills-catalog: trusting operator anchor ${trustedGenieRoot} and ALL ordinary-parent ancestors; a broad/wrong anchor trusts broad/wrong history\n`,
+    );
   }
-  const collected = collectCatalog(ROOT, provenance);
   const recorded = await recordedCatalog();
   const current = currentSkills(ROOT);
   const rendered = render(collected, recorded, current);

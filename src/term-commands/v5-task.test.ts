@@ -2216,7 +2216,7 @@ describe('a stale orchestration.mode from the retired Orca mode', () => {
 
 // T6 (genie-v7-tasks 1b): the genie-rs pass-through against a stub GENIE_RS_BIN that echoes its
 // argv one token per line and exits with GENIE_RS_STUB_EXIT, so it runs on both CI legs without
-// cargo and never skips (review MEDIUM-1). Group 2 reuses `writeGenieRsStub` for start and push.
+// cargo and never skips (review MEDIUM-1). Group 2's start and push reuse `writeGenieRsStub`.
 function writeGenieRsStub(path: string): string {
   writeFileSync(path, `#!/bin/sh\nfor a in "$@"; do printf '%s\\n' "$a"; done\nexit "\${GENIE_RS_STUB_EXIT:-0}"\n`, {
     mode: 0o755,
@@ -2253,6 +2253,59 @@ describe('genie-rs pass-through (T6)', () => {
     const list = await cliEnv(repo, { GENIE_RS_BIN: stub }, 'v7-list', '--project', repo, '--json');
     expect(list.code).toBe(0);
     expect(echoed(list.stdout)).toEqual(['list', '--project', repo, '--json']);
+  });
+
+  test('start and push (group 2) hand their tails to genie-rs start and push with every exit code', async () => {
+    const stub = writeGenieRsStub(join(repo, 'genie-rs-stub'));
+    for (const code of [0, 1, 2]) {
+      const start = await cliEnv(
+        repo,
+        { GENIE_RS_BIN: stub, GENIE_RS_STUB_EXIT: String(code) },
+        'start',
+        'gh-5',
+        '--title',
+        'sync hangs',
+        '--lead',
+        'b-x',
+        '--type',
+        'feat',
+      );
+      expect(start.code).toBe(code);
+      expect(echoed(start.stdout)).toEqual([
+        'start',
+        'gh-5',
+        '--title',
+        'sync hangs',
+        '--lead',
+        'b-x',
+        '--type',
+        'feat',
+      ]);
+      const push = await cliEnv(
+        repo,
+        { GENIE_RS_BIN: stub, GENIE_RS_STUB_EXIT: String(code) },
+        'push',
+        'dev',
+        '--json',
+      );
+      expect(push.code).toBe(code);
+      expect(echoed(push.stdout)).toEqual(['push', 'dev', '--json']);
+    }
+  });
+
+  test('start with no binary exits 1 and names the fix', async () => {
+    const r = await cliEnv(
+      repo,
+      { GENIE_RS_BIN: join(repo, 'no-such-genie-rs') },
+      'start',
+      '--title',
+      'x',
+      '--lead',
+      'b',
+    );
+    expect(r.code).toBe(1);
+    expect(r.stdout).toBe('');
+    expect(r.stderr).toContain("run 'genie update'");
   });
 
   test('with no binary it exits 1 and names the fix', async () => {

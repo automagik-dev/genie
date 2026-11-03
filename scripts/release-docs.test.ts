@@ -563,6 +563,11 @@ describe('Group E release and documentation contracts', () => {
       "'scripts/fresh-install-smoke.ts'",
       "'scripts/skills-lint.ts'",
       "'scripts/release-payload-version.ts'",
+      // genie-rs is built from the Rust workspace into plugins/genie-rs/bin (genie-v7-tasks 1c).
+      "'crates/**'",
+      "'Cargo.toml'",
+      "'Cargo.lock'",
+      "'rust-toolchain.toml'",
       "'.github/workflows/build-tarballs.yml'",
     ]) {
       expect(workflow).toContain(`- ${path}`);
@@ -598,6 +603,46 @@ describe('Group E release and documentation contracts', () => {
     }
     expect([...SEEDED_AGENTS].every((agent) => shipped.includes(agent))).toBe(true);
     expect([...SEEDED_AGENTS]).not.toContain('mikro-coach');
+  });
+
+  test("genie-rs ships inside plugins/ at 0755, built for each leg's Rust target, beside an Apache-2.0 LICENSE", () => {
+    // genie-v7-tasks 1c (T1 tarball half, T8): the binary rides the frozen `plugins` member at the
+    // path the TS front door resolves second, so the top-level member set stays the 8.
+    const script = read('scripts/build-binary.sh');
+    const workflow = read('.github/workflows/build-tarballs.yml');
+    const targets: Record<string, string> = {
+      'linux-x64-glibc': 'x86_64-unknown-linux-musl',
+      'linux-x64-musl': 'x86_64-unknown-linux-musl',
+      'linux-arm64': 'aarch64-unknown-linux-musl',
+      'darwin-arm64': 'aarch64-apple-darwin',
+    };
+    expect(script).toContain('linux-x64-glibc|linux-x64-musl) echo "x86_64-unknown-linux-musl" ;;');
+    expect(script).toContain('linux-arm64)                    echo "aarch64-unknown-linux-musl" ;;');
+    expect(script).toContain('darwin-arm64)                   echo "aarch64-apple-darwin" ;;');
+    for (const [platform, target] of Object.entries(targets)) {
+      expect(workflow).toMatch(new RegExp(`- platform: ${platform}\\n +runner: +\\S+\\n +rust_target: ${target}\\n`));
+    }
+    expect(script).toContain('cargo build --release --locked -p genie-rs --target "${RUST_TARGET}"');
+    expect(script).toContain('export "CC_${RUST_TARGET//-/_}=musl-gcc"');
+    expect(script).toContain('install -m 0755 "${GENIE_RS_BUILT}" "${STAGE}/plugins/genie-rs/bin/genie-rs"');
+    expect(script).toContain('"plugins/genie-rs/bin/genie-rs"; do');
+    expect(script).toContain('must be mode 0755, not');
+    // Staged after the plugins tree is copied, so the copy cannot clobber it.
+    expect(script.indexOf('install -m 0755')).toBeGreaterThan(script.indexOf('cp -R "${REPO_ROOT}/plugins"'));
+    // The post-extract smoke runs `genie task v7-list --json` against the tarball's own binary.
+    expect(script).toContain('--genie-rs "${VERIFY_ROOT}/plugins/genie-rs/bin/genie-rs"');
+    expect(script.indexOf('--genie-rs "${VERIFY_ROOT}')).toBeGreaterThan(script.indexOf('tar -xzf "${TARBALL}"'));
+    // The toolchain action is the SHA-pinned one ci.yml uses, with this leg's target added.
+    expect(workflow).toContain(
+      '- uses: dtolnay/rust-toolchain@dc08e2af391d489dff6d14cf743e574f7d1229c5 # 1.94.0\n        with:\n          toolchain: 1.94.0\n          targets: ${{ matrix.rust_target }}',
+    );
+    expect(read('rust-toolchain.toml')).toContain('channel = "1.94.0"');
+    expect(workflow).toContain('sudo apt-get install -y --no-install-recommends musl-tools');
+    // The staged LICENSE is the root one, and it is the Apache-2.0 text the script asserts.
+    expect(script).toContain('release payload LICENSE is not the Apache-2.0 text');
+    const license = read('LICENSE').split('\n').slice(0, 3).join('\n');
+    expect(license).toContain('Apache License');
+    expect(license).toContain('Version 2.0');
   });
 
   test('the workflow catalog ships whole inside templates/, .js only', () => {
@@ -916,8 +961,9 @@ describe('Group E release and documentation contracts', () => {
     expect(pkg.scripts['check:fast']).toContain('bun run lint:complexity-budget');
     expect(workflow).toContain('bun run lint:complexity-budget');
     // The six plugin/hook gates, and later the Orca bundle gate, left with the
-    // payload they linted; `check` is exactly these seven steps and `check:fast`
-    // the same six without `bun test`.
+    // payload they linted; `check` is exactly these eight steps and `check:fast`
+    // the first six, without `bun test` or the cargo gate (genie-v7-tasks 1c: CI runs
+    // `cargo test --workspace --locked` directly on both unit legs).
     expect(workflow).not.toContain('lint:orca-bundle');
     const steps = pkg.scripts.check.split(' && ');
     expect(steps).toEqual([
@@ -928,10 +974,12 @@ describe('Group E release and documentation contracts', () => {
       'bun run wishes:lint',
       'bun run lint:complexity-budget',
       'bun test',
+      'bun run test:cargo',
     ]);
-    expect(pkg.scripts['check:fast'].split(' && ')).toEqual(steps.slice(0, -1));
+    expect(pkg.scripts['check:fast'].split(' && ')).toEqual(steps.slice(0, -2));
+    expect(workflow.match(/^ +run: cargo test --workspace --locked$/gm)).toHaveLength(2);
     // The six plugin/hook lint gates and the `hooks:bind` writer are gone: the
-    // only surviving `lint:` scripts are the one the seven-step gate names, the
+    // only surviving `lint:` scripts are the one the eight-step gate names, the
     // two docs linters and the fixer.
     expect(
       Object.keys(pkg.scripts)
@@ -1196,6 +1244,21 @@ describe('Group E release and documentation contracts', () => {
     for (const lifecycleSkill of [review, fix, work]) expect(lifecycleSkill).toContain('`overdesigned-plan`');
     expect(fix).toContain('up to `B` loops');
     expect(work).toContain('user-approved simplification invalidates superseded evidence and requires fresh review');
+  });
+
+  test('a correction carries its type from diagnosis to verification', () => {
+    const report = read('skills/report/SKILL.md');
+    const fix = read('skills/fix/SKILL.md');
+    const verify = read('skills/verify/SKILL.md');
+    const review = read('skills/review/SKILL.md');
+
+    expect(report).toContain('Correction type: <root / containment / guard');
+    expect(report).toContain('is recommended only together with the follow-up that removes the root');
+    expect(fix).toContain('`correction=root` or `correction=containment`');
+    expect(fix).toContain('a gap closed by containment is never reported as a root fix');
+    expect(verify).toContain('| A cause is removed |');
+    expect(verify).toContain('which a containment also achieves');
+    expect(review).toContain('without naming the follow-up that removes the root, is a MEDIUM gap');
   });
 
   test('fix owns repair budgets and callers carry its policy across handoffs', () => {

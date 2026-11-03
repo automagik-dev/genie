@@ -10,7 +10,7 @@ bun run check
 bun test path/to/file.test.ts
 ```
 
-The full gate runs type checking, Biome, dead-code analysis, skill/wish/council linting, and tests. Tests use `bun:test`; fixtures belong under a temporary directory and must isolate `GENIE_HOME` when touching global state.
+The full gate runs type checking, Biome, dead-code analysis, skill/wish/council linting, tests, and `cargo test --locked` (fails, never skips, without cargo). Tests use `bun:test`; fixtures belong under a temporary directory and must isolate `GENIE_HOME` when touching global state.
 
 ## Architecture
 

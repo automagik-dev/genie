@@ -1,6 +1,6 @@
 {
   "name": "@automagik/genie",
-  "version": "6.261103.3",
+  "version": "6.261103.7",
   "description": "Collaborative terminal toolkit for human + AI workflows. NOTE: npm distribution discontinued 2026-05-09 — install via `curl -fsSL https://raw.githubusercontent.com/automagik-dev/genie/main/install.sh | bash` (cosign + SLSA verified). See https://docs.automagik.dev/genie/security",
   "license": "Apache-2.0",
   "type": "module",
@@ -19,12 +19,13 @@
     "lint:docs-markdown": "ls docs/incident-response/canisterworm.mdx docs/installation.mdx docs/release-notes.mdx > /dev/null && markdownlint-cli2 SECURITY.md docs/incident-response/canisterworm.mdx docs/installation.mdx docs/release-notes.mdx",
     "format": "biome format --write .",
     "test": "bun test",
+    "test:cargo": "bash scripts/cargo-gate.sh",
     "typecheck": "tsc --noEmit && tsc --noEmit -p plugins/dsh-genie-board/tsconfig.json && tsc --noEmit -p plugins/dsh-workflow-loader/tsconfig.json",
     "dead-code": "bunx knip",
     "skills:lint": "bun run scripts/skills-lint.ts",
     "wishes:lint": "bun run scripts/wishes-lint.ts",
     "lint:complexity-budget": "bun run scripts/complexity-budget.ts",
-    "check": "bun run typecheck && bun run lint && bun run dead-code && bun run skills:lint && bun run wishes:lint && bun run lint:complexity-budget && bun test",
+    "check": "bun run typecheck && bun run lint && bun run dead-code && bun run skills:lint && bun run wishes:lint && bun run lint:complexity-budget && bun test && bun run test:cargo",
     "check:fast": "bun run typecheck && bun run lint && bun run dead-code && bun run skills:lint && bun run wishes:lint && bun run lint:complexity-budget",
     "verify:release": "scripts/verify-release.sh",
     "build:plugin": "bun run --cwd plugins/dsh-genie-board build"

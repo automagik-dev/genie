@@ -179,7 +179,27 @@ pub fn task_key(task: &str, forge: &str, url: &str) -> Option<String> {
 
 /// SHA-256 of the six parts joined with NUL, `''` for an absent part.
 pub fn dedupe_key(project: &str, task: &str, event: TaskEvent, url: &str, commit: &str, worktree: &str) -> String {
-    let framed = [project, task, event.as_str(), url, commit, worktree].join("\0");
+    lifecycle_dedupe_key(project, task, event, url, commit, worktree, 0)
+}
+
+/// The key of an event in lifecycle `generation` (R1-32): a `created` event's generation is the
+/// number of `closed` events its task already has, so a task restarted after its PR closed gets a
+/// new key even at the same base and worktree, while a retry inside one lifecycle keeps its key.
+/// Generation 0 adds no part, so every key of the first lifecycle is the six-part key unchanged.
+pub fn lifecycle_dedupe_key(
+    project: &str,
+    task: &str,
+    event: TaskEvent,
+    url: &str,
+    commit: &str,
+    worktree: &str,
+    generation: i64,
+) -> String {
+    let mut framed = [project, task, event.as_str(), url, commit, worktree].join("\0");
+    if generation > 0 {
+        framed.push('\0');
+        framed.push_str(&generation.to_string());
+    }
     Sha256::digest(framed.as_bytes()).iter().map(|b| format!("{b:02x}")).collect()
 }
 
@@ -454,14 +474,82 @@ impl Store {
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
-    /// The transaction body: dedupe, apply, insert, upsert. The caller owns BEGIN/COMMIT.
-    fn record_tx(&self, project: &str, key: &str, dedupe: &str, row: &EventRow) -> Result<Option<StoredEvent>, Error> {
+    /// The `v7_tasks` row of `task_key` in this project, if any.
+    pub fn task(&self, task_key: &str) -> Result<Option<TaskRow>, Error> {
+        Ok(self.tasks()?.into_iter().find(|t| t.task_key == task_key))
+    }
+
+    /// The latest `created` event whose worktree is `worktree`: the task a worktree belongs to.
+    pub fn created_in(&self, worktree: &str) -> Result<Option<StoredEvent>, Error> {
+        Ok(self.events()?.into_iter().rev().find(|e| e.event == TaskEvent::Created && e.worktree == worktree))
+    }
+
+    /// Tx 1 of `start`: reserve the next `gn-<seq>` in one short `BEGIN IMMEDIATE`, with no git or
+    /// network inside it. The sequence is past every reservation and every `gn-` task already
+    /// recorded (forge-sync may have seen one first), so an id is never reused.
+    pub fn reserve_gn(&self) -> Result<String, Error> {
+        let project = self.location.project.as_str();
+        let at = self.clock.now();
+        retry_busy(|| {
+            self.conn.execute_batch("BEGIN IMMEDIATE")?;
+            let body = || -> rusqlite::Result<String> {
+                let seq: i64 = self.conn.query_row(
+                    "SELECT 1 + max(coalesce((SELECT max(seq) FROM v7_task_ids WHERE project = ?1), 0), \
+                     coalesce((SELECT max(CAST(substr(task, 4) AS INTEGER)) FROM v7_tasks \
+                     WHERE project = ?1 AND task GLOB 'gn-[0-9]*'), 0))",
+                    [project],
+                    |r| r.get(0),
+                )?;
+                let task = format!("gn-{seq}");
+                self.conn.execute(
+                    "INSERT INTO v7_task_ids (project, seq, task, reserved_at) VALUES (?1, ?2, ?3, ?4)",
+                    params![project, seq, task, at],
+                )?;
+                Ok(task)
+            };
+            match body().and_then(|task| self.conn.execute_batch("COMMIT").map(|()| task)) {
+                Ok(task) => Ok(task),
+                Err(e) => {
+                    let _ = self.conn.execute_batch("ROLLBACK");
+                    Err(e.into())
+                }
+            }
+        })
+    }
+
+    /// A failed `start` marks its reservation abandoned: the gap stays, the id is never reused.
+    pub fn abandon_gn(&self, task: &str) -> Result<(), Error> {
+        retry_busy(|| {
+            self.conn.execute(
+                "UPDATE v7_task_ids SET abandoned = 1 WHERE project = ?1 AND task = ?2",
+                [self.location.project.as_str(), task],
+            )?;
+            Ok(())
+        })
+    }
+
+    /// The transaction body: key, dedupe, apply, insert, upsert. The caller owns BEGIN/COMMIT. Returns
+    /// the dedupe key with the stored event, `None` for a duplicate.
+    fn record_tx(&self, project: &str, key: &str, row: &EventRow) -> Result<(String, Option<StoredEvent>), Error> {
+        // Read inside the transaction, so the generation is the replay's: the closed events before this one.
+        let generation: i64 = if row.event == TaskEvent::Created {
+            self.conn.query_row(
+                "SELECT count(*) FROM v7_task_events WHERE project = ?1 AND task_key = ?2 AND event = 'closed'",
+                [project, key],
+                |r| r.get(0),
+            )?
+        } else {
+            0
+        };
+        let dedupe =
+            lifecycle_dedupe_key(project, &row.task, row.event, &row.url, &row.commit, &row.worktree, generation);
+        let dedupe = dedupe.as_str();
         let seen: Option<i64> = self
             .conn
             .query_row("SELECT seq FROM v7_task_events WHERE dedupe_key = ?1", [dedupe], |r| r.get(0))
             .optional()?;
         if seen.is_some() {
-            return Ok(None);
+            return Ok((dedupe.to_string(), None));
         }
         let state: Option<String> = self
             .conn
@@ -509,7 +597,7 @@ impl Store {
             params![project, key, row.task, next.as_str(), row.title, row.lead, row.forge, row.url, row.branch, seq, at],
         )?;
         let sql = format!("SELECT {EVENT_COLUMNS} FROM v7_task_events WHERE seq = ?1");
-        Ok(Some(self.conn.query_row(&sql, [seq], event_from_row)?))
+        Ok((dedupe.to_string(), Some(self.conn.query_row(&sql, [seq], event_from_row)?)))
     }
 }
 
@@ -528,10 +616,9 @@ pub fn record(store: &Store, project: &str, row: &EventRow) -> Result<Recorded, 
             return Err(Error::InvalidEvent(format!("a NUL byte in {name}")));
         }
     }
-    let dedupe = dedupe_key(project, &row.task, row.event, &row.url, &row.commit, &row.worktree);
-    let stored = retry_busy(|| {
+    let (dedupe, stored) = retry_busy(|| {
         store.conn.execute_batch("BEGIN IMMEDIATE")?;
-        match store.record_tx(project, &key, &dedupe, row) {
+        match store.record_tx(project, &key, row) {
             Ok(stored) => match store.conn.execute_batch("COMMIT") {
                 Ok(()) => Ok(stored),
                 Err(e) => {
