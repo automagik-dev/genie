@@ -11,15 +11,17 @@ const FIXTURE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/rth-t
 const MIRROR: &str = include_str!("../src/lib.rs");
 /// The source the fixture was taken from, relative to the rth checkout.
 const UNFOLD_CRATE: &str = "bench/staging/agentd-rc5.13.3/ws/crates/rth-tools";
-const SOURCES: [&str; 3] = ["src/parts.rs", "src/authority.rs", "src/profile.rs"];
+const SOURCES: [&str; 4] = ["src/parts.rs", "src/authority.rs", "src/profile.rs", "src/web.rs"];
 /// Every mirrored declaration, by the Unfold file that declares it.
-const ITEMS: [(&str, &str); 6] = [
+const ITEMS: [(&str, &str); 7] = [
     ("src/parts.rs", "PartOutput"),
     ("src/parts.rs", "Part"),
     ("src/authority.rs", "SCHEMA"),
     ("src/authority.rs", "PartTool"),
     ("src/authority.rs", "PartManifest"),
     ("src/profile.rs", "Effect"),
+    // `Part::call` returns it, so its bounds are part of the contract.
+    ("src/web.rs", "BoxFuture"),
 ];
 
 fn sha256(bytes: &[u8]) -> String {
@@ -54,7 +56,7 @@ fn extract(source: &str, name: &str) -> Option<String> {
     let lines: Vec<&str> = source.lines().collect();
     let starts = |l: &str| {
         let t = l.trim_start();
-        ["pub struct ", "pub enum ", "pub trait ", "pub const "].iter().any(|kw| {
+        ["pub struct ", "pub enum ", "pub trait ", "pub const ", "pub type "].iter().any(|kw| {
             t.strip_prefix(kw)
                 .and_then(|rest| rest.strip_prefix(name))
                 .is_some_and(|rest| rest.starts_with([' ', ':', '{', '<', ';']))
@@ -175,6 +177,8 @@ fn changing_one_field_on_either_side_fails() {
     for (from, to) in [
         ("pub title: String,", "pub label: String,"),
         ("pub is_error: bool,", "pub is_error: u8,"),
+        // A future that is no longer Send.
+        ("Output = T> + Send + 'a>>", "Output = T> + 'a>>"),
         ("#[serde(rename_all = \"snake_case\")]", ""),
         ("Irreversible,", "Irreversible, Unknown,"),
     ] {

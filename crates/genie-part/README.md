@@ -10,8 +10,9 @@ crate that Unfold may later load as a part implements this trait. Licensed Apach
 `tests/parity.rs` compares the declarations in `src/lib.rs` with a frozen, normalized copy of
 Unfold's, `tests/fixtures/rth-tools-part.txt`. The copy records where it came from
 (`bench/staging/agentd-rc5.13.3/ws/crates/rth-tools` in the rth checkout, `src/parts.rs`,
-`src/authority.rs` and `src/profile.rs`), the SHA-256 of each of those files, and the SHA-256 of its
-own body, so a hand edit is caught too. Normalization drops comments, whitespace and closing
+`src/authority.rs`, `src/profile.rs`, and `src/web.rs` for the `BoxFuture` alias `Part::call`
+returns), the SHA-256 of each of those files, and the SHA-256 of its own body, so a hand edit is
+caught too. Normalization drops comments, whitespace and closing
 trailing commas; derives, serde attributes, names and types are compared as written.
 
 The test proves only that the mirror still equals the copy. It never reads Unfold, so it cannot see
@@ -19,9 +20,9 @@ Unfold move.
 
 ## Re-pin
 
-Run it when Unfold publishes `rth-tools`, or changes any of the three files.
+Run it when Unfold publishes `rth-tools`, or changes any of the four files.
 
-1. Check the sources moved: `shasum -a 256 <rth>/bench/staging/agentd-rc5.13.3/ws/crates/rth-tools/src/{parts,authority,profile}.rs`
+1. Check the sources moved: `shasum -a 256 <rth>/bench/staging/agentd-rc5.13.3/ws/crates/rth-tools/src/{parts,authority,profile,web}.rs`
    against the `source` lines of the fixture. A new location means updating `UNFOLD_CRATE` in
    `tests/parity.rs` first.
 2. Copy and normalize, which rewrites the fixture with fresh digests:
