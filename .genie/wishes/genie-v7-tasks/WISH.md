@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | APPROVED |
+| **Status** | SHIPPED |
 | **Slug** | `genie-v7-tasks` |
 | **Date** | 2026-11-03 |
 | **Author** | Genie Orchestrator t247 |
@@ -93,16 +93,16 @@ Every row is DESIGN.md's IN row of the same number, copied in substance; where t
 
 T1–T10 are DESIGN.md's criteria. Additions from round 4 are marked **(M2)**, **(M3)**, **(M4)**, **(L1)**, **(L2)**, **(L3)**, **(L4)**, and from the plan review **(R-M1)**..**(R-M5)**, **(R-L3)**, **(R-L4)**; none removes or loosens a DESIGN.md case. The owning group is in brackets.
 
-- [ ] **T1 workspace [1a and 1b on the CI legs; 1c on the tarball runners]:** `cargo test --workspace --locked` and `cargo clippy -D warnings` pass on the linux and darwin CI legs, and each tarball runner builds its Rust target (Decision 9). **Proof:** `.github/workflows/ci.yml`, `.github/workflows/build-tarballs.yml`.
-- [ ] **T2 part parity [1a]:** the mirror's `Part`, `PartManifest` and `Effect` match the frozen Unfold copy; changing one field on either side fails the test. **Proof:** `crates/genie-part/tests/parity.rs`.
-- [ ] **T3 state machine [1a]:** accepted created→opened→merged and opened→closed; accepted for a task with no `created` event none→opened, none→merged and none→closed; **(R-M5)** accepted closed→created; refused merged→opened, merged→closed, created→created (a second `created` while the task is still at `created`), and **(M2)** a `created` for a task already at `opened` or **(R-M5)** `merged`; a repeated identical event is a no-op; lanes derive as Working, Review, Merged and **(L1)** Closed. **Proof:** `crates/genie-tasks/tests/apply.rs`. **Store case (R-L4):** two untracked PRs in one project get two `task_key`s (`pr:<forge>:<url>`) and neither ever refuses the other's events. **Proof:** `crates/genie-tasks/tests/shared_db.rs`.
-- [ ] **T4 128 writers [1a]:** 128 processes append distinct events to one repository's `genie.db` at once; every event lands exactly once; `v7_tasks` equals a replay of `v7_task_events`, **(L4)** with each untracked task's `task_key` rebuilt from the event row's own `forge` and `url`; `tasks.jsonl` holds each row once, with no torn line. **(R-M3)** The processes are the test binary re-executed through `std::env::current_exe()` under an env marker. **Proof:** `crates/genie-tasks/tests/parallel.rs`.
-- [ ] **T5 forge-sync [1b]:** a fake `gh` on PATH serves canned PRs. First run appends opened, merged and closed rows with the right `type`, `counted` and `exclude_reason`; `pushed_after_open` 0 and 2 cases; task ids taken from the branch, an untracked branch keyed by its PR url, and **(M3)** its export row carries `task: null` (JSON null, superseding DESIGN.md's `''` per Decision 3) plus its `url`; two untracked PRs in a row (A opens and merges, then B opens and merges) yield four rows and two `v7_tasks` rows with no refusal; a PR that opened and merged between two syncs yields one `merged` row; a canned PR with a NUL in its url or head commit **(L2)** exits 1 and writes nothing; a merged PR the forge also marks closed yields only `merged`; a second run, including the untracked-branch PR, appends nothing; **(M4)** a PR whose head moves between two syncs yields exactly one `opened` row, whose `commit` is the head seen by the first sync, and its `merged` row's `commit` is the merge sha; **(R-M4)** a PR recorded `closed` that the forge later reports merged (a reopen): the `merged` event is skipped with one stderr line naming the task and refusal, the other PRs of the same pass are committed, the run exits 0, and the next run does not re-report it (the cursor advanced); a run within 60 s makes no forge call; a fake `glab` on a non-github host gives the same results; a missing `gh` exits 1 and writes nothing. **Proof:** `crates/genie-forge/tests/sync.rs`; **(R-L3)** the exit codes through the binary in `crates/genie-rs/tests/exit_codes.rs`.
-- [ ] **T6 front door [1b; real-binary smoke 1c]:** `genie task forge-sync --project <fixture> --json` runs `genie-rs` with `--json` intact and returns its exit code. With no binary it exits 1 and names the fix. **(R-M1)** In 1b the binary is a stub `GENIE_RS_BIN` script that echoes its argv and exits with a chosen code (0, 1 and 2 each asserted), so the test runs on both CI legs without cargo and never skips. **Proof:** `src/term-commands/v5-task.test.ts`. In 1c, the post-extract smoke runs `genie task v7-list --json` against the tarball's own `plugins/genie-rs/bin/genie-rs` and asserts exit 0. **Proof:** `scripts/fresh-install-smoke.ts`.
-- [ ] **T7 start and push [2]:** upstream `dev` one commit ahead of the local `dev`: `start --title "sync hangs" --lead b-x` creates `fix/gn-1-sync-hangs` at the upstream tip, in `<repo>.worktrees/gn-1-sync-hangs`, with no upstream; it writes one `created` event and one export row, and writes no FETCH_HEAD, and any `refs/genie/start/*` ref it leaves behind is swept by the next start; 32 parallel starts mint 32 distinct `gn` ids and 32 worktrees; a plain `git push` from the worktree exits non-zero, `genie-rs push` reaches the fixture's bare remote, pushing another branch or any of `dev`, `main`, `master` is refused, and the main checkout can still push; a failed fetch exits 1 and leaves no worktree, branch or event; **(M2)** `start gh-5` when `gh-5` is already `opened` (recorded by forge-sync) exits 2 before any fetch, leaving no `refs/genie/start/*` ref, no `v7_task_ids` reservation, no worktree, no branch, no event and no export row, and makes no network call; **(R-M5)** the same for a task at `merged`; **(R-M5)** `start gh-6` when `gh-6`'s PR closed without merging succeeds and records a new `created` event. **Proof:** `crates/genie-tasks/tests/start.rs`; **(R-L3)** every exit-code assertion through the binary in `crates/genie-rs/tests/start_push.rs`.
-- [ ] **T8 payload [1c]:** the built tarball carries `plugins/genie-rs/bin/genie-rs` for its platform, with mode 0755 after promotion, and still exactly the 8 top-level members. **Proof:** the existing payload-member tests (`scripts/release-docs.test.ts`, `src/lib/install-promotion.test.ts`) plus a new mode assertion.
-- [ ] **T9 shared database, both init orders [1a; binary exit code 1b]:** TS initializes first and Rust adds its `v7_` tables, or Rust is run first and refuses with exit 2 and the init remedy, leaving no file behind. In both orders, the existing TS task, board, export, import `--replace`, delete and `doctor` tests then pass unchanged, `roadmap.json` gains nothing, and the `v7_` rows survive `import --replace`. **Proof:** `crates/genie-tasks/tests/shared_db.rs` over a Rust-built TS-shaped facsimile at `user_version = 1` (open, add tables and version row, refusal, `user_version` and every pre-existing table byte-identical, no file left behind); `src/term-commands/v5-task.test.ts` and `src/term-commands/v5-board.test.ts` seeded from `crates/genie-tasks/src/schema.sql` (Decision 11); **(R-L3)** the refusal's exit 2 through the binary in `crates/genie-rs/tests/exit_codes.rs` (1b).
-- [ ] **T10 rebuild [1a]:** after deleting `tasks.jsonl`, `export --rebuild --project <fixture>` restores its rows exactly, and other projects' rows are left alone. Concurrent appends: a rebuild run while 16 processes append leaves every committed event in the file at least once, and exactly once after deduping on `dedupe_key`; **(L3)** rebuild opens its `v7_task_events` read only after it holds the exclusive lock on `tasks.jsonl.lock`, asserted by the test (an event committed while rebuild waits for the lock is in the rebuilt file). **(R-M3)** The 16 appenders are the re-executed test binary. **Proof:** `crates/genie-tasks/tests/export.rs` (through the library call; 1b's `genie-rs export --rebuild` is a thin dispatch over it).
+- [x] **T1 workspace [1a and 1b on the CI legs; 1c on the tarball runners]:** `cargo test --workspace --locked` and `cargo clippy -D warnings` pass on the linux and darwin CI legs, and each tarball runner builds its Rust target (Decision 9). **Proof:** `.github/workflows/ci.yml`, `.github/workflows/build-tarballs.yml`.
+- [x] **T2 part parity [1a]:** the mirror's `Part`, `PartManifest` and `Effect` match the frozen Unfold copy; changing one field on either side fails the test. **Proof:** `crates/genie-part/tests/parity.rs`.
+- [x] **T3 state machine [1a]:** accepted created→opened→merged and opened→closed; accepted for a task with no `created` event none→opened, none→merged and none→closed; **(R-M5)** accepted closed→created; refused merged→opened, merged→closed, created→created (a second `created` while the task is still at `created`), and **(M2)** a `created` for a task already at `opened` or **(R-M5)** `merged`; a repeated identical event is a no-op; lanes derive as Working, Review, Merged and **(L1)** Closed. **Proof:** `crates/genie-tasks/tests/apply.rs`. **Store case (R-L4):** two untracked PRs in one project get two `task_key`s (`pr:<forge>:<url>`) and neither ever refuses the other's events. **Proof:** `crates/genie-tasks/tests/shared_db.rs`.
+- [x] **T4 128 writers [1a]:** 128 processes append distinct events to one repository's `genie.db` at once; every event lands exactly once; `v7_tasks` equals a replay of `v7_task_events`, **(L4)** with each untracked task's `task_key` rebuilt from the event row's own `forge` and `url`; `tasks.jsonl` holds each row once, with no torn line. **(R-M3)** The processes are the test binary re-executed through `std::env::current_exe()` under an env marker. **Proof:** `crates/genie-tasks/tests/parallel.rs`.
+- [x] **T5 forge-sync [1b]:** a fake `gh` on PATH serves canned PRs. First run appends opened, merged and closed rows with the right `type`, `counted` and `exclude_reason`; `pushed_after_open` 0 and 2 cases; task ids taken from the branch, an untracked branch keyed by its PR url, and **(M3)** its export row carries `task: null` (JSON null, superseding DESIGN.md's `''` per Decision 3) plus its `url`; two untracked PRs in a row (A opens and merges, then B opens and merges) yield four rows and two `v7_tasks` rows with no refusal; a PR that opened and merged between two syncs yields one `merged` row; a canned PR with a NUL in its url or head commit **(L2)** exits 1 and writes nothing; a merged PR the forge also marks closed yields only `merged`; a second run, including the untracked-branch PR, appends nothing; **(M4)** a PR whose head moves between two syncs yields exactly one `opened` row, whose `commit` is the head seen by the first sync, and its `merged` row's `commit` is the merge sha; **(R-M4)** a PR recorded `closed` that the forge later reports merged (a reopen): the `merged` event is skipped with one stderr line naming the task and refusal, the other PRs of the same pass are committed, the run exits 0, and the next run does not re-report it (the cursor advanced); a run within 60 s makes no forge call; a fake `glab` on a non-github host gives the same results; a missing `gh` exits 1 and writes nothing. **Proof:** `crates/genie-forge/tests/sync.rs`; **(R-L3)** the exit codes through the binary in `crates/genie-rs/tests/exit_codes.rs`.
+- [x] **T6 front door [1b; real-binary smoke 1c]:** `genie task forge-sync --project <fixture> --json` runs `genie-rs` with `--json` intact and returns its exit code. With no binary it exits 1 and names the fix. **(R-M1)** In 1b the binary is a stub `GENIE_RS_BIN` script that echoes its argv and exits with a chosen code (0, 1 and 2 each asserted), so the test runs on both CI legs without cargo and never skips. **Proof:** `src/term-commands/v5-task.test.ts`. In 1c, the post-extract smoke runs `genie task v7-list --json` against the tarball's own `plugins/genie-rs/bin/genie-rs` and asserts exit 0. **Proof:** `scripts/fresh-install-smoke.ts`.
+- [x] **T7 start and push [2]:** upstream `dev` one commit ahead of the local `dev`: `start --title "sync hangs" --lead b-x` creates `fix/gn-1-sync-hangs` at the upstream tip, in `<repo>.worktrees/gn-1-sync-hangs`, with no upstream; it writes one `created` event and one export row, and writes no FETCH_HEAD, and any `refs/genie/start/*` ref it leaves behind is swept by the next start; 32 parallel starts mint 32 distinct `gn` ids and 32 worktrees; a plain `git push` from the worktree exits non-zero, `genie-rs push` reaches the fixture's bare remote, pushing another branch or any of `dev`, `main`, `master` is refused, and the main checkout can still push; a failed fetch exits 1 and leaves no worktree, branch or event; **(M2)** `start gh-5` when `gh-5` is already `opened` (recorded by forge-sync) exits 2 before any fetch, leaving no `refs/genie/start/*` ref, no `v7_task_ids` reservation, no worktree, no branch, no event and no export row, and makes no network call; **(R-M5)** the same for a task at `merged`; **(R-M5)** `start gh-6` when `gh-6`'s PR closed without merging succeeds and records a new `created` event. **Proof:** `crates/genie-tasks/tests/start.rs`; **(R-L3)** every exit-code assertion through the binary in `crates/genie-rs/tests/start_push.rs`.
+- [x] **T8 payload [1c]:** the built tarball carries `plugins/genie-rs/bin/genie-rs` for its platform, with mode 0755 after promotion, and still exactly the 8 top-level members. **Proof:** the existing payload-member tests (`scripts/release-docs.test.ts`, `src/lib/install-promotion.test.ts`) plus a new mode assertion.
+- [x] **T9 shared database, both init orders [1a; binary exit code 1b]:** TS initializes first and Rust adds its `v7_` tables, or Rust is run first and refuses with exit 2 and the init remedy, leaving no file behind. In both orders, the existing TS task, board, export, import `--replace`, delete and `doctor` tests then pass unchanged, `roadmap.json` gains nothing, and the `v7_` rows survive `import --replace`. **Proof:** `crates/genie-tasks/tests/shared_db.rs` over a Rust-built TS-shaped facsimile at `user_version = 1` (open, add tables and version row, refusal, `user_version` and every pre-existing table byte-identical, no file left behind); `src/term-commands/v5-task.test.ts` and `src/term-commands/v5-board.test.ts` seeded from `crates/genie-tasks/src/schema.sql` (Decision 11); **(R-L3)** the refusal's exit 2 through the binary in `crates/genie-rs/tests/exit_codes.rs` (1b).
+- [x] **T10 rebuild [1a]:** after deleting `tasks.jsonl`, `export --rebuild --project <fixture>` restores its rows exactly, and other projects' rows are left alone. Concurrent appends: a rebuild run while 16 processes append leaves every committed event in the file at least once, and exactly once after deduping on `dedupe_key`; **(L3)** rebuild opens its `v7_task_events` read only after it holds the exclusive lock on `tasks.jsonl.lock`, asserted by the test (an event committed while rebuild waits for the lock is in the rebuilt file). **(R-M3)** The 16 appenders are the re-executed test binary. **Proof:** `crates/genie-tasks/tests/export.rs` (through the library call; 1b's `genie-rs export --rebuild` is a thin dispatch over it).
 
 ## Execution Strategy
 
@@ -161,13 +161,13 @@ Each group runs after the one before it, on its own branch and PR: 1a → 1b →
   - CI: the cargo steps on both legs, which 1b's crates inherit unchanged.
 
 **Acceptance Criteria:**
-- [ ] T1 for the 1a crates on the linux and `unit-darwin` CI legs (Decision 9).
-- [ ] T2 part parity.
-- [ ] T3 state machine, including the M2 and MEDIUM-5 refusals, `closed → created`, the L1 Closed lane, and the two-untracked-PR store case in `shared_db.rs`.
-- [ ] T4 128 writers, including the L4 replay, through the re-executed test binary.
-- [ ] T9 shared database, both init orders, through `shared_db.rs` (Rust facsimile, no `bun` needed) and the TS fixtures seeded from `schema.sql`.
-- [ ] T10 rebuild, including the L3 lock-then-read case.
-- [ ] The lock sidecar is the only lock mechanism added, and it adds no crate (M1, L6): `Cargo.lock` holds no file-lock crate.
+- [x] T1 for the 1a crates on the linux and `unit-darwin` CI legs (Decision 9).
+- [x] T2 part parity.
+- [x] T3 state machine, including the M2 and MEDIUM-5 refusals, `closed → created`, the L1 Closed lane, and the two-untracked-PR store case in `shared_db.rs`.
+- [x] T4 128 writers, including the L4 replay, through the re-executed test binary.
+- [x] T9 shared database, both init orders, through `shared_db.rs` (Rust facsimile, no `bun` needed) and the TS fixtures seeded from `schema.sql`.
+- [x] T10 rebuild, including the L3 lock-then-read case.
+- [x] The lock sidecar is the only lock mechanism added, and it adds no crate (M1, L6): `Cargo.lock` holds no file-lock crate.
 
 **Validation:**
 ```bash
@@ -197,11 +197,11 @@ cargo fmt --check && cargo clippy --workspace --all-targets --locked -- -D warni
   - The `genie-rs` crate, built by `cargo build --release --locked -p genie-rs`, which 1c stages.
 
 **Acceptance Criteria:**
-- [ ] T1 for all four crates on the CI legs (Decision 9).
-- [ ] T5 forge-sync, including M3 `task: null`, the M4 one-`opened` case, the L2 NUL exit 1 and the MEDIUM-4 refused-transition case.
-- [ ] T6 front door on the stub binary, on both CI legs, with no skip.
-- [ ] T9's binary exit 2 in `crates/genie-rs/tests/exit_codes.rs`.
-- [ ] T2, T3, T4, T9 and T10 still pass unchanged.
+- [x] T1 for all four crates on the CI legs (Decision 9).
+- [x] T5 forge-sync, including M3 `task: null`, the M4 one-`opened` case, the L2 NUL exit 1 and the MEDIUM-4 refused-transition case.
+- [x] T6 front door on the stub binary, on both CI legs, with no skip.
+- [x] T9's binary exit 2 in `crates/genie-rs/tests/exit_codes.rs`.
+- [x] T2, T3, T4, T9 and T10 still pass unchanged.
 
 **Validation:**
 ```bash
@@ -230,11 +230,11 @@ cargo fmt --check && cargo clippy --workspace --all-targets --locked -- -D warni
 - Produces: `plugins/genie-rs/bin/genie-rs` (mode 0755) in every tarball, the path the 1b pass-through helper resolves second; a `bun run check` that runs `cargo test --locked`.
 
 **Acceptance Criteria:**
-- [ ] T1 on the tarball runners: each builds its Rust target.
-- [ ] T8 payload.
-- [ ] T6's real-binary smoke passes in the post-extract `fresh-install-smoke.ts` run.
-- [ ] `bun run check` with `cargo` absent from PATH exits non-zero and prints one line naming the remedy. **Proof (R-L4):** `scripts/cargo-gate.test.ts` runs `scripts/cargo-gate.sh` with a PATH that holds no `cargo` and asserts a non-zero exit and exactly one stderr line naming the remedy.
-- [ ] The staged payload `LICENSE` is the Apache-2.0 text.
+- [x] T1 on the tarball runners: each builds its Rust target.
+- [x] T8 payload.
+- [x] T6's real-binary smoke passes in the post-extract `fresh-install-smoke.ts` run.
+- [x] `bun run check` with `cargo` absent from PATH exits non-zero and prints one line naming the remedy. **Proof (R-L4):** `scripts/cargo-gate.test.ts` runs `scripts/cargo-gate.sh` with a PATH that holds no `cargo` and asserts a non-zero exit and exactly one stderr line naming the remedy.
+- [x] The staged payload `LICENSE` is the Apache-2.0 text.
 
 **Validation:**
 ```bash
@@ -268,9 +268,9 @@ bun run check && bun test scripts/release-docs.test.ts src/lib/install-promotion
 - Produces: `start` prints `{task, branch, worktree, lead, base_sha}` to stdout for `automagik-herdr worker --task <id> --worktree <dir> --lead <bot>`; branch `<type>/<id>-<slug>`; worktree `<repo>.worktrees/<id>-<slug>`; per-worktree `remote.<remote>.pushurl = genie-no-push://use-genie-rs-push`.
 
 **Acceptance Criteria:**
-- [ ] T7 start and push (Success Criteria), including the M2 already-opened case, the MEDIUM-5 merged and closed cases, and the failed-fetch exit 1.
-- [ ] T3 still passes unchanged (group 2 adds no state-machine transition; `closed → created` landed in 1a).
-- [ ] The full 1a, 1b and 1c suites still pass.
+- [x] T7 start and push (Success Criteria), including the M2 already-opened case, the MEDIUM-5 merged and closed cases, and the failed-fetch exit 1.
+- [x] T3 still passes unchanged (group 2 adds no state-machine transition; `closed → created` landed in 1a).
+- [x] The full 1a, 1b and 1c suites still pass.
 
 **Validation:**
 ```bash
@@ -335,6 +335,21 @@ _The read-only reviewer returns evidence; the invoking orchestrator appends a ti
   - **LOW-3** binary exit codes were asserted from `genie-tasks` tests, where `CARGO_BIN_EXE_*` is unavailable → they live in `crates/genie-rs/tests/` (`exit_codes.rs` in 1b, `start_push.rs` in 2).
   - **LOW-4** row 5 lost the forge cache path; the two-untracked-PR store case sat in `apply.rs`; 1c's cargo-absent criterion had no proof; one branch was named for four PRs → cache path restored, the store case proven in `shared_db.rs`, `scripts/cargo-gate.test.ts` named, and the Branch row gives each group its own branch and PR.
 - **Persisted status:** APPROVED (orchestrator t247, 2026-11-03).
+
+### Delivery — 2026-11-03
+
+All four groups are merged to `dev`. Each got an independent review that returned SHIP.
+
+| Group | PR | Merge sha | Final review verdict |
+|-------|----|-----------|----------------------|
+| 1a | [#3201](https://github.com/automagik-dev/genie/pull/3201) | `67a49e9313132a02a980332e6d367d136d953774` | SHIP, round 2 |
+| 1b | [#3205](https://github.com/automagik-dev/genie/pull/3205) | `ecde925fb8bfa86e92b7a773be747c2ae90f4e41` | SHIP, round 4, after one extra repair the owner approved |
+| 1c | [#3206](https://github.com/automagik-dev/genie/pull/3206) | `e3a1b24a17fd013db9b2cec3f43aaf1fd7041953` | SHIP, round 1 |
+| 2 | [#3209](https://github.com/automagik-dev/genie/pull/3209) | `5b045f057b471691e9b394842db3cd269d5a4e04` | SHIP, round 3 |
+
+- **Ticked:** the Success Criteria T1–T10 and every group's acceptance criteria, each against the criterion→proof table in its merged PR's body.
+- **Not ticked:** the QA Criteria. No merged PR proves them; they need a live run (a real remote, the dev tarballs, usagemeter t22b).
+- **Persisted status:** SHIPPED (orchestrator t2ww, 2026-11-03).
 
 ---
 
