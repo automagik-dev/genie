@@ -115,14 +115,59 @@ function writeWish(slug: string, status: string): void {
   writeFileSync(join(dir, 'WISH.md'), `# Wish: ${slug}\n\n| Field | Value |\n|---|---|\n| **Status** | ${status} |\n`);
 }
 
+// T9 (genie-v7-tasks): every test in this file runs beside Rust-owned `v7_` rows. TS initializes
+// genie.db first, then the tables are added from the one DDL file the Rust store also loads.
+const V7_SCHEMA_SQL = readFileSync(
+  join(import.meta.dir, '..', '..', 'crates', 'genie-tasks', 'src', 'schema.sql'),
+  'utf-8',
+);
+
+function seedV7(cwd: string): void {
+  const db = openDb({ cwd });
+  try {
+    db.exec(V7_SCHEMA_SQL);
+    db.query(
+      `INSERT INTO v7_task_events (project, task_key, task, event, forge, url, "commit", at, dedupe_key)
+       VALUES (?, 'gh-1', 'gh-1', 'opened', 'github', 'https://github.com/o/r/pull/1', 'v7seedcommit', '2026-11-03T00:00:00Z', 'v7-seed-key')`,
+    ).run(cwd);
+    db.query(
+      `INSERT INTO v7_tasks (project, task_key, task, state, title, last_seq, updated_at)
+       VALUES (?, 'gh-1', 'gh-1', 'opened', 'v7 seed title', 1, '2026-11-03T00:00:00Z')`,
+    ).run(cwd);
+  } finally {
+    db.close();
+  }
+}
+
 beforeEach(() => {
   repo = mkdtempSync(join(tmpdir(), 'genie-v5-board-'));
   git(repo, 'init', '-b', 'main');
   git(repo, 'commit', '--allow-empty', '-m', 'init');
+  seedV7(repo);
 });
 
 afterEach(() => {
   rmSync(repo, { recursive: true, force: true });
+});
+
+describe('T9: Rust-owned v7_ tables beside the TS tables', () => {
+  test('the board shows TS cards only, and the v7_ rows stay', async () => {
+    expect((await manualTask(repo, 'create', '--title', 'a TS card beside v7 rows')).code).toBe(0);
+    for (const args of [[], ['--json']]) {
+      const r = await board(repo, ...args);
+      expect(r.code).toBe(0);
+      expect(r.stdout).toContain('a TS card beside v7 rows');
+      for (const marker of ['v7_', 'v7 seed title', 'gh-1']) {
+        expect(r.stdout).not.toContain(marker);
+      }
+    }
+    const db = openDb({ cwd: repo });
+    try {
+      expect(db.query('SELECT count(*) AS n FROM v7_tasks').get()).toEqual({ n: 1 });
+    } finally {
+      db.close();
+    }
+  });
 });
 
 describe('board render', () => {

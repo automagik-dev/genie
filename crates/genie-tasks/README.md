@@ -63,5 +63,4 @@ Each append holds a shared lock on `tasks.jsonl.lock` and makes one `write(2)` o
 descriptor. `export::rebuild(genie_home, projects)` takes the exclusive lock, only then reads each
 project's events, keeps every other project's rows, and replaces the file by temp + fsync + rename. An
 event committed before that read but appended after the rename appears twice; readers dedupe on
-`dedupe_key`. The
-locks are `std::fs::File::lock_shared` / `File::lock`; no crate.
+`dedupe_key`. The locks are `std::fs::File::lock_shared` / `File::lock`; no crate.

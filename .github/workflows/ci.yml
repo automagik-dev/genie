@@ -110,6 +110,22 @@ jobs:
       - name: Typecheck
         run: bun run typecheck
 
+      # Rust (genie-v7-tasks): the workspace's rust-toolchain.toml pins 1.94.0;
+      # this installs it with the two components the gate needs.
+      - uses: dtolnay/rust-toolchain@dc08e2af391d489dff6d14cf743e574f7d1229c5 # 1.94.0
+        with:
+          toolchain: 1.94.0
+          components: rustfmt, clippy
+
+      - name: Cargo fmt
+        run: cargo fmt --check
+
+      - name: Cargo clippy
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+      - name: Cargo test
+        run: cargo test --workspace --locked
+
       - name: Lint
         run: bunx biome check .
 
@@ -178,6 +194,22 @@ jobs:
 
       - name: Typecheck
         run: bun run typecheck
+
+      # Rust (genie-v7-tasks): the workspace's rust-toolchain.toml pins 1.94.0;
+      # this installs it with the two components the gate needs.
+      - uses: dtolnay/rust-toolchain@dc08e2af391d489dff6d14cf743e574f7d1229c5 # 1.94.0
+        with:
+          toolchain: 1.94.0
+          components: rustfmt, clippy
+
+      - name: Cargo fmt
+        run: cargo fmt --check
+
+      - name: Cargo clippy
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+      - name: Cargo test
+        run: cargo test --workspace --locked
 
       - name: Test
         run: bun test
