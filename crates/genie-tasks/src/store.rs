@@ -29,8 +29,7 @@ pub const BUSY_TIMEOUT: Duration = Duration::from_millis(5_000);
 /// `sqlite-open.ts` `BUSY_RETRY_DELAYS_MS`: paces the rare straggler that outlives busy_timeout.
 const BUSY_RETRY_MS: [u64; 5] = [25, 50, 100, 200, 400];
 /// The remedy DESIGN.md row 3 names for a missing or uninitialized database.
-pub const INIT_REMEDY: &str =
-    "run 'genie task list' once in this repository to initialize .genie/genie.db";
+pub const INIT_REMEDY: &str = "run 'genie task list' once in this repository to initialize .genie/genie.db";
 
 #[derive(Debug)]
 pub enum Error {
@@ -79,22 +78,16 @@ impl fmt::Display for Error {
             Error::NoDatabase(p) => {
                 write!(f, "no Genie database at {}: {INIT_REMEDY}", p.display())
             }
-            Error::Uninitialized(p) => write!(
-                f,
-                "{} is not initialized (user_version = 0): {INIT_REMEDY}",
-                p.display()
-            ),
+            Error::Uninitialized(p) => {
+                write!(f, "{} is not initialized (user_version = 0): {INIT_REMEDY}", p.display())
+            }
             Error::GlobalDatabase(p) => write!(
                 f,
                 "refusing {}: that file is GENIE_HOME/genie.db, the machine-scope database; run the command from inside a repository",
                 p.display()
             ),
             Error::NewerSchema { path, version } => {
-                write!(
-                    f,
-                    "{} has v7 schema {version}, newer than this build's {SCHEMA_VERSION}",
-                    path.display()
-                )
+                write!(f, "{} has v7 schema {version}, newer than this build's {SCHEMA_VERSION}", path.display())
             }
             Error::InvalidEvent(why) => write!(f, "invalid event: {why}"),
             Error::Export { seq, source } => {
@@ -167,9 +160,8 @@ impl EventRow {
 
     /// The task id, or `pr:<forge>:<url>` for a PR/MR whose branch carries none.
     pub fn task_key(&self) -> Result<String, Error> {
-        task_key(&self.task, &self.forge, &self.url).ok_or_else(|| {
-            Error::InvalidEvent("an event with no task id needs its forge and url".into())
-        })
+        task_key(&self.task, &self.forge, &self.url)
+            .ok_or_else(|| Error::InvalidEvent("an event with no task id needs its forge and url".into()))
     }
 }
 
@@ -185,19 +177,9 @@ pub fn task_key(task: &str, forge: &str, url: &str) -> Option<String> {
 }
 
 /// SHA-256 of the six parts joined with NUL, `''` for an absent part.
-pub fn dedupe_key(
-    project: &str,
-    task: &str,
-    event: TaskEvent,
-    url: &str,
-    commit: &str,
-    worktree: &str,
-) -> String {
+pub fn dedupe_key(project: &str, task: &str, event: TaskEvent, url: &str, commit: &str, worktree: &str) -> String {
     let framed = [project, task, event.as_str(), url, commit, worktree].join("\0");
-    Sha256::digest(framed.as_bytes())
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect()
+    Sha256::digest(framed.as_bytes()).iter().map(|b| format!("{b:02x}")).collect()
 }
 
 /// One `v7_task_events` row.
@@ -247,7 +229,9 @@ pub enum Recorded {
         state: TaskState,
     },
     /// The identical event is already recorded: a no-op, with no export row.
-    Duplicate { dedupe_key: String },
+    Duplicate {
+        dedupe_key: String,
+    },
 }
 
 /// Where a project's database is, resolved and checked but not opened.
@@ -276,9 +260,7 @@ pub fn project_root(repo: &Path) -> Result<PathBuf, Error> {
     let root = match out {
         Ok(o) if o.status.success() => {
             let common = PathBuf::from(String::from_utf8_lossy(&o.stdout).trim());
-            common
-                .parent()
-                .map_or_else(|| repo.to_path_buf(), Path::to_path_buf)
+            common.parent().map_or_else(|| repo.to_path_buf(), Path::to_path_buf)
         }
         _ => repo.to_path_buf(),
     };
@@ -287,10 +269,7 @@ pub fn project_root(repo: &Path) -> Result<PathBuf, Error> {
 
 /// The path with its directory canonicalized (the file itself may not exist).
 fn canonical_file(path: &Path) -> PathBuf {
-    match (
-        path.parent().and_then(|d| fs::canonicalize(d).ok()),
-        path.file_name(),
-    ) {
+    match (path.parent().and_then(|d| fs::canonicalize(d).ok()), path.file_name()) {
         (Some(dir), Some(name)) => dir.join(name),
         _ => path.to_path_buf(),
     }
@@ -306,10 +285,7 @@ pub fn locate(repo: &Path, genie_home: &Path) -> Result<Location, Error> {
     if !db_path.is_file() {
         return Err(Error::NoDatabase(db_path));
     }
-    Ok(Location {
-        project: root.to_string_lossy().into_owned(),
-        db_path,
-    })
+    Ok(Location { project: root.to_string_lossy().into_owned(), db_path })
 }
 
 fn is_busy(e: &rusqlite::Error) -> bool {
@@ -347,20 +323,13 @@ pub fn open_store(repo: &Path) -> Result<Store, Error> {
 pub fn open_store_at(repo: &Path, genie_home: &Path) -> Result<Store, Error> {
     let location = locate(repo, genie_home)?;
     let conn = retry_busy(|| open_conn(&location.db_path))?;
-    Ok(Store {
-        conn,
-        location,
-        genie_home: genie_home.to_path_buf(),
-        clock: Box::new(SystemClock),
-    })
+    Ok(Store { conn, location, genie_home: genie_home.to_path_buf(), clock: Box::new(SystemClock) })
 }
 
 fn open_conn(db_path: &Path) -> Result<Connection, Error> {
     // No CREATE flag: a file that vanished since `locate` is an error, never a new database.
-    let conn = Connection::open_with_flags(
-        db_path,
-        OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX,
-    )?;
+    let conn =
+        Connection::open_with_flags(db_path, OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX)?;
     conn.busy_timeout(BUSY_TIMEOUT)?;
     // Read before any pragma that writes, so a version-0 file stays byte-identical.
     let user_version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
@@ -369,31 +338,20 @@ fn open_conn(db_path: &Path) -> Result<Connection, Error> {
     }
     let _mode: String = conn.query_row("PRAGMA journal_mode = WAL", [], |r| r.get(0))?;
     conn.execute_batch("PRAGMA foreign_keys = ON; PRAGMA synchronous = FULL;")?;
-    let version: Option<i64> =
-        match conn.query_row("SELECT version FROM v7_schema WHERE id = 1", [], |r| {
-            r.get(0)
-        }) {
-            Ok(v) => Some(v),
-            Err(rusqlite::Error::QueryReturnedNoRows) => None,
-            Err(rusqlite::Error::SqliteFailure(_, Some(msg))) if msg.contains("no such table") => {
-                None
-            }
-            Err(e) => return Err(e.into()),
-        };
+    let version: Option<i64> = match conn.query_row("SELECT version FROM v7_schema WHERE id = 1", [], |r| r.get(0)) {
+        Ok(v) => Some(v),
+        Err(rusqlite::Error::QueryReturnedNoRows) => None,
+        Err(rusqlite::Error::SqliteFailure(_, Some(msg))) if msg.contains("no such table") => None,
+        Err(e) => return Err(e.into()),
+    };
     match version {
         Some(SCHEMA_VERSION) => {}
         Some(v) => {
-            return Err(Error::NewerSchema {
-                path: db_path.to_path_buf(),
-                version: v,
-            });
+            return Err(Error::NewerSchema { path: db_path.to_path_buf(), version: v });
         }
         None => {
             conn.execute_batch("BEGIN IMMEDIATE")?;
-            if let Err(e) = conn
-                .execute_batch(SCHEMA_SQL)
-                .and_then(|()| conn.execute_batch("COMMIT"))
-            {
+            if let Err(e) = conn.execute_batch(SCHEMA_SQL).and_then(|()| conn.execute_batch("COMMIT")) {
                 let _ = conn.execute_batch("ROLLBACK");
                 return Err(e.into());
             }
@@ -496,38 +454,20 @@ impl Store {
     }
 
     /// The transaction body: dedupe, apply, insert, upsert. The caller owns BEGIN/COMMIT.
-    fn record_tx(
-        &self,
-        project: &str,
-        key: &str,
-        dedupe: &str,
-        row: &EventRow,
-    ) -> Result<Option<StoredEvent>, Error> {
+    fn record_tx(&self, project: &str, key: &str, dedupe: &str, row: &EventRow) -> Result<Option<StoredEvent>, Error> {
         let seen: Option<i64> = self
             .conn
-            .query_row(
-                "SELECT seq FROM v7_task_events WHERE dedupe_key = ?1",
-                [dedupe],
-                |r| r.get(0),
-            )
+            .query_row("SELECT seq FROM v7_task_events WHERE dedupe_key = ?1", [dedupe], |r| r.get(0))
             .optional()?;
         if seen.is_some() {
             return Ok(None);
         }
         let state: Option<String> = self
             .conn
-            .query_row(
-                "SELECT state FROM v7_tasks WHERE project = ?1 AND task_key = ?2",
-                [project, key],
-                |r| r.get(0),
-            )
+            .query_row("SELECT state FROM v7_tasks WHERE project = ?1 AND task_key = ?2", [project, key], |r| r.get(0))
             .optional()?;
-        let next = apply(
-            state.as_deref().and_then(TaskState::parse),
-            &row.event,
-            self.clock.as_ref(),
-        )
-        .map_err(Error::Refused)?;
+        let next = apply(state.as_deref().and_then(TaskState::parse), &row.event, self.clock.as_ref())
+            .map_err(Error::Refused)?;
         let at = row.at.clone().unwrap_or_else(|| self.clock.now());
         self.conn.execute(
             "INSERT INTO v7_task_events (project, task_key, task, event, forge, url, branch, \"commit\", worktree, \
@@ -587,14 +527,7 @@ pub fn record(store: &Store, project: &str, row: &EventRow) -> Result<Recorded, 
             return Err(Error::InvalidEvent(format!("a NUL byte in {name}")));
         }
     }
-    let dedupe = dedupe_key(
-        project,
-        &row.task,
-        row.event,
-        &row.url,
-        &row.commit,
-        &row.worktree,
-    );
+    let dedupe = dedupe_key(project, &row.task, row.event, &row.url, &row.commit, &row.worktree);
     let stored = retry_busy(|| {
         store.conn.execute_batch("BEGIN IMMEDIATE")?;
         match store.record_tx(project, &key, &dedupe, row) {
@@ -614,13 +547,7 @@ pub fn record(store: &Store, project: &str, row: &EventRow) -> Result<Recorded, 
     let Some(stored) = stored else {
         return Ok(Recorded::Duplicate { dedupe_key: dedupe });
     };
-    export::append(&store.genie_home, &export::line(&stored)).map_err(|source| Error::Export {
-        seq: stored.seq,
-        source,
-    })?;
-    Ok(Recorded::Appended {
-        seq: stored.seq,
-        dedupe_key: dedupe,
-        state: stored.event.target(),
-    })
+    export::append(&store.genie_home, &export::line(&stored))
+        .map_err(|source| Error::Export { seq: stored.seq, source })?;
+    Ok(Recorded::Appended { seq: stored.seq, dedupe_key: dedupe, state: stored.event.target() })
 }

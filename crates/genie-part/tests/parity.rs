@@ -7,10 +7,7 @@ use std::path::Path;
 
 use sha2::{Digest, Sha256};
 
-const FIXTURE: &str = concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/tests/fixtures/rth-tools-part.txt"
-);
+const FIXTURE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/rth-tools-part.txt");
 const MIRROR: &str = include_str!("../src/lib.rs");
 /// The source the fixture was taken from, relative to the rth checkout.
 const UNFOLD_CRATE: &str = "bench/staging/agentd-rc5.13.3/ws/crates/rth-tools";
@@ -26,10 +23,7 @@ const ITEMS: [(&str, &str); 6] = [
 ];
 
 fn sha256(bytes: &[u8]) -> String {
-    Sha256::digest(bytes)
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect()
+    Sha256::digest(bytes).iter().map(|b| format!("{b:02x}")).collect()
 }
 
 /// Whitespace and trailing commas are formatting, not contract: keep one space only between two
@@ -60,13 +54,11 @@ fn extract(source: &str, name: &str) -> Option<String> {
     let lines: Vec<&str> = source.lines().collect();
     let starts = |l: &str| {
         let t = l.trim_start();
-        ["pub struct ", "pub enum ", "pub trait ", "pub const "]
-            .iter()
-            .any(|kw| {
-                t.strip_prefix(kw)
-                    .and_then(|rest| rest.strip_prefix(name))
-                    .is_some_and(|rest| rest.starts_with([' ', ':', '{', '<', ';']))
-            })
+        ["pub struct ", "pub enum ", "pub trait ", "pub const "].iter().any(|kw| {
+            t.strip_prefix(kw)
+                .and_then(|rest| rest.strip_prefix(name))
+                .is_some_and(|rest| rest.starts_with([' ', ':', '{', '<', ';']))
+        })
     };
     let at = lines.iter().position(|l| starts(l))?;
     let mut first = at;
@@ -110,21 +102,14 @@ fn parse(text: &str) -> Fixture {
         } else if let Some(rest) = line.strip_prefix("item ") {
             let mut parts = rest.splitn(3, ' ');
             let (file, name, decl) = (parts.next(), parts.next(), parts.next());
-            items.push((
-                file.unwrap().into(),
-                name.unwrap().into(),
-                decl.unwrap_or("").into(),
-            ));
+            items.push((file.unwrap().into(), name.unwrap().into(), decl.unwrap_or("").into()));
         }
     }
     Fixture { body_sha256, items }
 }
 
 fn body(items: &[(String, String, String)]) -> String {
-    items
-        .iter()
-        .map(|(f, n, d)| format!("item {f} {n} {d}\n"))
-        .collect()
+    items.iter().map(|(f, n, d)| format!("item {f} {n} {d}\n")).collect()
 }
 
 /// The re-pin step: rebuild the fixture from an Unfold checkout of `rth-tools`.
@@ -142,8 +127,7 @@ fn repin(unfold_crate: &Path) -> String {
         .iter()
         .map(|(src, name)| {
             let text = fs::read_to_string(unfold_crate.join(src)).unwrap();
-            let decl =
-                extract(&text, name).unwrap_or_else(|| panic!("{name} is not declared in {src}"));
+            let decl = extract(&text, name).unwrap_or_else(|| panic!("{name} is not declared in {src}"));
             (src.to_string(), name.to_string(), decl)
         })
         .collect();
@@ -160,16 +144,10 @@ fn drift(fixture: &Fixture, mirror: &str) -> Vec<String> {
         found.push("the fixture body does not match its recorded sha256 (hand-edited?)".into());
     }
     for (src, name) in ITEMS {
-        let frozen = fixture
-            .items
-            .iter()
-            .find(|(f, n, _)| f == src && n == name)
-            .map(|(_, _, d)| d);
+        let frozen = fixture.items.iter().find(|(f, n, _)| f == src && n == name).map(|(_, _, d)| d);
         let mine = extract(mirror, name);
         if frozen != mine.as_ref() {
-            found.push(format!(
-                "{name} ({src}): frozen {frozen:?}, mirror {mine:?}"
-            ));
+            found.push(format!("{name} ({src}): frozen {frozen:?}, mirror {mine:?}"));
         }
     }
     found
@@ -181,24 +159,13 @@ fn the_mirror_equals_the_frozen_unfold_copy() {
         fs::write(FIXTURE, repin(Path::new(&dir))).unwrap();
     }
     let fixture = parse(&fs::read_to_string(FIXTURE).unwrap());
-    assert_eq!(
-        fixture.items.len(),
-        ITEMS.len(),
-        "every mirrored declaration is in the fixture"
-    );
+    assert_eq!(fixture.items.len(), ITEMS.len(), "every mirrored declaration is in the fixture");
     for src in SOURCES {
         let pinned = fs::read_to_string(FIXTURE).unwrap();
-        assert!(
-            pinned.contains(&format!("source {src} sha256=")),
-            "the fixture records {src} and its sha256"
-        );
+        assert!(pinned.contains(&format!("source {src} sha256=")), "the fixture records {src} and its sha256");
     }
     let found = drift(&fixture, MIRROR);
-    assert!(
-        found.is_empty(),
-        "the mirror drifted from the frozen copy:\n{}",
-        found.join("\n")
-    );
+    assert!(found.is_empty(), "the mirror drifted from the frozen copy:\n{}", found.join("\n"));
 }
 
 #[test]
@@ -213,24 +180,14 @@ fn changing_one_field_on_either_side_fails() {
     ] {
         assert!(MIRROR.contains(from), "the mutation {from:?} applies");
         let found = drift(&parse(&pinned), &MIRROR.replacen(from, to, 1));
-        assert!(
-            !found.is_empty(),
-            "mirror mutation {from:?} -> {to:?} went unnoticed"
-        );
+        assert!(!found.is_empty(), "mirror mutation {from:?} -> {to:?} went unnoticed");
     }
     // The frozen side, with its digest recomputed so only the comparison can catch it.
     let mut fixture = parse(&pinned);
-    let item = fixture
-        .items
-        .iter_mut()
-        .find(|(_, n, _)| n == "PartTool")
-        .unwrap();
+    let item = fixture.items.iter_mut().find(|(_, n, _)| n == "PartTool").unwrap();
     item.2 = item.2.replace("pub name:String", "pub name:Option<String>");
     fixture.body_sha256 = sha256(body(&fixture.items).as_bytes());
-    assert!(
-        !drift(&fixture, MIRROR).is_empty(),
-        "a changed frozen field went unnoticed"
-    );
+    assert!(!drift(&fixture, MIRROR).is_empty(), "a changed frozen field went unnoticed");
     // A hand edit that leaves the digest alone is caught by the digest.
     let mut edited = parse(&pinned);
     edited.items[0].2.push(' ');
@@ -246,13 +203,7 @@ fn the_wire_shape_is_unfolds() {
     assert_eq!(manifest.schema, SCHEMA);
     assert_eq!(manifest.tools[0].effect, Effect::Reversible);
     let back = serde_json::to_string(&manifest.tools[0]).unwrap();
-    assert_eq!(
-        back, r#"{"name":"forge_sync","effect":"reversible"}"#,
-        "an absent description is not written"
-    );
+    assert_eq!(back, r#"{"name":"forge_sync","effect":"reversible"}"#, "an absent description is not written");
     let unknown = json.replace(r#""title""#, r#""extra":1,"title""#);
-    assert!(
-        serde_json::from_str::<PartManifest>(&unknown).is_err(),
-        "unknown fields are refused"
-    );
+    assert!(serde_json::from_str::<PartManifest>(&unknown).is_err(), "unknown fields are refused");
 }

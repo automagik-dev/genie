@@ -67,22 +67,14 @@ pub fn line(e: &StoredEvent) -> String {
 
 fn lock_file(genie_home: &Path) -> io::Result<File> {
     fs::create_dir_all(genie_home)?;
-    OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .truncate(false)
-        .open(genie_home.join(LOCK))
+    OpenOptions::new().read(true).write(true).create(true).truncate(false).open(genie_home.join(LOCK))
 }
 
 /// Append one row: one `write(2)` under the shared sidecar lock. A short write is an error.
 pub fn append(genie_home: &Path, line: &str) -> io::Result<()> {
     let lock = lock_file(genie_home)?;
     lock.lock_shared()?;
-    let mut file = OpenOptions::new()
-        .append(true)
-        .create(true)
-        .open(genie_home.join(FILE))?;
+    let mut file = OpenOptions::new().append(true).create(true).open(genie_home.join(FILE))?;
     let written = file.write(line.as_bytes())?;
     if written != line.len() {
         return Err(io::Error::new(
@@ -114,10 +106,7 @@ pub fn rebuild(genie_home: &Path, projects: &[PathBuf]) -> Result<RebuildReport,
     let lock = lock_file(genie_home)?;
     lock.lock()?;
     let mut rebuilt = String::new();
-    let mut report = RebuildReport {
-        projects: Vec::new(),
-        kept: 0,
-    };
+    let mut report = RebuildReport { projects: Vec::new(), kept: 0 };
     for loc in &located {
         let conn = Connection::open_with_flags(
             &loc.db_path,
@@ -150,9 +139,7 @@ pub fn rebuild(genie_home: &Path, projects: &[PathBuf]) -> Result<RebuildReport,
         Err(e) if e.kind() == io::ErrorKind::NotFound => {}
         Err(e) => return Err(e.into()),
     }
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |d| d.as_nanos());
+    let nanos = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_nanos());
     let tmp = genie_home.join(format!("{FILE}.tmp-{}-{nanos}", process::id()));
     let written = (|| {
         let mut file = OpenOptions::new().write(true).create_new(true).open(&tmp)?;

@@ -65,9 +65,5 @@ pub trait Part: Send + Sync {
     fn schema(&self, tool: &str) -> Option<(String, Value)>;
     /// Whether every call to `tool` waits for the person's tap.
     fn asks(&self, tool: &str) -> bool;
-    fn call<'a>(
-        &'a self,
-        tool: &'a str,
-        args: Map<String, Value>,
-    ) -> BoxFuture<'a, Result<PartOutput, String>>;
+    fn call<'a>(&'a self, tool: &'a str, args: Map<String, Value>) -> BoxFuture<'a, Result<PartOutput, String>>;
 }

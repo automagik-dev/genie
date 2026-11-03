@@ -35,12 +35,7 @@ pub enum Lane {
 }
 
 impl TaskEvent {
-    pub const ALL: [TaskEvent; 4] = [
-        TaskEvent::Created,
-        TaskEvent::Opened,
-        TaskEvent::Merged,
-        TaskEvent::Closed,
-    ];
+    pub const ALL: [TaskEvent; 4] = [TaskEvent::Created, TaskEvent::Opened, TaskEvent::Merged, TaskEvent::Closed];
 
     pub fn as_str(self) -> &'static str {
         match self {
@@ -67,12 +62,7 @@ impl TaskEvent {
 }
 
 impl TaskState {
-    pub const ALL: [TaskState; 4] = [
-        TaskState::Created,
-        TaskState::Opened,
-        TaskState::Merged,
-        TaskState::Closed,
-    ];
+    pub const ALL: [TaskState; 4] = [TaskState::Created, TaskState::Opened, TaskState::Merged, TaskState::Closed];
 
     pub fn as_str(self) -> &'static str {
         match self {
@@ -108,9 +98,7 @@ pub struct SystemClock;
 
 impl Clock for SystemClock {
     fn now(&self) -> String {
-        let secs = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_or(0, |d| d.as_secs());
+        let secs = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs());
         rfc3339(secs)
     }
 }
@@ -154,12 +142,7 @@ pub struct Refusal {
 impl fmt::Display for Refusal {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let from = self.from.map_or("none", TaskState::as_str);
-        write!(
-            f,
-            "refused {from} -> {}: {}",
-            self.event.as_str(),
-            self.reason()
-        )
+        write!(f, "refused {from} -> {}: {}", self.event.as_str(), self.reason())
     }
 }
 
@@ -179,11 +162,7 @@ impl Refusal {
 /// The whole transition table. A task first seen by forge-sync may start at any forge event;
 /// `merged` is final; `closed` is final for forge events and accepts only a new `created`, so a
 /// PR closed without merging can be started again.
-pub fn apply(
-    state: Option<TaskState>,
-    event: &TaskEvent,
-    now: &dyn Clock,
-) -> Result<TaskState, Refusal> {
+pub fn apply(state: Option<TaskState>, event: &TaskEvent, now: &dyn Clock) -> Result<TaskState, Refusal> {
     use TaskEvent as E;
     use TaskState as S;
     let accepted = match (state, *event) {
@@ -196,13 +175,5 @@ pub fn apply(
         (Some(S::Closed), E::Created) => true,
         (Some(S::Closed), E::Opened | E::Merged | E::Closed) => false,
     };
-    if accepted {
-        Ok(event.target())
-    } else {
-        Err(Refusal {
-            from: state,
-            event: *event,
-            at: now.now(),
-        })
-    }
+    if accepted { Ok(event.target()) } else { Err(Refusal { from: state, event: *event, at: now.now() }) }
 }

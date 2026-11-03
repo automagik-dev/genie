@@ -9,6 +9,6 @@ pub mod store;
 pub use export::{RebuildReport, rebuild};
 pub use state::{Clock, FixedClock, Lane, Refusal, SystemClock, TaskEvent, TaskState, apply};
 pub use store::{
-    Error, EventRow, Location, Recorded, SCHEMA_SQL, SCHEMA_VERSION, Store, StoredEvent, TaskRow,
-    dedupe_key, genie_home, locate, open_store, open_store_at, project_root, record, task_key,
+    Error, EventRow, Location, Recorded, SCHEMA_SQL, SCHEMA_VERSION, Store, StoredEvent, TaskRow, dedupe_key,
+    genie_home, locate, open_store, open_store_at, project_root, record, task_key,
 };

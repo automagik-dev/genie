@@ -8,8 +8,7 @@ use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 use genie_tasks::{
-    EventRow, StoredEvent, SystemClock, TaskEvent, TaskRow, apply, open_store, open_store_at,
-    record, task_key,
+    EventRow, StoredEvent, SystemClock, TaskEvent, TaskRow, apply, open_store, open_store_at, record, task_key,
 };
 
 const ROLE: &str = "GENIE_TASKS_T4_WRITER";
@@ -24,17 +23,12 @@ fn tmp_dir() -> PathBuf {
 }
 
 fn initialized_repo(repo: &Path) {
-    assert!(
-        Command::new("git")
-            .args(["init", "-q", "-b", "main"])
-            .current_dir(repo)
-            .status()
-            .unwrap()
-            .success()
-    );
+    assert!(Command::new("git").args(["init", "-q", "-b", "main"]).current_dir(repo).status().unwrap().success());
     let db = rusqlite::Connection::open(repo.join(".genie/genie.db")).unwrap();
-    db.execute_batch("PRAGMA journal_mode = WAL; CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT); PRAGMA user_version = 1;")
-        .unwrap();
+    db.execute_batch(
+        "PRAGMA journal_mode = WAL; CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT); PRAGMA user_version = 1;",
+    )
+    .unwrap();
 }
 
 /// Writer `i`: an even writer starts a tracked task and opens its PR; an odd one records an
@@ -49,19 +43,11 @@ fn writer(i: usize) {
     }
     let store = open_store(&repo).unwrap();
     let url = format!("https://github.com/o/r/pull/{i}");
-    let mut first = EventRow::new(if i.is_multiple_of(2) {
-        TaskEvent::Created
-    } else {
-        TaskEvent::Opened
-    });
+    let mut first = EventRow::new(if i.is_multiple_of(2) { TaskEvent::Created } else { TaskEvent::Opened });
     first.forge = "github".into();
     first.title = format!("task {i}");
     first.lead = format!("b-{i}");
-    let mut second = EventRow::new(if i.is_multiple_of(2) {
-        TaskEvent::Opened
-    } else {
-        TaskEvent::Merged
-    });
+    let mut second = EventRow::new(if i.is_multiple_of(2) { TaskEvent::Opened } else { TaskEvent::Merged });
     second.forge = "github".into();
     second.url = url.clone();
     if i.is_multiple_of(2) {
@@ -85,19 +71,11 @@ fn replay(events: &[StoredEvent]) -> Vec<TaskRow> {
     let mut tasks: BTreeMap<String, TaskRow> = BTreeMap::new();
     for e in events {
         let key = task_key(&e.task, &e.forge, &e.url).expect("every event has a key");
-        assert_eq!(
-            key, e.task_key,
-            "L4: the stored key is the one its own forge and url give"
-        );
+        assert_eq!(key, e.task_key, "L4: the stored key is the one its own forge and url give");
         let prev = tasks.get(&key);
-        let state = apply(prev.map(|t| t.state), &e.event, &SystemClock)
-            .expect("a recorded event was accepted");
+        let state = apply(prev.map(|t| t.state), &e.event, &SystemClock).expect("a recorded event was accepted");
         let keep = |new: &str, old: Option<&String>| {
-            if new.is_empty() {
-                old.cloned().unwrap_or_default()
-            } else {
-                new.to_string()
-            }
+            if new.is_empty() { old.cloned().unwrap_or_default() } else { new.to_string() }
         };
         let row = TaskRow {
             project: e.project.clone(),
@@ -144,11 +122,7 @@ fn one_hundred_twenty_eight_writers() {
     fs::write(&go, "").unwrap();
     for (i, child) in children.into_iter().enumerate() {
         let out = child.wait_with_output().unwrap();
-        assert!(
-            out.status.success(),
-            "writer {i} failed: {}",
-            String::from_utf8_lossy(&out.stderr)
-        );
+        assert!(out.status.success(), "writer {i} failed: {}", String::from_utf8_lossy(&out.stderr));
     }
 
     let store = open_store_at(&repo, &home).unwrap();
@@ -156,36 +130,17 @@ fn one_hundred_twenty_eight_writers() {
     assert_eq!(events.len(), WRITERS * 2, "every event lands exactly once");
     let keys: HashSet<&str> = events.iter().map(|e| e.dedupe_key.as_str()).collect();
     assert_eq!(keys.len(), events.len());
-    let per_task: HashSet<(&str, TaskEvent)> = events
-        .iter()
-        .map(|e| (e.task_key.as_str(), e.event))
-        .collect();
-    assert_eq!(
-        per_task.len(),
-        WRITERS * 2,
-        "no writer's event is lost or doubled"
-    );
-    assert_eq!(
-        store.tasks().unwrap(),
-        replay(&events),
-        "v7_tasks equals a replay of v7_task_events"
-    );
+    let per_task: HashSet<(&str, TaskEvent)> = events.iter().map(|e| (e.task_key.as_str(), e.event)).collect();
+    assert_eq!(per_task.len(), WRITERS * 2, "no writer's event is lost or doubled");
+    assert_eq!(store.tasks().unwrap(), replay(&events), "v7_tasks equals a replay of v7_task_events");
 
     let text = fs::read_to_string(home.join("tasks.jsonl")).unwrap();
     assert!(text.ends_with('\n'), "no torn last line");
     let mut exported = HashSet::new();
     for line in text.lines() {
-        let row: serde_json::Value =
-            serde_json::from_str(line).unwrap_or_else(|e| panic!("torn line {line:?}: {e}"));
-        assert!(
-            exported.insert(row["dedupe_key"].as_str().unwrap().to_string()),
-            "a row is exported twice: {line}"
-        );
+        let row: serde_json::Value = serde_json::from_str(line).unwrap_or_else(|e| panic!("torn line {line:?}: {e}"));
+        assert!(exported.insert(row["dedupe_key"].as_str().unwrap().to_string()), "a row is exported twice: {line}");
     }
-    assert_eq!(
-        exported.iter().map(String::as_str).collect::<HashSet<_>>(),
-        keys,
-        "tasks.jsonl holds each row once"
-    );
+    assert_eq!(exported.iter().map(String::as_str).collect::<HashSet<_>>(), keys, "tasks.jsonl holds each row once");
     fs::remove_dir_all(&dir).unwrap();
 }
