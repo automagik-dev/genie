@@ -467,7 +467,7 @@ describe('doctor wiring', () => {
         databaseRoot: fx.root,
         pluginProbe: { cliAvailable: false, status: 'unavailable', installed: false, detail: 'fixture absent' },
         projectContext: null,
-        bunVersion: '1.4.4',
+        bunVersion: '1.3.10',
         bunPath: '/usr/bin/bun',
       });
       return { output: buffer, exitCode: typeof process.exitCode === 'number' ? process.exitCode : 0 };

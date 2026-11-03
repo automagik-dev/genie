@@ -272,7 +272,7 @@ describe('Group E release and documentation contracts', () => {
     }
     expect(publish).toContain('bun scripts/build-delivery-evidence.ts');
     expect(publish).toContain('bash scripts/materialize-release-subjects.sh');
-    expect(publish).toContain('bun-version: 1.4.4');
+    expect(publish).toContain('bun-version: 1.3.11');
     expect(publish).toContain('predicate-type: https://github.com/${{ github.repository }}/delivery-evidence/v1');
     expect(publish).toContain('actions/attest@67422f5511b7ff725f4dbd6fb9bd2cd925c65a8d');
     expect(publish).toContain('${DESCRIPTOR}.sigstore.json');

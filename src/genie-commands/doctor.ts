@@ -80,7 +80,7 @@ import {
 
 type CheckStatus = 'pass' | 'warn' | 'fail';
 
-export const MINIMUM_BUN_VERSION = '1.4.4';
+export const MINIMUM_BUN_VERSION = '1.3.10';
 
 export interface CheckResult {
   name: string;

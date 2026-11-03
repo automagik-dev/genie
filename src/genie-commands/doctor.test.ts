@@ -105,7 +105,7 @@ function isolatedDoctorDeps(root = join(isolatedHome, 'repo')) {
     databaseRoot: root,
     pluginProbe: NO_CODEX,
     codexActivation: null,
-    bunVersion: '1.4.4',
+    bunVersion: '1.3.10',
     bunPath: '/usr/bin/bun',
   };
 }
@@ -119,17 +119,16 @@ describe('Bun runtime contract', () => {
   });
 
   test('fails below or outside the declared minimum and passes equal/above versions', () => {
-    const belowMinimum = evaluateBunVersion('1.4.3', '/usr/bin/bun')[0];
+    const belowMinimum = evaluateBunVersion('1.3.9', '/usr/bin/bun')[0];
     expect(belowMinimum).toMatchObject({ status: 'fail' });
     expect(belowMinimum.suggestion).toContain('bun upgrade');
-    expect(evaluateBunVersion('1.3.11', '/usr/bin/bun')[0]).toMatchObject({ status: 'fail' });
     expect(evaluateBunVersion('not-semver', '/usr/bin/bun')[0]).toMatchObject({ status: 'fail' });
-    expect(evaluateBunVersion('1.4.4-canary.1', '/usr/bin/bun')[0]).toMatchObject({ status: 'fail' });
-    expect(evaluateBunVersion('1.4.4-rc.9+build.1', '/usr/bin/bun')[0]).toMatchObject({ status: 'fail' });
-    expect(evaluateBunVersion('1.4.4', '/usr/bin/bun')[0]).toMatchObject({ status: 'pass' });
-    expect(evaluateBunVersion('1.4.4+build.1', '/usr/bin/bun')[0]).toMatchObject({ status: 'pass' });
-    expect(evaluateBunVersion('1.4.5-canary.1', '/usr/bin/bun')[0]).toMatchObject({ status: 'pass' });
-    expect(evaluateBunVersion('1.5.0', '/usr/bin/bun')[0]).toMatchObject({ status: 'pass' });
+    expect(evaluateBunVersion('1.3.10-canary.1', '/usr/bin/bun')[0]).toMatchObject({ status: 'fail' });
+    expect(evaluateBunVersion('1.3.10-rc.9+build.1', '/usr/bin/bun')[0]).toMatchObject({ status: 'fail' });
+    expect(evaluateBunVersion('1.3.10', '/usr/bin/bun')[0]).toMatchObject({ status: 'pass' });
+    expect(evaluateBunVersion('1.3.10+build.1', '/usr/bin/bun')[0]).toMatchObject({ status: 'pass' });
+    expect(evaluateBunVersion('1.3.11-canary.1', '/usr/bin/bun')[0]).toMatchObject({ status: 'pass' });
+    expect(evaluateBunVersion('1.4.0', '/usr/bin/bun')[0]).toMatchObject({ status: 'pass' });
   });
 });
 
@@ -174,7 +173,7 @@ describe('doctorCommand', () => {
     expect(versioned).toEqual([]);
     const bun = (json.checks as Array<{ name: string; detail?: string }>).find((c) => c.name === 'bun present');
     expect(bun?.name).toBe('bun present');
-    expect(bun?.detail).toContain('1.4.4');
+    expect(bun?.detail).toContain('1.3.10');
   });
 
   test('healthy checkout has no failing checks', () => {
