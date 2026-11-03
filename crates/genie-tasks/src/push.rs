@@ -1,5 +1,5 @@
 //! `push`: the one way out of a task worktree (DESIGN.md IN row 9). It pushes
-//! `HEAD:refs/heads/<recorded task branch>` to the main checkout's real push URL, passed as argv
+//! `HEAD:refs/heads/<recorded task branch>` to each of the main checkout's real push URLs, passed as argv
 //! and never stored, so the worktree's own `pushurl` lockout stays in place. It refuses (exit 2)
 //! any branch but the recorded one, `dev`, `main`, `master` and the recorded base.
 
@@ -40,17 +40,26 @@ pub fn push(dir: &Path, genie_home: &Path, branch: Option<&str>) -> Result<Pushe
             return Err(VerbError::Refused(format!("{what} {name} is not {}'s branch {recorded}", created.task)));
         }
     }
-    let url = git_read(&root, &["remote", "get-url", "--push", REMOTE])?
-        .filter(|u| !u.is_empty() && u != NO_PUSH_URL)
-        .ok_or_else(|| VerbError::Failed(format!("{} has no push URL for {REMOTE}", root.display())))?;
+    // Every push URL the main checkout's own `git push origin` would use, in its order.
+    let urls: Vec<String> = git_read(&root, &["remote", "get-url", "--push", "--all", REMOTE])?
+        .unwrap_or_default()
+        .lines()
+        .filter(|u| !u.is_empty() && *u != NO_PUSH_URL)
+        .map(str::to_string)
+        .collect();
+    if urls.is_empty() {
+        return Err(VerbError::Failed(format!("{} has no push URL for {REMOTE}", root.display())));
+    }
     let commit = git_ok(&top, &["rev-parse", "--verify", "HEAD^{commit}"], "git rev-parse HEAD")?;
     let refspec = format!("HEAD:refs/heads/{recorded}");
-    let out = git(&top, &["push", "--quiet", "--", &url, &refspec])?;
-    if !out.status.success() {
-        return Err(VerbError::Failed(format!(
-            "git push to {recorded} failed: {}",
-            String::from_utf8_lossy(&out.stderr).trim()
-        )));
+    for url in &urls {
+        let out = git(&top, &["push", "--quiet", "--", url, &refspec])?;
+        if !out.status.success() {
+            return Err(VerbError::Failed(format!(
+                "git push to {recorded} at {url} failed: {}",
+                String::from_utf8_lossy(&out.stderr).trim()
+            )));
+        }
     }
     Ok(Pushed { task: created.task, branch: recorded, commit })
 }

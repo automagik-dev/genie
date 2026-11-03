@@ -11,7 +11,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use genie_tasks::start::{NO_PUSH_URL, START_REFS};
 use genie_tasks::{
-    EventRow, StartOptions, Started, TaskEvent, TaskState, VerbError, open_store_at, push, record, start,
+    EventRow, Recorded, StartOptions, Started, TaskEvent, TaskState, VerbError, dedupe_key, lifecycle_dedupe_key,
+    open_store_at, push, record, start,
 };
 
 static N: AtomicUsize = AtomicUsize::new(0);
@@ -385,4 +386,80 @@ fn usage_refusals_change_nothing() {
     }
     fx.assert_untouched(0, 0);
     assert_eq!(fx.start(&StartOptions { kind: "feat".into(), ..opts(None, Some("x")) }).unwrap().branch, "feat/gn-1-x");
+}
+
+/// Every ref of a bare remote, for before/after comparisons.
+fn refs_of(remote: &Path) -> String {
+    git(remote, &["for-each-ref", "--format=%(objectname) %(refname)"])
+}
+
+#[test]
+fn a_shared_pushurl_and_a_second_remote_are_locked_out_too() {
+    // Review H2: `remote.<r>.pushurl` is multivalued, so a worktree sentinel appended after a shared
+    // pushurl still let git push to the real URL first. The remote refs must not move at all.
+    let fx = fixture("pushurl");
+    let mirror = fx.remote.with_file_name("mirror.git");
+    git(&fx.repo, &["init", "-q", "--bare", mirror.to_str().unwrap()]);
+    git(&fx.repo, &["config", "remote.origin.pushurl", fx.remote.to_str().unwrap()]);
+    git(&fx.repo, &["config", "push.default", "current"]);
+    git(&fx.repo, &["remote", "add", "upstream", mirror.to_str().unwrap()]);
+    let s = fx.start(&opts(None, Some("pushurl"))).unwrap();
+    let wt = PathBuf::from(&s.worktree);
+    git(&wt, &["commit", "-q", "--allow-empty", "-m", "fix: the work"]);
+    for remote in ["origin", "upstream"] {
+        assert_eq!(git(&wt, &["remote", "get-url", "--push", "--all", remote]), NO_PUSH_URL, "{remote}");
+    }
+    let (origin_before, mirror_before) = (refs_of(&fx.remote), refs_of(&mirror));
+    for args in
+        [&["push"][..], &["push", "origin", "HEAD"], &["push", "upstream", "HEAD"], &["push", "--all", "origin"]]
+    {
+        assert!(!git_out(&wt, args).status.success(), "{args:?} must fail");
+        assert_eq!(refs_of(&fx.remote), origin_before, "{args:?} moved no ref of origin");
+        assert_eq!(refs_of(&mirror), mirror_before, "{args:?} moved no ref of upstream");
+    }
+    // The main checkout keeps its own config and still pushes through its shared pushurl.
+    assert_eq!(git(&fx.repo, &["remote", "get-url", "--push", "--all", "origin"]), fx.remote.to_str().unwrap());
+    git(&fx.repo, &["push", "-q", "origin", "HEAD:refs/heads/from-main"]);
+    assert!(git_out(&fx.remote, &["rev-parse", "--verify", "refs/heads/from-main"]).status.success());
+    // genie push reaches the shared pushurl destination, on the task branch only.
+    let pushed = push(&wt, &fx.home, None).unwrap();
+    assert_eq!(git(&fx.remote, &["rev-parse", &format!("refs/heads/{}", pushed.branch)]), pushed.commit);
+    assert_eq!(refs_of(&mirror), mirror_before);
+}
+
+#[test]
+fn a_restart_after_close_gets_a_new_lifecycle_key_and_a_retry_keeps_it() {
+    // R1-32: a created event's key gains the lifecycle generation (closed events before it) as a
+    // seventh NUL-framed part, only when it is above 0.
+    let fx = fixture("generation");
+    let store = open_store_at(&fx.repo, &fx.home).unwrap();
+    let mut created = EventRow::new(TaskEvent::Created);
+    created.task = "gh-6".into();
+    created.commit = "b".repeat(40);
+    created.worktree = "/w/gh-6-flaky".into();
+    let project = store.project().to_string();
+    let key = |generation| {
+        lifecycle_dedupe_key(&project, "gh-6", TaskEvent::Created, "", &"b".repeat(40), "/w/gh-6-flaky", generation)
+    };
+    assert_eq!(key(0), dedupe_key(&project, "gh-6", TaskEvent::Created, "", &"b".repeat(40), "/w/gh-6-flaky"));
+    let first = record(&store, &project, &created).unwrap();
+    assert!(matches!(&first, Recorded::Appended { dedupe_key, .. } if *dedupe_key == key(0)), "{first:?}");
+    // Inside the first lifecycle the same created is a duplicate, and a different one is refused.
+    assert!(
+        matches!(record(&store, &project, &created).unwrap(), Recorded::Duplicate { dedupe_key } if dedupe_key == key(0))
+    );
+    let mut other = created.clone();
+    other.worktree = "/w/gh-6-other".into();
+    assert!(matches!(record(&store, &project, &other), Err(genie_tasks::Error::Refused(_))));
+    fx.forge_event("gh-6", TaskEvent::Closed, "Flaky test");
+    let second = record(&store, &project, &created).unwrap();
+    assert!(
+        matches!(&second, Recorded::Appended { dedupe_key, state: TaskState::Created, .. } if *dedupe_key == key(1)),
+        "{second:?}"
+    );
+    assert_ne!(key(1), key(0));
+    assert!(
+        matches!(record(&store, &project, &created).unwrap(), Recorded::Duplicate { dedupe_key } if dedupe_key == key(1))
+    );
+    assert_eq!(fx.export_rows().len(), 3, "created, closed, created: a retry adds no row");
 }

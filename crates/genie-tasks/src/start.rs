@@ -3,18 +3,20 @@
 //!
 //! Before step (a), an id whose task is `opened` or `merged` is refused at zero cost (Decision 6),
 //! as are a repository whose shared config sets `core.bare = true` or `core.worktree`, and a
-//! request with nothing to name the branch after. Then: (a) the base is fetched into a private
-//! `refs/genie/start/<nonce>` ref, peeled and deleted, never through FETCH_HEAD; (b) an untracked
-//! task reserves `gn-<seq>` in one short transaction; (c) `git worktree add --no-track -b`;
-//! (d) `extensions.worktreeConfig` plus a per-worktree `pushurl` that no transport serves;
+//! request with nothing to name the branch after, or a shared pushurl this git cannot override per
+//! worktree. Then: (a) the base is fetched into a private `refs/genie/start/<nonce>` ref, peeled and
+//! deleted, never through FETCH_HEAD; (b) an untracked task reserves `gn-<seq>` in one short
+//! transaction; (c) under the per-repository start lock, the worktree directory and the branch are
+//! claimed atomically and `git worktree add` fills them; (d) still under it, `extensions.worktreeConfig`
+//! plus, for every remote, a per-worktree pushurl list holding only a URL no transport serves;
 //! (e) the `created` event in a second short transaction; (f) the caller prints the result.
-//! A failure after (b) abandons the reservation, after (c) it also removes the worktree and
-//! branch, and neither writes an event. No git command runs inside a transaction.
+//! A failure after (b) abandons the reservation, after (c) it also removes what this start made,
+//! and nothing else, and neither writes an event. No git command runs inside a transaction.
 
 use std::fmt;
 use std::fs;
 use std::io::{self, Write};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::{Command, Output, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread::sleep;
@@ -25,7 +27,7 @@ use crate::store::{self, EventRow, Recorded, Store, open_store_at, project_root,
 
 /// The one remote `start` fetches from and `push` pushes to.
 pub const REMOTE: &str = "origin";
-/// The per-worktree `remote.origin.pushurl`: no git transport serves it, so a plain push fails.
+/// The per-worktree pushurl of every remote: no git transport serves it, so a plain push fails.
 pub const NO_PUSH_URL: &str = "genie-no-push://use-genie-rs-push";
 /// The private namespace each start fetches its base into.
 pub const START_REFS: &str = "refs/genie/start/";
@@ -286,96 +288,192 @@ fn enable_worktree_config(root: &Path, notes: &mut dyn Write) -> Result<(), Verb
     Err(VerbError::Failed(format!("could not set extensions.worktreeConfig: {last}")))
 }
 
-/// Remove a worktree and branch this start created; best effort, each step independent.
-fn remove_worktree(root: &Path, worktree: &Path, branch: &str) {
-    let path = worktree.to_string_lossy();
-    let _ = git(root, &["worktree", "remove", "--force", "--force", &path]);
-    if worktree.exists() {
-        let _ = fs::remove_dir_all(worktree);
-        let _ = git(root, &["worktree", "prune"]);
-    }
-    let _ = git(root, &["branch", "-D", branch]);
+/// Every configured remote. The lockout covers each one, so no named push leaves a task worktree.
+fn remotes(root: &Path) -> Result<Vec<String>, VerbError> {
+    let list = git_read(root, &["remote"])?.unwrap_or_default();
+    Ok(list.lines().filter(|r| !r.is_empty()).map(str::to_string).collect())
 }
 
-/// Steps (c)–(e) for a task whose id is settled. Any failure after (c) removes what (c) made.
-#[allow(clippy::too_many_arguments)]
+/// `remote.<r>.pushurl` is multivalued: a worktree value is appended to the inherited ones, and git
+/// pushes to every one in turn. The lockout therefore resets the list with an empty value first,
+/// which git honours from 2.46. A git that cannot reset a pushurl the shared config carries is
+/// refused here, before any fetch, by asking git itself with the same two values on its command line.
+fn refuse_unresettable_pushurls(root: &Path, remotes: &[String]) -> Result<(), VerbError> {
+    for remote in remotes {
+        let key = format!("remote.{remote}.pushurl");
+        if git_read(root, &["config", "--get-all", &key])?.is_none() {
+            continue;
+        }
+        let (reset, sentinel) = (format!("{key}="), format!("{key}={NO_PUSH_URL}"));
+        let effective =
+            git_read(root, &["-c", &reset, "-c", &sentinel, "remote", "get-url", "--push", "--all", remote])?;
+        if effective.as_deref() != Some(NO_PUSH_URL) {
+            return Err(VerbError::Refused(format!(
+                "{} sets {key}, and this git cannot override it in a task worktree (an empty value resets the list from git 2.46): upgrade git, or move {key} out of the shared config",
+                root.display()
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// Step (d) in `worktree`: for every remote, reset the inherited pushurl list when there is one,
+/// add the sentinel, and verify the worktree now pushes to the sentinel alone.
+fn lock_out(
+    root: &Path,
+    worktree: &Path,
+    base: &str,
+    remotes: &[String],
+    notes: &mut dyn Write,
+) -> Result<(), VerbError> {
+    enable_worktree_config(root, notes)?;
+    for remote in remotes {
+        let key = format!("remote.{remote}.pushurl");
+        if git_read(worktree, &["config", "--get-all", &key])?.is_some() {
+            git_ok(worktree, &["config", "--worktree", "--add", &key, ""], "git config --worktree pushurl reset")?;
+        }
+        git_ok(worktree, &["config", "--worktree", "--add", &key, NO_PUSH_URL], "git config --worktree pushurl")?;
+        let effective = git_read(worktree, &["remote", "get-url", "--push", "--all", remote])?;
+        if effective.as_deref() != Some(NO_PUSH_URL) {
+            return Err(VerbError::Failed(format!(
+                "the push lockout did not hold for {remote}: the worktree still pushes to {}",
+                effective.unwrap_or_default().replace('\n', ", ")
+            )));
+        }
+    }
+    git_ok(worktree, &["config", "--worktree", BASE_KEY, base], "git config --worktree genie.base")?;
+    Ok(())
+}
+
+/// One start at a time creates a worktree in a repository. Git has no lock around `worktree add`
+/// (it reads every other worktree's admin files while they are being written), and the claims below
+/// are what make a path and a branch this start's to remove. The lock spans git only: no SQLite
+/// transaction and no network call, and the OS releases it if the process dies.
+struct StartLock(#[allow(dead_code, reason = "held for its lock, released on drop")] fs::File);
+
+impl StartLock {
+    fn acquire(root: &Path) -> Result<StartLock, VerbError> {
+        let common = git_ok(root, &["rev-parse", "--path-format=absolute", "--git-common-dir"], "git rev-parse")?;
+        let file = fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(Path::new(&common).join("genie-start.lock"))?;
+        file.lock()?;
+        Ok(StartLock(file))
+    }
+}
+
+/// What this start created, and therefore all it may remove.
+#[derive(Default)]
+struct Made {
+    dir: bool,
+    branch: bool,
+    worktree: bool,
+}
+
+/// Step (c) under the start lock. Each claim is atomic and fails when its target exists, so a
+/// path or branch this start did not create is never recorded in `made`.
+fn make(root: &Path, worktree: &Path, branch: &str, base_sha: &str, made: &mut Made) -> Result<(), VerbError> {
+    match fs::create_dir(worktree) {
+        Ok(()) => made.dir = true,
+        Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
+            return Err(VerbError::Failed(format!("{} already exists", worktree.display())));
+        }
+        Err(e) => return Err(e.into()),
+    }
+    let out = git(root, &["branch", "--no-track", branch, base_sha])?;
+    if !out.status.success() {
+        return Err(VerbError::Failed(format!(
+            "git branch {branch} failed: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        )));
+    }
+    made.branch = true;
+    git_ok(root, &["worktree", "add", "--quiet", &worktree.to_string_lossy(), branch], "git worktree add")?;
+    made.worktree = true;
+    Ok(())
+}
+
+/// Remove exactly what `made` names, newest first; best effort, each step independent.
+fn unmake(root: &Path, worktree: &Path, branch: &str, made: &Made) {
+    if made.worktree {
+        let _ = git(root, &["worktree", "remove", "--force", "--force", &worktree.to_string_lossy()]);
+    }
+    if made.dir && worktree.exists() {
+        let _ = fs::remove_dir_all(worktree);
+    }
+    if made.branch {
+        let _ = git(root, &["branch", "-D", branch]);
+    }
+}
+
+/// The task a start settles on and where it goes.
+struct Cut<'a> {
+    task: &'a str,
+    base: &'a str,
+    base_sha: &'a str,
+    slug: &'a str,
+    title: &'a str,
+    kind: &'a str,
+    remotes: &'a [String],
+}
+
+/// Steps (c)–(e). (c) and (d) run under the start lock; (e) runs after it, and a failure there
+/// takes the lock again to remove what (c) made.
 fn cut(
     store: &Store,
     root: &Path,
-    task: &str,
-    base: &str,
-    base_sha: &str,
-    slug: &str,
+    c: &Cut<'_>,
     opts: &StartOptions,
-    title: &str,
-    kind: &str,
     notes: &mut dyn Write,
 ) -> Result<Started, VerbError> {
-    let name = format!("{task}-{slug}");
-    let branch = format!("{kind}/{name}");
+    let name = format!("{}-{}", c.task, c.slug);
+    let branch = format!("{}/{name}", c.kind);
     let repo_name = root.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-    let worktree: PathBuf = root.with_file_name(format!("{repo_name}.worktrees")).join(&name);
+    let parent = root.with_file_name(format!("{repo_name}.worktrees"));
+    fs::create_dir_all(&parent)?;
+    let worktree = parent.join(&name);
     let path = worktree.to_string_lossy().into_owned();
-    if worktree.exists() {
-        return Err(VerbError::Failed(format!("{path} already exists")));
-    }
-    // (c) A branch already there is never ours to remove, so it fails here, before the add.
-    if git(root, &["show-ref", "--verify", "--quiet", &format!("refs/heads/{branch}")])?.status.success() {
-        return Err(VerbError::Failed(format!("branch {branch} already exists")));
-    }
-    let mut attempt = 1;
-    loop {
-        // Once per attempt: a retry needs the cleanup below first, or `-b` finds its own branch.
-        let out = git_once(root, &["worktree", "add", "--quiet", "--no-track", "-b", &branch, &path, base_sha])?;
-        if out.status.success() {
-            break;
+    let mut made = Made::default();
+    {
+        let _lock = StartLock::acquire(root)?;
+        let cut = make(root, &worktree, &branch, c.base_sha, &mut made)
+            .and_then(|()| lock_out(root, &worktree, c.base, c.remotes, notes));
+        if let Err(e) = cut {
+            unmake(root, &worktree, &branch, &made);
+            return Err(e);
         }
-        // Neither the branch nor the path existed before the add, so whatever it left is its own.
-        remove_worktree(root, &worktree, &branch);
-        if attempt == RACE_ATTEMPTS || !raced(&out) {
-            return Err(VerbError::Failed(format!(
-                "git worktree add failed: {}",
-                String::from_utf8_lossy(&out.stderr).trim()
-            )));
-        }
-        sleep(Duration::from_millis(20 * attempt + u64::from(std::process::id() % 17)));
-        attempt += 1;
     }
-    let mut finish = || -> Result<(), VerbError> {
-        // (d)
-        enable_worktree_config(root, notes)?;
-        let pushurl = format!("remote.{REMOTE}.pushurl");
-        git_ok(&worktree, &["config", "--worktree", &pushurl, NO_PUSH_URL], "git config --worktree pushurl")?;
-        git_ok(&worktree, &["config", "--worktree", BASE_KEY, base], "git config --worktree genie.base")?;
-        // (e)
-        let mut row = EventRow::new(TaskEvent::Created);
-        row.task = task.to_string();
-        row.branch = branch.clone();
-        row.commit = base_sha.to_string();
-        row.worktree = path.clone();
-        row.kind = kind.to_string();
-        row.title = title.to_string();
-        row.lead = opts.lead.clone();
-        match record(store, store.project(), &row) {
-            Ok(Recorded::Appended { .. }) => Ok(()),
-            Ok(Recorded::Duplicate { .. }) => {
-                Err(VerbError::Refused(format!("{task} already has a created event at {base_sha} in {path}")))
-            }
-            Err(e) => Err(e.into()),
+    // (e)
+    let mut row = EventRow::new(TaskEvent::Created);
+    row.task = c.task.to_string();
+    row.branch = branch.clone();
+    row.commit = c.base_sha.to_string();
+    row.worktree = path.clone();
+    row.kind = c.kind.to_string();
+    row.title = c.title.to_string();
+    row.lead = opts.lead.clone();
+    let recorded = match record(store, store.project(), &row) {
+        Ok(Recorded::Appended { .. }) => Ok(()),
+        Ok(Recorded::Duplicate { .. }) => {
+            Err(VerbError::Refused(format!("{} already has this created event (base {}, {path})", c.task, c.base_sha)))
         }
+        Err(e) => Err(e.into()),
     };
-    match finish() {
+    match recorded {
         Ok(()) => Ok(Started {
-            task: task.to_string(),
+            task: c.task.to_string(),
             branch,
             worktree: path,
             lead: opts.lead.clone(),
-            base_sha: base_sha.to_string(),
+            base_sha: c.base_sha.to_string(),
         }),
         // The event committed and only its export row is missing: the task exists, so it stays.
         Err(VerbError::Store(e @ store::Error::Export { .. })) => Err(VerbError::Store(e)),
         Err(e) => {
-            remove_worktree(root, &worktree, &branch);
+            let _lock = StartLock::acquire(root).ok();
+            unmake(root, &worktree, &branch, &made);
             Err(e)
         }
     }
@@ -430,6 +528,8 @@ pub fn start(repo: &Path, genie_home: &Path, opts: &StartOptions, notes: &mut dy
         return Err(VerbError::Refused(format!("the title '{title}' has no letters or digits to name a branch")));
     }
     refuse_shared_worktree_keys(&root)?;
+    let remotes = remotes(&root)?;
+    refuse_unresettable_pushurls(&root, &remotes)?;
     let base = integration_branch(&root)?;
     // (a)
     sweep(&root)?;
@@ -439,7 +539,9 @@ pub fn start(repo: &Path, genie_home: &Path, opts: &StartOptions, notes: &mut dy
         Some(id) => (id.clone(), false),
         None => (store.reserve_gn()?, true),
     };
-    let started = cut(&store, &root, &task, &base, &base_sha, &slug, opts, &title, kind, notes);
+    let plan =
+        Cut { task: &task, base: &base, base_sha: &base_sha, slug: &slug, title: &title, kind, remotes: &remotes };
+    let started = cut(&store, &root, &plan, opts, notes);
     // A committed event whose export row failed keeps its id; every other failure abandons it.
     if reserved && matches!(&started, Err(e) if !matches!(e, VerbError::Store(store::Error::Export { .. }))) {
         let _ = store.abandon_gn(&task);

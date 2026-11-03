@@ -3,7 +3,9 @@
 //! closed without merging 0, usage 2; `push` 0 to the fixture's bare remote, 2 for any other
 //! branch and outside a task worktree; 32 parallel `start` processes, each 0 with its own id. The
 //! opened/merged/closed states are recorded by `forge-sync` itself, against genie-forge's fake `gh`
-//! on a PATH that holds nothing else but git. Remotes are bare repositories in a temp dir.
+//! on a PATH that holds nothing else but git. Remotes are bare repositories in a temp dir. The
+//! same-id races (review H1) hold one start inside a pausing git wrapper; the restart at an
+//! unchanged base (review H3, R1-32) runs created -> closed -> created through the binary.
 
 use std::fs;
 use std::os::unix::fs::{PermissionsExt, symlink};
@@ -280,4 +282,156 @@ fn thirty_two_parallel_start_processes_each_exit_0_with_their_own_id() {
     assert_eq!(ids, (1..=32).collect::<Vec<_>>());
     assert_eq!(fs::read_dir(fx.worktrees()).unwrap().count(), 32);
     assert_eq!((fx.events(), fx.rows()), (32, 32));
+}
+
+/// Replace the fixture's git with a wrapper that logs each call as `<role> <args>` and, for the
+/// process whose `GENIE_TEST_ROLE` is `GENIE_TEST_PAUSE_ROLE`, holds the first call carrying the
+/// argument `GENIE_TEST_PAUSE_ON` until `<dir>/release` exists, after touching `<dir>/waiting`.
+/// The real git then runs every command; the wrapper only delays one.
+fn pausing_git(fx: &Fx) -> PathBuf {
+    let dir = fx.home.with_file_name("pause");
+    fs::create_dir_all(&dir).unwrap();
+    let script = format!(
+        "#!/bin/sh\nprintf '%s %s\\n' \"$GENIE_TEST_ROLE\" \"$*\" >>\"{dir}/calls\"\n\
+         if [ \"$GENIE_TEST_ROLE\" = \"$GENIE_TEST_PAUSE_ROLE\" ] && [ ! -f \"{dir}/paused\" ]; then\n\
+           for a in \"$@\"; do\n\
+             if [ \"$a\" = \"$GENIE_TEST_PAUSE_ON\" ]; then\n\
+               : >\"{dir}/paused\"; : >\"{dir}/waiting\"\n\
+               while [ ! -f \"{dir}/release\" ]; do sleep 0.05; done\n\
+               break\n\
+             fi\n\
+           done\n\
+         fi\n\
+         exec \"{git}\" \"$@\"\n",
+        dir = dir.display(),
+        git = git_path().display()
+    );
+    fs::remove_file(fx.bin.join("git")).unwrap();
+    fs::write(fx.bin.join("git"), script).unwrap();
+    fs::set_permissions(fx.bin.join("git"), fs::Permissions::from_mode(0o755)).unwrap();
+    dir
+}
+
+fn spawn_start(fx: &Fx, role: &str, pause_on: &str, args: &[&str]) -> std::process::Child {
+    Command::new(BIN)
+        .args(args)
+        .current_dir(&fx.repo)
+        .env("GENIE_HOME", &fx.home)
+        .env("PATH", &fx.bin)
+        .env("GENIE_TEST_ROLE", role)
+        .env("GENIE_TEST_PAUSE_ROLE", "paused")
+        .env("GENIE_TEST_PAUSE_ON", pause_on)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap()
+}
+
+fn wait_for(path: &Path) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    while !path.exists() {
+        assert!(std::time::Instant::now() < deadline, "timed out waiting for {}", path.display());
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+}
+
+const SAME: [&str; 6] = ["start", "gh-8", "--title", "same task", "--lead", "b-x"];
+
+/// What a successful `start gh-8 --title "same task"` leaves, plus an uncommitted file in it.
+fn assert_winner_intact(fx: &Fx, scratch: Option<&Path>) {
+    let wt = fx.worktrees().join("gh-8-same-task");
+    assert!(wt.join(".git").exists(), "the winner's worktree survives");
+    assert_eq!(git(&wt, &["symbolic-ref", "--short", "HEAD"]), "fix/gh-8-same-task");
+    assert!(git_out(&fx.repo, &["rev-parse", "--verify", "refs/heads/fix/gh-8-same-task"]).status.success());
+    if let Some(scratch) = scratch {
+        assert_eq!(fs::read_to_string(scratch).unwrap(), "uncommitted work\n", "uncommitted contents survive");
+    }
+    assert_eq!((fx.events(), fx.rows()), (1, 1), "one created event and one export row");
+}
+
+#[test]
+fn a_same_id_start_that_loses_the_race_never_removes_the_winners_worktree() {
+    // The loser is held at its fetch, so it reaches the worktree step only after the winner finished
+    // and the winner's worktree holds uncommitted work.
+    let fx = fixture("race-after");
+    let pause = pausing_git(&fx);
+    let loser = spawn_start(&fx, "paused", "fetch", &SAME);
+    wait_for(&pause.join("waiting"));
+    let winner = spawn_start(&fx, "winner", "", &SAME).wait_with_output().unwrap();
+    assert_eq!(code(&winner), 0, "{}", stderr(&winner));
+    let scratch = fx.worktrees().join("gh-8-same-task/scratch.txt");
+    fs::write(&scratch, "uncommitted work\n").unwrap();
+    fs::write(pause.join("release"), "").unwrap();
+    let loser = loser.wait_with_output().unwrap();
+    assert_eq!(code(&loser), 1, "{}", stderr(&loser));
+    assert!(stderr(&loser).contains("already exists"), "{}", stderr(&loser));
+    assert_winner_intact(&fx, Some(&scratch));
+}
+
+#[test]
+fn a_same_id_start_waits_for_the_one_creating_its_worktree() {
+    // The reviewer's interleaving: the first start is held inside its worktree add, after every check.
+    // Without the start lock the second ran to completion here and the first then removed its work.
+    let fx = fixture("race-inside");
+    let pause = pausing_git(&fx);
+    let first = spawn_start(&fx, "paused", "worktree", &SAME);
+    wait_for(&pause.join("waiting"));
+    let mut second = spawn_start(&fx, "second", "", &SAME);
+    let calls = pause.join("calls");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    while !fs::read_to_string(&calls)
+        .unwrap_or_default()
+        .lines()
+        .any(|l| l.starts_with("second ") && l.contains("update-ref -d"))
+    {
+        assert!(std::time::Instant::now() < deadline, "the second start never fetched");
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    assert!(second.try_wait().unwrap().is_none(), "the second start waits on the start lock");
+    fs::write(pause.join("release"), "").unwrap();
+    let first = first.wait_with_output().unwrap();
+    let second = second.wait_with_output().unwrap();
+    assert_eq!(code(&first), 0, "{}", stderr(&first));
+    assert_eq!(code(&second), 1, "{}", stderr(&second));
+    assert_winner_intact(&fx, None);
+}
+
+#[test]
+fn a_task_started_closed_and_started_again_at_the_same_base_gets_a_second_lifecycle() {
+    let fx = fixture("restart");
+    let args = ["start", "gh-6", "--title", "flaky test", "--lead", "b-x"];
+    let first = fx.run(&args);
+    assert_eq!(code(&first), 0, "{}", stderr(&first));
+    let first: Value = serde_json::from_slice(&first.stdout).unwrap();
+    let wt = first["worktree"].as_str().unwrap();
+    git(&fx.repo, &["worktree", "remove", "--force", wt]);
+    git(&fx.repo, &["branch", "-D", "fix/gh-6-flaky-test"]);
+    fx.forge_sync(&[pr(6, "fix/gh-6-flaky-test", "closed")], &fx.remote);
+
+    let second = fx.run(&args);
+    assert_eq!(code(&second), 0, "{}", stderr(&second));
+    let second: Value = serde_json::from_slice(&second.stdout).unwrap();
+    assert_eq!(
+        (&second["base_sha"], &second["worktree"]),
+        (&first["base_sha"], &first["worktree"]),
+        "same base and title"
+    );
+    let status: Value = serde_json::from_slice(&fx.run(&["status", "gh-6", "--json"]).stdout).unwrap();
+    assert_eq!((status["state"].as_str(), status["lane"].as_str()), (Some("created"), Some("Working")));
+    let events: Vec<&str> = status["events"].as_array().unwrap().iter().map(|e| e["event"].as_str().unwrap()).collect();
+    assert_eq!(events, ["created", "closed", "created"]);
+    let rows: Vec<Value> = fs::read_to_string(fx.home.join("tasks.jsonl"))
+        .unwrap()
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .filter(|r: &Value| r["event"] == "created")
+        .collect();
+    assert_eq!(rows.len(), 2, "two created export rows");
+    assert_ne!(rows[0]["dedupe_key"], rows[1]["dedupe_key"]);
+
+    // A retry of the same start inside this lifecycle appends nothing.
+    let retry = fx.run(&args);
+    assert_eq!(code(&retry), 1, "{}", stderr(&retry));
+    assert_eq!((fx.events(), fx.rows()), (3, 3));
 }

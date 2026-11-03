@@ -179,7 +179,27 @@ pub fn task_key(task: &str, forge: &str, url: &str) -> Option<String> {
 
 /// SHA-256 of the six parts joined with NUL, `''` for an absent part.
 pub fn dedupe_key(project: &str, task: &str, event: TaskEvent, url: &str, commit: &str, worktree: &str) -> String {
-    let framed = [project, task, event.as_str(), url, commit, worktree].join("\0");
+    lifecycle_dedupe_key(project, task, event, url, commit, worktree, 0)
+}
+
+/// The key of an event in lifecycle `generation` (R1-32): a `created` event's generation is the
+/// number of `closed` events its task already has, so a task restarted after its PR closed gets a
+/// new key even at the same base and worktree, while a retry inside one lifecycle keeps its key.
+/// Generation 0 adds no part, so every key of the first lifecycle is the six-part key unchanged.
+pub fn lifecycle_dedupe_key(
+    project: &str,
+    task: &str,
+    event: TaskEvent,
+    url: &str,
+    commit: &str,
+    worktree: &str,
+    generation: i64,
+) -> String {
+    let mut framed = [project, task, event.as_str(), url, commit, worktree].join("\0");
+    if generation > 0 {
+        framed.push('\0');
+        framed.push_str(&generation.to_string());
+    }
     Sha256::digest(framed.as_bytes()).iter().map(|b| format!("{b:02x}")).collect()
 }
 
@@ -508,14 +528,28 @@ impl Store {
         })
     }
 
-    /// The transaction body: dedupe, apply, insert, upsert. The caller owns BEGIN/COMMIT.
-    fn record_tx(&self, project: &str, key: &str, dedupe: &str, row: &EventRow) -> Result<Option<StoredEvent>, Error> {
+    /// The transaction body: key, dedupe, apply, insert, upsert. The caller owns BEGIN/COMMIT. Returns
+    /// the dedupe key with the stored event, `None` for a duplicate.
+    fn record_tx(&self, project: &str, key: &str, row: &EventRow) -> Result<(String, Option<StoredEvent>), Error> {
+        // Read inside the transaction, so the generation is the replay's: the closed events before this one.
+        let generation: i64 = if row.event == TaskEvent::Created {
+            self.conn.query_row(
+                "SELECT count(*) FROM v7_task_events WHERE project = ?1 AND task_key = ?2 AND event = 'closed'",
+                [project, key],
+                |r| r.get(0),
+            )?
+        } else {
+            0
+        };
+        let dedupe =
+            lifecycle_dedupe_key(project, &row.task, row.event, &row.url, &row.commit, &row.worktree, generation);
+        let dedupe = dedupe.as_str();
         let seen: Option<i64> = self
             .conn
             .query_row("SELECT seq FROM v7_task_events WHERE dedupe_key = ?1", [dedupe], |r| r.get(0))
             .optional()?;
         if seen.is_some() {
-            return Ok(None);
+            return Ok((dedupe.to_string(), None));
         }
         let state: Option<String> = self
             .conn
@@ -563,7 +597,7 @@ impl Store {
             params![project, key, row.task, next.as_str(), row.title, row.lead, row.forge, row.url, row.branch, seq, at],
         )?;
         let sql = format!("SELECT {EVENT_COLUMNS} FROM v7_task_events WHERE seq = ?1");
-        Ok(Some(self.conn.query_row(&sql, [seq], event_from_row)?))
+        Ok((dedupe.to_string(), Some(self.conn.query_row(&sql, [seq], event_from_row)?)))
     }
 }
 
@@ -582,10 +616,9 @@ pub fn record(store: &Store, project: &str, row: &EventRow) -> Result<Recorded, 
             return Err(Error::InvalidEvent(format!("a NUL byte in {name}")));
         }
     }
-    let dedupe = dedupe_key(project, &row.task, row.event, &row.url, &row.commit, &row.worktree);
-    let stored = retry_busy(|| {
+    let (dedupe, stored) = retry_busy(|| {
         store.conn.execute_batch("BEGIN IMMEDIATE")?;
-        match store.record_tx(project, &key, &dedupe, row) {
+        match store.record_tx(project, &key, row) {
             Ok(stored) => match store.conn.execute_batch("COMMIT") {
                 Ok(()) => Ok(stored),
                 Err(e) => {
