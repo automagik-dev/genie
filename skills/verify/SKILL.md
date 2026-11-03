@@ -34,6 +34,7 @@ Skipping a step is not a faster verification, it is a different activity.
 | Types are clean | the typecheck stage inside that gate | the linter passing |
 | A test suite passes | the suite's own output with a failure count of zero | one file re-run, a cached result |
 | A bug is fixed | the original symptom re-exercised and now passing | the code changed and the reasoning looks right |
+| A cause is removed | a correction typed root, with the diagnosis's causal chain showing the link it removes | the symptom passing, which a containment also achieves |
 | A mutation landed | the stored state read back afterwards through a different path than the write took | the writing call's own success return, or a response that echoes what was sent |
 | Text sent through a CLI arrived intact | the stored body read back from the system that received it and compared against the source text | the exit code, or a receipt that counts bytes accepted |
 | A regression test works | it fails with the fix reverted and passes with it restored | it passes once |
