@@ -192,16 +192,18 @@ impl Cli {
         }
     }
 
-    /// GitHub: the head ref's `push` and `force_push` activity between the open and the merge, each
+    /// GitHub: every activity that moved the head ref between the open and the merge (`push`,
+    /// `force_push`, and the `pr_merge` / `merge_queue_merge` of a PR merged into this head), each
     /// counted as `compare(before...after).ahead_by` (for a force push, the new commits not in the old
     /// head). `None` for a head in another repository (a fork's pushes are not in this repository's
-    /// activity), for activity that does not reach back to the open, for a ref recreated while open,
-    /// and for any call that fails or answers without the count.
+    /// activity), for activity that does not reach back to the open, for an activity whose time ties
+    /// the open (its order is unresolved), for any other or unknown activity type after the open (a
+    /// ref recreated or deleted included), and for any call that fails or answers without the count.
     fn github_pushed_after_open(&self, pr: &Pr) -> Option<i64> {
         if !pr.head_repo.eq_ignore_ascii_case(&self.repo) {
             return None;
         }
-        let (opened, merged) = (pr.created(), parse_time(&pr.merged_at)?);
+        let (opened, merged) = (parse_span(&pr.created_at)?, parse_span(&pr.merged_at)?);
         let endpoint = format!(
             "repos/{}/activity?ref={}&per_page={PAGE}",
             self.repo,
@@ -212,16 +214,20 @@ impl Cli {
         let mut pushed = 0;
         for line in String::from_utf8_lossy(&out).lines().filter(|l| !l.trim().is_empty()) {
             let activity: Value = serde_json::from_str(line).ok()?;
-            let at = activity.get("timestamp").and_then(Value::as_str).and_then(parse_time)?;
-            if at <= opened {
-                reaches_back = true;
-                continue;
+            let at = activity.get("timestamp").and_then(Value::as_str).and_then(parse_span)?;
+            match order(at, opened) {
+                Order::Before => {
+                    reaches_back = true;
+                    continue;
+                }
+                Order::Tie => return None,
+                Order::After => {}
             }
-            if at > merged {
+            if order(at, merged) == Order::After {
                 continue;
             }
             match activity.get("activity_type").and_then(Value::as_str)? {
-                "push" | "force_push" => {
+                "push" | "force_push" | "pr_merge" | "merge_queue_merge" => {
                     let before = activity.get("before").and_then(Value::as_str)?;
                     let after = activity.get("after").and_then(Value::as_str)?;
                     if before.bytes().all(|b| b == b'0') {
@@ -230,8 +236,7 @@ impl Cli {
                     let compare = self.api(&format!("repos/{}/compare/{before}...{after}", self.repo)).ok()?;
                     pushed += compare.get("ahead_by")?.as_i64()?;
                 }
-                "branch_creation" | "branch_deletion" => return None,
-                _ => {}
+                _ => return None,
             }
         }
         reaches_back.then_some(pushed)
@@ -385,6 +390,36 @@ impl Pr {
 /// Unix seconds as RFC 3339 UTC.
 pub fn rfc3339(secs: i64) -> String {
     genie_tasks::state::rfc3339(u64::try_from(secs).unwrap_or(0))
+}
+
+/// How two timestamps order once each is read as the interval its precision allows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Order {
+    Before,
+    /// The intervals overlap: the forge's precision cannot say which came first.
+    Tie,
+    After,
+}
+
+fn order(a: (i128, i128), b: (i128, i128)) -> Order {
+    if a.0 + a.1 <= b.0 {
+        Order::Before
+    } else if a.0 >= b.0 + b.1 {
+        Order::After
+    } else {
+        Order::Tie
+    }
+}
+
+/// An RFC 3339 timestamp as `(start, width)` in nanoseconds: the interval its precision allows.
+/// `10:00:00Z` is the whole second `[10:00:00, 10:00:01)`; `10:00:00.200Z` is a tenth wide.
+fn parse_span(s: &str) -> Option<(i128, i128)> {
+    let secs = i128::from(parse_time(s)?);
+    let fraction = s.get(19..).and_then(|rest| rest.strip_prefix('.')).unwrap_or("");
+    let digits = fraction.bytes().take_while(u8::is_ascii_digit).count().min(9);
+    let width = 10_i128.pow(9 - u32::try_from(digits).ok()?);
+    let nanos = if digits == 0 { 0 } else { fraction[..digits].parse::<i128>().ok()? * width };
+    Some((secs * 1_000_000_000 + nanos, width))
 }
 
 /// RFC 3339 (`2026-11-03T04:20:05Z`, `…05.123+02:00`) as Unix seconds; the inverse of `rfc3339`.

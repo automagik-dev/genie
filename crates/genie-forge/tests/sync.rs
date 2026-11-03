@@ -572,3 +572,54 @@ fn a_token_in_the_origin_url_is_never_stored_or_printed() {
     let err = bad.sync(t0() + 1_000).unwrap_err();
     assert!(!err.to_string().contains(FAKE_TOKEN), "{err}");
 }
+
+#[test]
+fn an_activity_tied_with_the_open_is_unknown_and_merge_activity_counts_like_a_push() {
+    let fx = fixture("ties", Forge::Github);
+    // Each PR opens at `at(n)` (second precision) and merges at `at(900)`.
+    let merged = |n, branch| Case { updated: 900, ..case(n, branch, "fix: x", "merged", "head") };
+    let activity = |c: &Case, items: &[(&str, String, Option<u64>)]| {
+        let created = json!({"activity_type": "branch_creation", "timestamp": at(c.n as i64 - 60),
+            "before": "0000000000000000000000000000000000000000", "after": "start"});
+        let mut lines = vec![created.to_string()];
+        for (i, (kind, timestamp, n)) in items.iter().enumerate() {
+            let (before, after) = (format!("b{}-{i}", c.n), format!("a{}-{i}", c.n));
+            lines.push(
+                json!({"activity_type": kind, "timestamp": timestamp, "before": before, "after": after}).to_string(),
+            );
+            let body = n.map_or("!fail".to_string(), |n| json!({"ahead_by": n}).to_string());
+            fs::write(fx.bin.join(format!("compare-{before}...{after}.json")), body).unwrap();
+        }
+        let name = format!("activity-refs%2Fheads%2F{}.json", c.branch.replace('/', "%2F"));
+        fs::write(fx.bin.join(name), lines.join("\n")).unwrap();
+    };
+    let cases = [
+        merged(20, "fix/gh-20-tie"),
+        merged(21, "fix/gh-21-zero"),
+        merged(22, "fix/gh-22-frac-tie"),
+        merged(23, "fix/gh-23-frac-after"),
+        merged(24, "fix/gh-24-pr-merge"),
+        merged(25, "fix/gh-25-queue"),
+        merged(26, "fix/gh-26-unknown"),
+    ];
+    activity(&cases[0], &[("push", at(20), Some(1))]); // the same second as the open
+    // Known zero: a push a fraction before the open, one after the merge, nothing in between.
+    activity(&cases[1], &[("push", at_frac(20, ".999"), Some(1)), ("push", at(901), Some(1))]);
+    activity(&cases[2], &[("push", at_frac(22, ".500"), Some(1))]); // inside the open's second
+    activity(&cases[3], &[("push", at_frac(23, ".700"), Some(1))]); // after an open at .200
+    activity(&cases[4], &[("pr_merge", at(300), Some(1))]);
+    activity(&cases[5], &[("merge_queue_merge", at(300), Some(2)), ("push", at(400), Some(1))]);
+    activity(&cases[6], &[("push", at(300), Some(1)), ("branch_rename", at(400), Some(1))]);
+    let mut items: Vec<Value> = cases.iter().map(|c| fx.render(c)).collect();
+    items[3]["created_at"] = json!(at_frac(23, ".200"));
+    fx.serve_values(items);
+
+    assert_eq!(fx.sync(t0() + 1_000).unwrap().appended, 7);
+    assert_eq!(pushed(&fx, 20), None, "a push tied with the open is unresolved, never assumed pre-open");
+    assert_eq!(pushed(&fx, 21), Some(0), "the known-zero control stays 0");
+    assert_eq!(pushed(&fx, 22), None, "a fractional time inside the open's second is still a tie");
+    assert_eq!(pushed(&fx, 23), Some(1), "fractional precision resolves the order when it can");
+    assert_eq!(pushed(&fx, 24), Some(1), "a pr_merge into the head counts like a push");
+    assert_eq!(pushed(&fx, 25), Some(3), "a merge_queue_merge counts like a push");
+    assert_eq!(pushed(&fx, 26), None, "an unknown activity type after the open makes the count unknown");
+}
