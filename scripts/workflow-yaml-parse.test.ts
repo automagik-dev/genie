@@ -14,7 +14,7 @@ import { join } from 'node:path';
  * that its removal cost `publish` exactly one edge.
  *
  * Parser: `Bun.YAML.parse`, so no python/PyYAML and no new dependency. It is a
- * Bun builtin (present on the 1.3.11 CI pin and the 1.3.14 dev machines); the
+ * Bun builtin (present on both CI Bun lines, 1.3.11 and 1.4.4); the
  * first assertion below fails with an explicit message if that ever stops
  * being true, rather than throwing an opaque TypeError.
  */
@@ -22,6 +22,7 @@ import { join } from 'node:path';
 const REPO_ROOT = join(import.meta.dir, '..');
 const RELEASE_PUBLISH = join(REPO_ROOT, '.github', 'workflows', 'release-publish.yml');
 const CI = join(REPO_ROOT, '.github', 'workflows', 'ci.yml');
+const WORKFLOWS = join(REPO_ROOT, '.github', 'workflows');
 
 type YamlRecord = Record<string, unknown>;
 
@@ -349,5 +350,58 @@ describe('pins agree across the workflows and the shipped source', () => {
     );
     expect(workflowImages).toHaveLength(1);
     expect(new Set(workflowImages)).toEqual(new Set([adapterImage as string]));
+  });
+});
+
+/**
+ * The Bun pin set (#3194, council 2026-11-03). Genie must stay seamless on both
+ * supported Bun lines, so the two unit legs run each one as a REQUIRED matrix
+ * entry; every other job, and in particular everything that builds a shipped
+ * artifact, stays on the 1.3 line until the 1.4 pin move lands on its own.
+ */
+describe('Bun pin set', () => {
+  const SUPPORTED_BUN_LINES = ['1.3.11', '1.4.4'];
+  const ARTIFACT_PIN = '1.3.11';
+
+  function setupBunVersions(definition: YamlRecord): unknown[] {
+    const steps = definition.steps;
+    if (!Array.isArray(steps)) return [];
+    return steps
+      .filter(isRecord)
+      .filter((step) => typeof step.uses === 'string' && step.uses.startsWith('oven-sh/setup-bun@'))
+      .map((step) => (isRecord(step.with) ? step.with['bun-version'] : undefined));
+  }
+
+  test('unit and unit-darwin run every supported Bun line, and the Quality Gate requires them all', () => {
+    const ci = workflow(CI);
+    for (const id of ['unit', 'unit-darwin']) {
+      const definition = job(ci, id);
+      const strategy = definition.strategy;
+      if (!isRecord(strategy) || !isRecord(strategy.matrix)) throw new Error(`${id} has no strategy.matrix`);
+      expect(strategy.matrix.bun).toEqual(SUPPORTED_BUN_LINES);
+      // fail-fast would cancel the other line on the first red one and hide it.
+      expect(strategy['fail-fast']).toBe(false);
+      expect(setupBunVersions(definition)).toEqual(['${{ matrix.bun }}']);
+      expect(String(definition.name)).toContain('${{ matrix.bun }}');
+    }
+    // A matrix job's `needs.<id>.result` is success only when EVERY entry
+    // succeeded, so needing both jobs makes each entry a required check.
+    expect(needsOf(job(ci, 'quality-gate'))).toEqual(expect.arrayContaining(['unit', 'unit-darwin']));
+  });
+
+  test('every other setup-bun step in every workflow is pinned to the artifact line', () => {
+    const pins: string[] = [];
+    for (const file of readdirSync(WORKFLOWS).filter((name) => /\.ya?ml$/.test(name))) {
+      for (const [id, definition] of Object.entries(jobs(workflow(join(WORKFLOWS, file))))) {
+        if (!isRecord(definition)) continue;
+        if (file === 'ci.yml' && (id === 'unit' || id === 'unit-darwin')) continue;
+        for (const version of setupBunVersions(definition)) pins.push(`${file}:${id}=${String(version)}`);
+      }
+    }
+    // release-publish and build-tarballs build the shipped binaries and must
+    // never drift to an unreviewed line; they are named so a rename is caught.
+    expect(pins.some((pin) => pin.startsWith('release-publish.yml:'))).toBe(true);
+    expect(pins.some((pin) => pin.startsWith('build-tarballs.yml:'))).toBe(true);
+    expect(pins.filter((pin) => !pin.endsWith(`=${ARTIFACT_PIN}`))).toEqual([]);
   });
 });
