@@ -18,12 +18,15 @@
  *   task export [--write [file]]
  *   task import [file] [--replace]
  *   task sync
+ *   task forge-sync|v7-status|v7-list [args...]   handed to genie-rs untouched (genie-v7-tasks 1b)
  */
 
 import type { Database } from 'bun:sqlite';
+import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import type { Command } from 'commander';
+import { resolveGenieHome } from '../lib/genie-home.js';
 import { color, formatTimestamp, padRight, truncate } from '../lib/term-format.js';
 import { livenessBadge } from '../lib/v5/card-render.js';
 import { openDb, resolveRoadmapPath } from '../lib/v5/genie-db.js';
@@ -793,11 +796,72 @@ function handleImport(file: string | undefined, opts: ImportOptions): void {
 }
 
 // ============================================================================
+// genie-rs pass-through (genie-v7-tasks group 1b)
+// ============================================================================
+
+/**
+ * The verbs the Rust front door owns: `genie task <verb>` hands its tail to `genie-rs <rust verb>`
+ * untouched, exactly as `genie mikro call` hands its tail to the mikro runtime, and returns the
+ * binary's exit code. Group 2 adds `start` and `push` to this table.
+ */
+const GENIE_RS_VERBS = [
+  ['forge-sync', 'forge-sync', 'Record opened/merged/closed PRs/MRs from gh or glab, one pass (genie-rs forge-sync)'],
+  ['v7-status', 'status', 'Show one v7 task: its state, lane and events (genie-rs status <id>)'],
+  ['v7-list', 'list', "List this repository's v7 tasks with their lanes (genie-rs list)"],
+] as const;
+
+/** `GENIE_RS_BIN`, else the installed payload's binary, else a checkout's release build. */
+function resolveGenieRsBin(): { path: string } | { missing: string } {
+  const explicit = process.env.GENIE_RS_BIN;
+  if (explicit)
+    return existsSync(explicit) ? { path: explicit } : { missing: `GENIE_RS_BIN=${explicit} does not exist` };
+  const payload = join(resolveGenieHome(), 'plugins', 'genie-rs', 'bin', 'genie-rs');
+  const candidates = [
+    payload,
+    join(import.meta.dir, '..', '..', 'target', 'release', 'genie-rs'), // bun src/genie.ts
+    join(import.meta.dir, '..', 'target', 'release', 'genie-rs'), // the dist/genie.js bundle
+  ];
+  const found = candidates.find((path) => existsSync(path));
+  return found ? { path: found } : { missing: `no binary at ${payload} or target/release/genie-rs` };
+}
+
+/** Run genie-rs with `argv` on this process's stdio and return its exit code; 1 when it cannot run. */
+function runGenieRs(argv: string[]): number {
+  const bin = resolveGenieRsBin();
+  if ('missing' in bin) {
+    process.stderr.write(
+      `Error: genie-rs not found (${bin.missing}): run 'genie update' to install it, or 'cargo build --release -p genie-rs' in a genie checkout\n`,
+    );
+    return 1;
+  }
+  const result = spawnSync(bin.path, argv, { stdio: 'inherit' });
+  if (result.error) {
+    process.stderr.write(`Error: genie-rs at ${bin.path} could not be run: ${result.error.message}\n`);
+    return 1;
+  }
+  return result.status ?? 1;
+}
+
+// ============================================================================
 // Registration
 // ============================================================================
 
 export function registerV5TaskCommands(v5: Command): void {
-  const task = v5.command('task').description('task state (SQLite, zero-daemon)');
+  // Positional options on the GROUP, as on `mikro`: the genie-rs verbs pass their tail through, and
+  // the group has no options of its own, so no other subcommand parses differently.
+  const task = v5.command('task').description('task state (SQLite, zero-daemon)').enablePositionalOptions();
+
+  for (const [verb, rustVerb, description] of GENIE_RS_VERBS) {
+    task
+      .command(verb)
+      .description(description)
+      .argument('[args...]', 'Forwarded to genie-rs as typed (genie global options excepted)')
+      .allowUnknownOption()
+      .passThroughOptions()
+      .action((args: string[]) => {
+        process.exitCode = runGenieRs([rustVerb, ...args]);
+      });
+  }
 
   task
     .command('create')

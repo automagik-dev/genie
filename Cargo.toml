@@ -11,6 +11,7 @@ repository = "https://github.com/automagik-dev/genie"
 
 # Exact pins: a dependency moves only by an edit here and a regenerated Cargo.lock.
 [workspace.dependencies]
+genie-forge = { path = "crates/genie-forge" }
 genie-part = { path = "crates/genie-part" }
 genie-tasks = { path = "crates/genie-tasks" }
 rusqlite = { version = "=0.37.0", features = ["bundled"] }

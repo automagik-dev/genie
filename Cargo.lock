@@ -97,12 +97,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "genie-forge"
+version = "0.1.0"
+dependencies = [
+ "genie-part",
+ "genie-tasks",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sha2",
+]
+
+[[package]]
 name = "genie-part"
 version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
  "sha2",
+]
+
+[[package]]
+name = "genie-rs"
+version = "0.1.0"
+dependencies = [
+ "genie-forge",
+ "genie-tasks",
+ "rusqlite",
+ "serde_json",
 ]
 
 [[package]]

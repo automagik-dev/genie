@@ -141,7 +141,7 @@ function cliHelp(args: string[]): string {
 /** Registered subcommand names, `help` excluded. */
 function subcommandNames(helpText: string): string[] {
   const block = helpText.split('Commands:')[1] ?? '';
-  return [...block.matchAll(/^ {2}([a-z][a-z-]*)/gm)]
+  return [...block.matchAll(/^ {2}([a-z][a-z0-9-]*)/gm)]
     .map((match) => match[1] as string)
     .filter((name) => name !== 'help')
     .sort();
