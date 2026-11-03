@@ -574,6 +574,170 @@ describe('catalog CLI over isolated Git histories', () => {
     },
   );
 
+  test.each([
+    ['split', false],
+    ['split', true],
+    ['ancestor', false],
+    ['ancestor', true],
+  ] as const)(
+    'catalog refuses ordinary source-crossing HEAD (%s, descendant: %s) before retirement/write',
+    (source, descendant) => {
+      const repo = seedOrigin();
+      const { split, foreign } = importMikro(repo, false);
+      expectGenieHistory(outputCatalog(repo));
+      const tree = git(repo, 'rev-parse', 'HEAD^{tree}').trim();
+      const merge = git(
+        repo,
+        'commit-tree',
+        tree,
+        '-p',
+        'HEAD',
+        '-p',
+        source === 'split' ? split : foreign,
+        '-m',
+        'ordinary source crossing',
+      ).trim();
+      const head = descendant
+        ? git(repo, 'commit-tree', tree, '-p', merge, '-m', 'after source crossing').trim()
+        : merge;
+      git(repo, 'update-ref', 'refs/heads/main', head);
+      // These identities exist at source root/nested paths, not just under mikro/.
+      expect(git(repo, 'show', `${foreign}:skills/foreign-ancestor/SKILL.md`)).toContain(
+        'Mikro skill retired before import.',
+      );
+      expect(git(repo, 'show', `${split}:plugins/claude-code/skills/foreign-nested/SKILL.md`)).toContain(
+        'Mikro nested skill at import.',
+      );
+      expect(() => collectCatalog(repo)).toThrow('source-crossing HEAD history');
+      const recorded = readFileSync(join(repo, 'src/lib/legacy-skills-catalog.ts'), 'utf8');
+      for (const args of [[], ['--write']]) {
+        const run = runCheck(repo, ...args);
+        expect(run.code).toBe(1);
+        expect(run.stdout).toBe('');
+        expect(run.stderr).toContain('source-crossing HEAD history');
+        expect(readFileSync(join(repo, 'src/lib/legacy-skills-catalog.ts'), 'utf8')).toBe(recorded);
+      }
+    },
+  );
+
+  test.each([false, true])(
+    'source-crossing HEAD cannot authenticate source-carried proof (descendant: %s)',
+    (descendant) => {
+      const repo = seedOrigin();
+      const { split, provenance } = importMikro(repo, false, undefined, false, true);
+      const tree = git(repo, 'rev-parse', 'HEAD^{tree}').trim();
+      const merge = git(repo, 'commit-tree', tree, '-p', 'HEAD', '-p', split, '-m', 'source proof bootstrap').trim();
+      const head = descendant ? git(repo, 'commit-tree', tree, '-p', merge, '-m', 'after bootstrap').trim() : merge;
+      git(repo, 'update-ref', 'refs/heads/main', head);
+      const recorded = readFileSync(join(repo, 'src/lib/legacy-skills-catalog.ts'), 'utf8');
+      for (const selector of [`${split}:ref-provenance.json`, `${head}:ref-provenance.json`, provenance]) {
+        if (selector === undefined) throw new Error('fixture requires trusted provenance');
+        const run = runCheck(repo, '--write', '--ref-provenance', selector);
+        expect(run.code).toBe(1);
+        expect(run.stdout).toBe('');
+        expect(run.stderr).toMatch(/source-crossing HEAD history|not independently Genie-owned/);
+        expect(readFileSync(join(repo, 'src/lib/legacy-skills-catalog.ts'), 'utf8')).toBe(recorded);
+      }
+    },
+  );
+
+  test.each([false, true])('multiple validated imports preserve shared Genie ownership (shared: %s)', (shared) => {
+    const repo = seedOrigin();
+    const { split, provenance } = importMikro(repo, shared);
+    const before = outputCatalog(repo, provenance);
+    const tree = git(repo, 'rev-parse', 'HEAD^{tree}').trim();
+    const imported = git(
+      repo,
+      'commit-tree',
+      tree,
+      '-p',
+      'HEAD',
+      '-p',
+      split,
+      '-m',
+      `Repeat validated import\n\ngit-subtree-dir: mikro\n\ngit-subtree-split: ${split}`,
+    ).trim();
+    git(repo, 'update-ref', 'refs/heads/main', imported);
+    expect(outputCatalog(repo, provenance)).toEqual(before);
+  });
+
+  test('safe pre-merge proof can justify a shared-source Genie archive, but the archive cannot prove itself', () => {
+    const repo = seedOrigin();
+    const { provenance } = importMikro(repo, true);
+    if (provenance === undefined) throw new Error('fixture requires trusted archive proof');
+    const before = outputCatalog(repo, provenance);
+    const archive = git(repo, 'rev-parse', 'refs/heads/genie-archive').trim();
+    const tree = git(repo, 'rev-parse', 'HEAD^{tree}').trim();
+    const merge = git(
+      repo,
+      'commit-tree',
+      tree,
+      '-p',
+      'HEAD',
+      '-p',
+      archive,
+      '-m',
+      'merge independently proven archive',
+    ).trim();
+    git(repo, 'update-ref', 'refs/heads/main', merge);
+    expect(outputCatalog(repo, provenance)).toEqual(before);
+    for (const authority of [archive, merge]) {
+      const run = runCheck(repo, '--ref-provenance', `${authority}:ref-provenance.json`);
+      expect(run.code).toBe(1);
+      expect(run.stdout).toBe('');
+      expect(run.stderr).toContain('not independently Genie-owned');
+    }
+  });
+
+  test('an off-HEAD validated import cannot taint legitimate current-HEAD proof authority', () => {
+    const repo = seedRepo('legacy-catalog-off-head-import-');
+    skill(repo, 'skills/kept', 'Legitimate Genie skill.');
+    const base = commit(repo, 'Genie root');
+    skill(repo, 'skills/head-only', 'Legitimate newer Genie skill.');
+    commit(repo, 'legitimate Genie HEAD');
+    const split = git(repo, 'commit-tree', 'HEAD^{tree}', '-p', 'HEAD', '-m', 'source fork of newer Genie').trim();
+    git(repo, 'read-tree', '--prefix=mikro/', `${split}^{tree}`);
+    const imported = git(
+      repo,
+      'commit-tree',
+      git(repo, 'write-tree').trim(),
+      '-p',
+      base,
+      '-p',
+      split,
+      '-m',
+      `Off-HEAD import\n\ngit-subtree-dir: mikro\n\ngit-subtree-split: ${split}`,
+    ).trim();
+    const ref = 'refs/remotes/origin/off-head-import';
+    git(repo, 'update-ref', ref, imported);
+    writeFileSync(
+      join(repo, 'ref-provenance.json'),
+      JSON.stringify({ version: 1, refs: [{ ref, commit: imported, owner: 'source' }] }),
+    );
+    const authority = commit(repo, 'independent HEAD proof for off-head source ref');
+    expect(outputCatalog(repo, `${authority}:ref-provenance.json`)).toEqual({ names: [], descriptions: [] });
+  });
+
+  test('a later validated import cannot launder an older ordinary source crossing', () => {
+    const repo = seedOrigin();
+    const { split } = importMikro(repo, false);
+    const tree = git(repo, 'rev-parse', 'HEAD^{tree}').trim();
+    const mixed = git(repo, 'commit-tree', tree, '-p', 'HEAD', '-p', split, '-m', 'ordinary source crossing').trim();
+    const imported = git(
+      repo,
+      'commit-tree',
+      tree,
+      '-p',
+      mixed,
+      '-p',
+      split,
+      '-m',
+      `Later import\n\ngit-subtree-dir: mikro\n\ngit-subtree-split: ${split}`,
+    ).trim();
+    git(repo, 'update-ref', 'refs/heads/main', imported);
+    expect(() => collectCatalog(repo)).toThrow('source-crossing HEAD history');
+  });
+
   test('an unmerged branch that merges Mikro source does not make the shipped refs ambiguous', () => {
     const repo = seedOrigin();
     const { split } = importMikro(repo, false);

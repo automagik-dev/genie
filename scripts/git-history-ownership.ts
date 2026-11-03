@@ -62,11 +62,25 @@ export function catalogGenieCommits(
   // proof blobs before their own provenance has been established.
   visitHistory(graph, imports, [git('rev-parse', 'HEAD^{commit}').trim()], owned);
 
+  const headSource = catalogHeadSourceCommits(graph, imports, owned);
+  const tainted = sourceDescendants(graph, imports, headSource);
+  const proofOwned = new Set([...owned].filter((commit) => !tainted.has(commit)));
   const refs = referenceTips(git, graph);
   const declared =
     provenance === undefined
       ? { genieRoots: [], sourceRefs: new Set<string>() }
-      : provenReferences(git, provenance, owned, refs);
+      : provenReferences(git, provenance, proofOwned, refs);
+  // An independently authenticated archive can explain shared source ancestry;
+  // neither that archive nor an ordinary mixed HEAD can authenticate its own proof.
+  const provenGenie = new Set<string>();
+  visitHistory(graph, imports, [...declared.genieRoots], provenGenie);
+  for (const commit of headSource) {
+    if (owned.has(commit) && !provenGenie.has(commit)) {
+      throw new Error(
+        `ambiguous source-crossing HEAD history at ${commit}; use validated imports or independent proof`,
+      );
+    }
+  }
   // visitHistory consumes its stack; retain exact proof roots for the eligibility walk.
   visitHistory(graph, imports, [...declared.genieRoots], owned);
   const sourceSeeds = [...sourceTips];
@@ -135,6 +149,57 @@ export function catalogGenieCommits(
   owned.clear();
   visitHistory(graph, imports, eligibleRoots, owned);
   return owned;
+}
+
+/** Catalog bootstrap only: off-HEAD imports cannot disown legitimate current Genie history. */
+function catalogHeadSourceCommits(
+  graph: ReadonlyMap<string, readonly string[]>,
+  imports: ReadonlyMap<string, MikroImport>,
+  headHistory: ReadonlySet<string>,
+): Set<string> {
+  const sourceOnly = new Set<string>();
+  for (const imported of imports.values()) {
+    if (!headHistory.has(imported.commit)) continue;
+    const genie = new Set<string>();
+    const source = new Set<string>();
+    visitHistory(graph, imports, [imported.genieParent], genie);
+    visitHistory(graph, new Map(), [imported.split], source);
+    // Keep each import's evidence: a later import cannot reclassify an older
+    // source crossing as Genie merely by including it in its first-parent history.
+    for (const commit of source) {
+      if (!genie.has(commit)) sourceOnly.add(commit);
+    }
+  }
+  return sourceOnly;
+}
+
+/** A proof on source or its ordinary mixed descendants is not independent authority. */
+function sourceDescendants(
+  graph: ReadonlyMap<string, readonly string[]>,
+  imports: ReadonlyMap<string, MikroImport>,
+  source: ReadonlySet<string>,
+): Set<string> {
+  const children = new Map<string, string[]>();
+  for (const [commit, parents] of graph) {
+    const imported = imports.get(commit);
+    for (const parent of imported ? [imported.genieParent] : parents) {
+      const descendants = children.get(parent);
+      if (descendants) descendants.push(commit);
+      else children.set(parent, [commit]);
+    }
+  }
+  const tainted = new Set(source);
+  const pending = [...source];
+  while (pending.length) {
+    const commit = pending.pop();
+    if (!commit) continue;
+    for (const child of children.get(commit) ?? []) {
+      if (tainted.has(child)) continue;
+      tainted.add(child);
+      pending.push(child);
+    }
+  }
+  return tainted;
 }
 
 /** Cut only validated import source edges; every ordinary merge parent remains Genie-owned. */
