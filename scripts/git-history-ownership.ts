@@ -73,11 +73,15 @@ export function catalogGenieCommits(
   for (const [ref, commit] of refs) {
     if (declared.sourceRefs.has(ref)) sourceSeeds.push(commit);
   }
-  const sourceConnected = sourceSeeds.length ? sourceConnectedHistory(graph, imports, sourceSeeds) : new Set<string>();
+  const source =
+    sourceSeeds.length > 0
+      ? sourceConnectedHistory(graph, imports, sourceSeeds, owned)
+      : { connected: new Set<string>(), boundary: new Set<string>(), genieBoundary: new Set<string>() };
+  const sourceConnected = source.connected;
   visitHistory(
     graph,
     imports,
-    roots.filter((root) => !sourceConnected.has(root)),
+    roots.filter((root) => !sourceConnected.has(root) && !source.boundary.has(root)),
     owned,
   );
 
@@ -85,7 +89,16 @@ export function catalogGenieCommits(
   const namedRoots = new Set<string>();
   for (const [ref, commit] of refs) {
     namedRoots.add(commit);
-    if (rootSet.has(commit) && !owned.has(commit) && !sourceTips.has(commit) && !declared.sourceRefs.has(ref)) {
+    // An unshipped mixed branch grants no authority without proof. Waive ambiguity
+    // only when its non-source parents are independently Genie-owned; an unrelated
+    // foreign parent must not authenticate itself merely by merging known source.
+    if (
+      rootSet.has(commit) &&
+      !owned.has(commit) &&
+      !sourceTips.has(commit) &&
+      !declared.sourceRefs.has(ref) &&
+      !source.genieBoundary.has(commit)
+    ) {
       throw new Error(`ambiguous history reference ${ref} at ${commit}; supply commit-bound --ref-provenance`);
     }
   }
@@ -94,10 +107,16 @@ export function catalogGenieCommits(
       throw new Error(`ambiguous unnamed history root ${root}; cannot establish reference provenance`);
     }
   }
-  const eligibleRoots = git('rev-list', '--no-walk', ...retirementHistory)
+  const retirementRoots = git('rev-list', '--no-walk', ...retirementHistory)
     .trim()
     .split('\n')
-    .filter((root) => owned.has(root));
+    .filter(Boolean);
+  for (const root of retirementRoots) {
+    if (source.boundary.has(root) && !owned.has(root)) {
+      throw new Error(`ambiguous shipped mixed history at ${root}; supply commit-bound --ref-provenance`);
+    }
+  }
+  const eligibleRoots = retirementRoots.filter((root) => owned.has(root));
   eligibleRoots.push(...declared.genieRoots);
   // Ownership of an unmerged Genie ref does not mean its skills ever shipped.
   // All-ref validation is complete; reuse its visited set for the eligible walk.
@@ -167,36 +186,78 @@ function referenceTips(git: ReadGitHistory, graph: ReadonlyMap<string, readonly 
   return refs;
 }
 
-/** Source forks can expose off-tip refs; never cross a validated import source edge. */
+/**
+ * Mikro source history: the ancestry of every validated split, plus descendants that stay
+ * entirely inside it. A descendant that also has Genie ancestry is a boundary merge - it pulls
+ * source history into Genie, so a ref may not own it without proof, but the Genie history
+ * behind it is not source. Walking up through such a merge would mark every Genie ref as
+ * foreign, which is what an unmerged subtree-pull branch used to do.
+ */
 function sourceConnectedHistory(
   graph: ReadonlyMap<string, readonly string[]>,
   imports: ReadonlyMap<string, MikroImport>,
   pending: string[],
-): Set<string> {
+  owned: ReadonlySet<string>,
+): { connected: Set<string>; boundary: Set<string>; genieBoundary: Set<string> } {
+  const connected = new Set<string>();
+  const ancestors = [...pending];
+  while (ancestors.length) {
+    const commit = ancestors.pop();
+    if (!commit || connected.has(commit)) continue;
+    const parents = graph.get(commit);
+    if (!parents) throw new Error(`incomplete source ancestry at ${commit}`);
+    connected.add(commit);
+    // A validated import joins source to Genie; never cross it back into Genie history.
+    if (!imports.has(commit)) ancestors.push(...parents);
+  }
+
+  // Process every parent before its children. Git's row order (and the order of
+  // siblings at a reconvergent merge) is not an ownership signal.
   const children = new Map<string, string[]>();
+  const remaining = new Map<string, number>();
+  const effectiveParents = new Map<string, readonly string[]>();
+  const queue: string[] = [];
   for (const [commit, parents] of graph) {
     const imported = imports.get(commit);
-    for (const parent of parents) {
-      if (imported && parent !== imported.genieParent) continue;
+    const effective = imported ? [imported.genieParent] : parents;
+    effectiveParents.set(commit, effective);
+    remaining.set(commit, effective.length);
+    if (effective.length === 0) queue.push(commit);
+    for (const parent of effective) {
+      if (!graph.has(parent)) throw new Error(`incomplete source ancestry at ${parent}`);
       const descendants = children.get(parent);
       if (descendants) descendants.push(commit);
       else children.set(parent, [commit]);
     }
   }
-  const connected = new Set<string>();
-  while (pending.length) {
-    const commit = pending.pop();
-    if (!commit || connected.has(commit)) continue;
-    const parents = graph.get(commit);
-    if (!parents) throw new Error(`incomplete source ancestry at ${commit}`);
-    connected.add(commit);
-    const imported = imports.get(commit);
-    if (imported) pending.push(imported.genieParent);
-    else pending.push(...parents);
-    const descendants = children.get(commit);
-    if (descendants) pending.push(...descendants);
+
+  const boundary = new Set<string>();
+  const genieBoundary = new Set<string>();
+  let visited = 0;
+  while (queue.length) {
+    const commit = queue.pop();
+    if (!commit) continue;
+    visited++;
+    const parents = effectiveParents.get(commit) ?? [];
+    if (!connected.has(commit) && parents.length > 0) {
+      if (parents.every((parent) => connected.has(parent))) connected.add(commit);
+      else if (parents.some((parent) => connected.has(parent) || boundary.has(parent))) {
+        boundary.add(commit);
+        // A foreign parent is not evidence of Genie ownership. Only independently
+        // owned Genie ancestry can waive ambiguity for an unshipped mixed branch.
+        if (parents.every((parent) => connected.has(parent) || owned.has(parent) || genieBoundary.has(parent))) {
+          genieBoundary.add(commit);
+        }
+      }
+    }
+    for (const child of children.get(commit) ?? []) {
+      const count = (remaining.get(child) ?? 0) - 1;
+      remaining.set(child, count);
+      if (count === 0) queue.push(child);
+    }
   }
-  return connected;
+  if (visited !== graph.size) throw new Error('invalid cyclic Git ancestry');
+  return { connected, boundary, genieBoundary };
 }
 
 function provenanceRecords(git: ReadGitHistory, selector: string, owned: ReadonlySet<string>): unknown[] {

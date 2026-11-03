@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { legacySkillDigest } from '../src/lib/legacy-skill-digest.js';
 import type { classifyLegacySkillEntry } from '../src/lib/legacy-skills.js';
+import { catalogGenieCommits } from './git-history-ownership.js';
 import {
   CATALOG_CHECK_GAP,
   collectCatalog,
@@ -572,6 +573,87 @@ describe('catalog CLI over isolated Git histories', () => {
       expect(catalog.descriptions).toEqual(digests(['Demo, revised.', ...GENIE_HISTORY_DESCRIPTIONS]));
     },
   );
+
+  test('an unmerged branch that merges Mikro source does not make the shipped refs ambiguous', () => {
+    const repo = seedOrigin();
+    const { split } = importMikro(repo, false);
+    // A subtree-pull PR branch: source history merged into a Genie commit without the
+    // validated import metadata. It grants no authority, but it must not mark the whole
+    // Genie history source-connected - that failed every other PR's CI (#3201, #3203).
+    skill(repo, 'skills/never-shipped', 'Mixed branch skill never delivered.');
+    git(repo, 'add', '-A');
+    const tree = git(repo, 'write-tree').trim();
+    const merge = git(repo, 'commit-tree', tree, '-p', 'HEAD', '-p', split, '-m', 'pull the Mikro subtree').trim();
+    const descendant = git(repo, 'commit-tree', tree, '-p', merge, '-m', 'continue mixed branch').trim();
+    git(repo, 'update-ref', 'refs/remotes/origin/pull-mikro-subtree', merge);
+    git(repo, 'update-ref', 'refs/remotes/origin/pull-mikro-descendant', descendant);
+
+    expectGenieHistory(outputCatalog(repo));
+    // A shipped mixed tip cannot silently lose required retirement history.
+    git(repo, 'tag', 'mixed-release', descendant);
+    const refused = runCheck(repo);
+    expect(refused.code).toBe(1);
+    expect(refused.stdout).toBe('');
+    expect(refused.stderr).toContain('ambiguous shipped mixed history');
+  });
+
+  test.each([false, true])('reconvergent source closure is independent of sibling row order (swap: %s)', (swap) => {
+    const repo = seedOrigin();
+    const { split } = importMikro(repo, false);
+    const tree = `${split}^{tree}`;
+    const x = git(repo, 'commit-tree', tree, '-p', split, '-m', 'source X').trim();
+    const y = git(repo, 'commit-tree', tree, '-p', split, '-m', 'source Y').trim();
+    const z = git(repo, 'commit-tree', tree, '-p', x, '-m', 'source Z').trim();
+    const merge = git(repo, 'commit-tree', tree, '-p', z, '-p', y, '-m', 'source reconvergence').trim();
+    const ref = 'refs/remotes/origin/unknown-source';
+    git(repo, 'update-ref', ref, merge);
+    const readGit = (...args: string[]) => {
+      const result = git(repo, ...args);
+      if (args[0] !== 'rev-list' || args[1] !== '--parents') return result;
+      const rows = result.trim().split('\n');
+      const siblings = rows.filter((row) => row.startsWith(x) || row.startsWith(y));
+      const rest = rows.filter((row) => !row.startsWith(x) && !row.startsWith(y));
+      return [...rest, ...(swap ? siblings.reverse() : siblings)].join('\n');
+    };
+    expect(() => catalogGenieCommits(readGit, ['--all'], ['HEAD', '--tags', '--glob=refs/archive/*'])).toThrow(
+      `ambiguous history reference ${ref}`,
+    );
+    writeFileSync(
+      join(repo, 'ref-provenance.json'),
+      JSON.stringify({
+        version: 1,
+        refs: [{ ref, commit: merge, owner: 'source' }],
+      }),
+    );
+    const authority = commit(repo, 'prove exact source reconvergence');
+    const owned = catalogGenieCommits(readGit, ['--all'], ['HEAD'], `${authority}:ref-provenance.json`);
+    for (const source of [split, x, y, z, merge]) expect(owned.has(source)).toBe(false);
+    expectGenieHistory(outputCatalog(repo, `${authority}:ref-provenance.json`));
+  });
+
+  test.each([false, true])('a foreign/source mixed descendant needs proof (shipped tag: %s)', (shipped) => {
+    const repo = seedOrigin();
+    const { split } = importMikro(repo, false);
+    const tree = `${split}^{tree}`;
+    const foreign = git(repo, 'commit-tree', tree, '-m', 'unrelated foreign root').trim();
+    const merge = git(repo, 'commit-tree', tree, '-p', foreign, '-p', split, '-m', 'foreign mixed merge').trim();
+    const descendant = git(repo, 'commit-tree', tree, '-p', merge, '-m', 'foreign mixed descendant').trim();
+    const ref = shipped ? 'refs/tags/foreign-mixed' : 'refs/remotes/origin/foreign-mixed';
+    git(repo, 'update-ref', ref, descendant);
+    const refused = runCheck(repo);
+    expect(refused.code).toBe(1);
+    expect(refused.stdout).toBe('');
+    expect(refused.stderr).toContain(`ambiguous history reference ${ref}`);
+    writeFileSync(
+      join(repo, 'ref-provenance.json'),
+      JSON.stringify({
+        version: 1,
+        refs: [{ ref, commit: descendant, owner: 'source' }],
+      }),
+    );
+    const authority = commit(repo, 'exclude exact foreign mixed source');
+    expectGenieHistory(outputCatalog(repo, `${authority}:ref-provenance.json`));
+  });
 
   test('trusted proof keeps shared Genie archives and core despite source roles', async () => {
     const repo = seedOrigin();
