@@ -108,8 +108,10 @@ pub fn task_id(branch: &str) -> Option<&str> {
 }
 
 /// The conventional-commit type of a title (`''` when it has none) and its exclusion reason:
-/// `docs-memory` for `docs(memory)`, `version-bump` for a `(version)` scope, `[auto-version]` or
-/// "bump version", `release` for a `release` type, `chore(release)` or a title starting "release".
+/// `docs-memory` for `docs(memory)`; `version-bump` for a `(version)` scope, `[auto-version]`, or a
+/// subject starting "bump version"; `release` for a `release` type, `chore(release)`, or a
+/// non-conventional title that is "release" or starts "release ". A conventional title of any other
+/// type that merely mentions a release or a bump stays counted.
 pub fn classify(title: &str) -> (String, Option<&'static str>) {
     let conventional = title.split_once(':').and_then(|(head, _)| {
         let head = head.strip_suffix('!').unwrap_or(head);
@@ -120,13 +122,18 @@ pub fn classify(title: &str) -> (String, Option<&'static str>) {
         let word = !kind.is_empty() && kind.bytes().all(|b| b.is_ascii_alphabetic());
         word.then(|| (kind.to_ascii_lowercase(), scope.to_ascii_lowercase()))
     });
-    let (kind, scope) = conventional.unwrap_or_default();
     let lower = title.to_ascii_lowercase();
+    let subject = match &conventional {
+        Some(_) => lower.split_once(':').map_or("", |(_, s)| s.trim()),
+        None => lower.trim(),
+    };
+    let bare = conventional.is_none() && (subject == "release" || subject.starts_with("release "));
+    let (kind, scope) = conventional.unwrap_or_default();
     let reason = if kind == "docs" && scope == "memory" {
         Some("docs-memory")
-    } else if scope == "version" || lower.contains("[auto-version]") || lower.contains("bump version") {
+    } else if scope == "version" || lower.contains("[auto-version]") || subject.starts_with("bump version") {
         Some("version-bump")
-    } else if kind == "release" || (kind == "chore" && scope == "release") || lower.starts_with("release") {
+    } else if kind == "release" || (kind == "chore" && scope == "release") || bare {
         Some("release")
     } else {
         None

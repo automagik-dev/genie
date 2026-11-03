@@ -362,6 +362,10 @@ fn task_ids_types_exclusions_remotes_and_timestamps() {
     assert_eq!(classify("Merge branch dev"), (String::new(), None));
     assert_eq!(classify("chore(release): cut 6.2").1, Some("release"));
     assert_eq!(classify("chore: bump version to 6.2").1, Some("version-bump"));
+    assert_eq!(classify("Release v6.2").1, Some("release"));
+    for counted in ["fix: release notes typo", "fix: don't bump version twice", "Releases page fix"] {
+        assert_eq!(classify(counted).1, None, "{counted}");
+    }
     for (url, host, path) in [
         ("https://github.com/o/r.git", "github.com", "o/r"),
         ("git@github.com:o/r.git", "github.com", "o/r"),
