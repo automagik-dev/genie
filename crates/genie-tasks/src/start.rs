@@ -382,6 +382,8 @@ fn make(root: &Path, worktree: &Path, branch: &str, base_sha: &str, made: &mut M
         }
         Err(e) => return Err(e.into()),
     }
+    // A ref is created atomically or not at all, so a failed `git branch` made nothing; a successful
+    // one is still confirmed from git's own state before the branch counts as this start's.
     let out = git(root, &["branch", "--no-track", branch, base_sha])?;
     if !out.status.success() {
         return Err(VerbError::Failed(format!(
@@ -389,10 +391,34 @@ fn make(root: &Path, worktree: &Path, branch: &str, base_sha: &str, made: &mut M
             String::from_utf8_lossy(&out.stderr).trim()
         )));
     }
-    made.branch = true;
-    git_ok(root, &["worktree", "add", "--quiet", &worktree.to_string_lossy(), branch], "git worktree add")?;
-    made.worktree = true;
+    let tip = git_read(root, &["rev-parse", "--verify", "--quiet", &format!("refs/heads/{branch}")])?;
+    made.branch = tip.as_deref() == Some(base_sha);
+    if !made.branch {
+        return Err(VerbError::Failed(format!("git branch {branch} did not land at {base_sha}")));
+    }
+    // `worktree add` can register and populate the worktree and still exit non-zero (a failing
+    // post-checkout hook), so whether it made a worktree is read from git's registry afterwards. The
+    // path was claimed above under the start lock, so a registration at it is this start's.
+    let path = worktree.to_string_lossy();
+    let out = git(root, &["worktree", "add", "--quiet", &path, branch])?;
+    made.worktree = registered(root, worktree)?;
+    if !out.status.success() {
+        return Err(VerbError::Failed(format!(
+            "git worktree add failed: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        )));
+    }
+    if !made.worktree {
+        return Err(VerbError::Failed(format!("git worktree add did not register {path}")));
+    }
     Ok(())
+}
+
+/// Whether git's worktree registry lists `worktree`.
+fn registered(root: &Path, worktree: &Path) -> Result<bool, VerbError> {
+    let list = git_ok(root, &["worktree", "list", "--porcelain"], "git worktree list")?;
+    let want = format!("worktree {}", worktree.display());
+    Ok(list.lines().any(|line| line == want))
 }
 
 /// Remove exactly what `made` names, newest first; best effort, each step independent.

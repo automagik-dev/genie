@@ -463,3 +463,25 @@ fn a_restart_after_close_gets_a_new_lifecycle_key_and_a_retry_keeps_it() {
     );
     assert_eq!(fx.export_rows().len(), 3, "created, closed, created: a retry adds no row");
 }
+
+#[test]
+fn a_worktree_add_that_registers_then_fails_leaves_nothing_behind() {
+    // Review R2-H1: a failing post-checkout hook makes `git worktree add` exit 1 after it registered
+    // and populated the worktree. Cleanup must still remove the branch, the registration and the directory.
+    let fx = fixture("hookfail");
+    let hook = fx.repo.join(".git/hooks/post-checkout");
+    fs::write(&hook, "#!/bin/sh\necho review-fixture-hook-failed >&2\nexit 1\n").unwrap();
+    fs::set_permissions(&hook, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+    let e = fx.start(&opts(None, Some("hook failure"))).unwrap_err();
+    assert_eq!(e.exit_code(), 1, "{e}");
+    assert!(e.to_string().contains("review-fixture-hook-failed"), "{e}");
+    let wt = fx.worktrees().join("gn-1-hook-failure");
+    assert_eq!(fx.branches(), "dev\nmain", "no task branch");
+    let list = git(&fx.repo, &["worktree", "list", "--porcelain"]);
+    assert!(!list.contains("gn-1-hook-failure"), "no worktree registration:\n{list}");
+    assert!(!fx.repo.join(".git/worktrees/gn-1-hook-failure").exists(), "no admin entry");
+    assert!(!wt.exists(), "no task directory");
+    assert!(fx.events().is_empty(), "no created event");
+    assert!(fx.export_rows().is_empty(), "no export row");
+    assert_eq!(fx.reservations(), vec![("gn-1".into(), 1)], "the gn reservation is abandoned");
+}
