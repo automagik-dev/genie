@@ -86,10 +86,46 @@ async function cliIdentity(cwd: string, env: Record<string, string>, ...args: st
   return { stdout, stderr, code };
 }
 
+// T9 (genie-v7-tasks): every test in this file runs beside Rust-owned `v7_` rows. TS initializes
+// genie.db first, then the tables are added from the one DDL file the Rust store also loads.
+const V7_SCHEMA_SQL = readFileSync(
+  join(import.meta.dir, '..', '..', 'crates', 'genie-tasks', 'src', 'schema.sql'),
+  'utf-8',
+);
+const V7_COUNTS =
+  "SELECT (SELECT count(*) FROM v7_task_events) || '/' || (SELECT count(*) FROM v7_tasks) || '/' || (SELECT count(*) FROM v7_schema) AS n";
+
+function seedV7(cwd: string): void {
+  const db = openDb({ cwd });
+  try {
+    db.exec(V7_SCHEMA_SQL);
+    db.query(
+      `INSERT INTO v7_task_events (project, task_key, task, event, forge, url, "commit", at, dedupe_key)
+       VALUES (?, 'gh-1', 'gh-1', 'opened', 'github', 'https://github.com/o/r/pull/1', 'v7seedcommit', '2026-11-03T00:00:00Z', 'v7-seed-key')`,
+    ).run(cwd);
+    db.query(
+      `INSERT INTO v7_tasks (project, task_key, task, state, title, last_seq, updated_at)
+       VALUES (?, 'gh-1', 'gh-1', 'opened', 'v7 seed title', 1, '2026-11-03T00:00:00Z')`,
+    ).run(cwd);
+  } finally {
+    db.close();
+  }
+}
+
+function v7Counts(cwd: string): string {
+  const db = openDb({ cwd });
+  try {
+    return (db.query(V7_COUNTS).get() as { n: string }).n;
+  } finally {
+    db.close();
+  }
+}
+
 beforeEach(() => {
   repo = mkdtempSync(join(tmpdir(), 'genie-v5-task-'));
   git(repo, 'init', '-b', 'main');
   git(repo, 'commit', '--allow-empty', '-m', 'init');
+  seedV7(repo);
 });
 
 afterEach(() => {
@@ -2071,6 +2107,60 @@ describe('committed roadmap.json round-trip', () => {
  * queue. The two databases have independent `PRAGMA user_version`; they must
  * never merge.
  */
+describe('T9: Rust-owned v7_ tables beside the TS tables', () => {
+  async function doctorStatuses(cwd: string): Promise<string[]> {
+    const proc = Bun.spawn(['bun', GENIE, 'doctor', '--json'], {
+      cwd,
+      stdout: 'pipe',
+      stderr: 'pipe',
+      env: { ...process.env, NO_COLOR: '1' },
+    });
+    const stdout = await new Response(proc.stdout).text();
+    await proc.exited;
+    const report = JSON.parse(stdout) as { checks: Array<{ name: string; status: string }> };
+    return report.checks.map((check) => `${check.name}: ${check.status}`);
+  }
+
+  test('export, roadmap.json, import --replace and delete never touch the v7_ rows', async () => {
+    expect(v7Counts(repo)).toBe('1/1/1');
+    const created = await cli(repo, 'create', '--title', 'a TS card beside v7 rows');
+    expect(created.code).toBe(0);
+
+    const exported = await cli(repo, 'export');
+    expect(exported.code).toBe(0);
+    for (const marker of ['v7_', 'v7-seed-key', 'v7 seed title', 'v7seedcommit']) {
+      expect(exported.stdout).not.toContain(marker);
+    }
+    expect((await cli(repo, 'export', '--write')).code).toBe(0);
+    const roadmap = readFileSync(join(repo, '.genie', 'roadmap.json'), 'utf-8');
+    for (const marker of ['v7_', 'v7-seed-key', 'v7 seed title', 'v7seedcommit']) {
+      expect(roadmap).not.toContain(marker);
+    }
+    expect(Object.keys(JSON.parse(roadmap)).sort()).toEqual(Object.keys(JSON.parse(exported.stdout)).sort());
+
+    const replaced = await cli(repo, 'import', '--replace');
+    expect(replaced.code).toBe(0);
+    expect(v7Counts(repo)).toBe('1/1/1');
+
+    const id = (JSON.parse((await cli(repo, 'export')).stdout) as StateExport).tasks[0]?.id ?? '';
+    const deleted = await cli(repo, 'delete', id);
+    expect(deleted.code).toBe(0);
+    expect(v7Counts(repo)).toBe('1/1/1');
+  });
+
+  test('doctor reports the same checks with and without the v7_ tables', async () => {
+    const plain = mkdtempSync(join(tmpdir(), 'genie-v5-task-plain-'));
+    try {
+      git(plain, 'init', '-b', 'main');
+      git(plain, 'commit', '--allow-empty', '-m', 'init');
+      openDb({ cwd: plain }).close();
+      expect(await doctorStatuses(repo)).toEqual(await doctorStatuses(plain));
+    } finally {
+      rmSync(plain, { recursive: true, force: true });
+    }
+  }, 60_000);
+});
+
 describe('per-repo verbs refuse the global database', () => {
   test('a cwd whose .genie IS GENIE_HOME errors clearly and writes no per-repo schema', async () => {
     const home = mkdtempSync(join(tmpdir(), 'genie-home-collision-'));

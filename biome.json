@@ -46,6 +46,8 @@
   "files": {
     "ignore": [
       "node_modules",
+      "crates",
+      "target",
       "dist",
       "mikro",
       "plugins/genie-dsh/client.js",

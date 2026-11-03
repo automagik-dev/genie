@@ -10,7 +10,7 @@
     "plugins/dsh-genie-board/build.test.ts"
   ],
   "project": ["src/**/*.ts", "plugins/dsh-genie-board/src/**/*.{ts,tsx}"],
-  "ignore": [".docs-vendor/**"],
+  "ignore": [".docs-vendor/**", "crates/**", "target/**"],
   "ignoreBinaries": ["ldd"],
   "ignoreExportsUsedInFile": true,
   "ignoreDependencies": ["react"],
