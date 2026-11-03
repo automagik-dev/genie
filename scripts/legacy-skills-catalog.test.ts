@@ -5,6 +5,7 @@ import {
   accessSync,
   appendFileSync,
   cpSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -623,8 +624,9 @@ describe('catalog CLI over isolated Git histories', () => {
       // when the same commit changes a Genie skill and is necessarily scanned.
       skill(repo, 'mikro/skills/foreign-later', 'Mikro skill added after import.');
       skill(repo, 'skills/demo', 'Demo, revised again.');
-      commit(repo, 'revise both package trees');
-      const catalog = outputCatalog(repo, provenance, shared ? provenance?.slice(0, 40) : undefined);
+      const reviewed = commit(repo, 'revise both package trees');
+      // Shared ancestry: the anchor must cover the reviewed HEAD it vouches for.
+      const catalog = outputCatalog(repo, provenance, shared ? reviewed : undefined);
       expect(catalog.names).toEqual(digests(GENIE_HISTORY_NAMES));
       expect(catalog.descriptions).toEqual(digests(['Demo, revised.', ...GENIE_HISTORY_DESCRIPTIONS]));
     },
@@ -783,7 +785,12 @@ describe('catalog CLI over isolated Git histories', () => {
     git(repo, 'update-ref', 'refs/heads/main', anchor);
     const { provenance } = importMikro(repo, true);
     if (provenance === undefined) throw new Error('fixture requires descendant proof');
-    expectGenieHistory(outputCatalog(repo, undefined, anchor));
+    // The reviewed merge no longer covers the source-descendant commits HEAD has added since.
+    const stale = runCheck(repo, '--trusted-genie-root', anchor);
+    expect(stale.code).toBe(1);
+    expect(stale.stdout).toBe('');
+    expect(stale.stderr).toContain('source-crossing HEAD history');
+    expectGenieHistory(outputCatalog(repo, undefined, git(repo, 'rev-parse', 'HEAD').trim()));
     const denied = runCheck(repo, '--write', '--trusted-genie-root', anchor, '--ref-provenance', provenance);
     expect(denied.code).toBe(1);
     expect(denied.stdout).toBe('');
@@ -924,7 +931,7 @@ describe('catalog CLI over isolated Git histories', () => {
       `Repeat validated import\n\ngit-subtree-dir: mikro\n\ngit-subtree-split: ${split}`,
     ).trim();
     git(repo, 'update-ref', 'refs/heads/main', imported);
-    expect(outputCatalog(repo, provenance, trustedRoot)).toEqual(before);
+    expect(outputCatalog(repo, provenance, shared ? imported : undefined)).toEqual(before);
   });
 
   test('safe pre-merge proof can justify a shared-source Genie archive, but the archive cannot prove itself', () => {
@@ -948,7 +955,7 @@ describe('catalog CLI over isolated Git histories', () => {
       'merge independently proven archive',
     ).trim();
     git(repo, 'update-ref', 'refs/heads/main', merge);
-    expect(outputCatalog(repo, provenance, trustedRoot)).toEqual(before);
+    expect(outputCatalog(repo, provenance, merge)).toEqual(before);
     for (const authority of [archive, merge]) {
       const run = runCheck(
         repo,
@@ -1188,6 +1195,89 @@ describe('catalog CLI over isolated Git histories', () => {
     expectGenieHistory(outputCatalog(repo, `${authority}:ref-provenance.json`));
   });
 
+  // Review of #3204: a declared source ref at a trusted shared seed G. S is a source-only
+  // descendant of G outside every anchor and proof; an ordinary HEAD merge M of S must not
+  // turn the ambiguity S has before the merge into retirement authority after it.
+  test.each([
+    ['explicit anchor', true],
+    ['exact archive proof, no anchor', false],
+  ] as const)('an ordinary merge never extends source-descendant trust (%s)', (_label, anchored) => {
+    const repo = seedRepo('legacy-skills-catalog-descendant-');
+    const foreignName = 'foreign-only';
+    const foreignDescription = 'Foreign descendant must not be retired as Genie.';
+    skill(repo, 'skills/kept', 'Genuine Genie skill.');
+    const seed = commit(repo, 'shared Genie root');
+    const sourceRef = 'refs/remotes/source/main';
+    git(repo, 'update-ref', sourceRef, seed);
+    const refs: { ref: string; commit: string; owner: string }[] = [{ ref: sourceRef, commit: seed, owner: 'source' }];
+    if (!anchored) {
+      // The proof lives on unrelated clean Genie lineage and grants the exact archive G.
+      git(repo, 'update-ref', 'refs/heads/trusted-archive', seed);
+      refs.push({ ref: 'refs/heads/trusted-archive', commit: seed, owner: 'genie' });
+      const unrelated = git(repo, 'commit-tree', `${seed}^{tree}`, '-m', 'independent Genie proof root').trim();
+      git(repo, 'update-ref', 'refs/heads/main', unrelated);
+    }
+    writeFileSync(join(repo, 'proof.json'), JSON.stringify({ version: 1, refs }));
+    const proofCommit = commit(repo, 'safe pre-merge proof');
+    const proof = `${proofCommit}:proof.json`;
+    const anchor = anchored ? proofCommit : undefined;
+    expect([...collectCatalog(repo, proof, anchor).keys()]).toEqual(['kept']);
+
+    git(repo, 'read-tree', seed);
+    skill(repo, `skills/${foreignName}`, foreignDescription);
+    git(repo, 'add', `skills/${foreignName}`);
+    const descendant = git(
+      repo,
+      'commit-tree',
+      git(repo, 'write-tree').trim(),
+      '-p',
+      seed,
+      '-m',
+      'foreign source descendant',
+    ).trim();
+    git(repo, 'read-tree', 'HEAD');
+    rmSync(join(repo, 'skills', foreignName), { recursive: true, force: true });
+    git(repo, 'update-ref', 'refs/remotes/source/next', descendant);
+    // Negative control: before any merge the descendant ref is ambiguous.
+    expect(() => collectCatalog(repo, proof, anchor)).toThrow('ambiguous history reference refs/remotes/source/next');
+
+    const merge = git(
+      repo,
+      'commit-tree',
+      `${proofCommit}^{tree}`,
+      '-p',
+      proofCommit,
+      '-p',
+      descendant,
+      '-m',
+      'ordinary source merge',
+    ).trim();
+    git(repo, 'update-ref', 'refs/heads/main', merge);
+    expect(() =>
+      catalogGenieCommits((...args: string[]) => git(repo, ...args), ['--all'], ['HEAD'], proof, anchor),
+    ).toThrow('source-crossing HEAD history');
+    expect(() => collectCatalog(repo, proof, anchor)).toThrow('source-crossing HEAD history');
+    const output = join(repo, 'src', 'lib', 'legacy-skills-catalog.ts');
+    const flags = anchored
+      ? ['--trusted-genie-root', proofCommit, '--ref-provenance', proof]
+      : ['--ref-provenance', proof];
+    const denied = runCheck(repo, '--write', ...flags);
+    expect(denied.code).toBe(1);
+    expect(denied.stdout).toBe('');
+    expect(denied.stderr).toContain('source-crossing HEAD history');
+    expect(denied.stderr).not.toContain(legacySkillDigest(foreignName));
+    expect(existsSync(output)).toBe(false);
+    if (anchored) {
+      // Only a deliberately reviewed anchor that itself covers the descendant trusts it.
+      const broad = collectCatalog(repo, `${merge}:proof.json`, merge);
+      expect([...(broad.get(foreignName) ?? [])]).toEqual([foreignDescription]);
+    }
+
+    // HEAD membership alone grants nothing, even once the descendant ref is gone.
+    git(repo, 'update-ref', '-d', 'refs/remotes/source/next');
+    expect(() => collectCatalog(repo, proof, anchor)).toThrow('source-crossing HEAD history');
+  });
+
   test('trusted proof keeps shared Genie archives and core despite source roles', async () => {
     const repo = seedOrigin();
     const { provenance, split, foreign, side } = importMikro(repo, true, undefined, false, true);
@@ -1372,7 +1462,7 @@ describe('catalog CLI over isolated Git histories', () => {
     expect(unanchored.code).toBe(1);
     expect(unanchored.stdout).toBe('');
     expect(unanchored.stderr).toContain('--trusted-genie-root');
-    expectGenieHistory(outputCatalog(repo, `${authority}:ref-provenance.json`, authority));
+    expectGenieHistory(outputCatalog(repo, `${authority}:ref-provenance.json`, outer));
   });
 
   test.each([
