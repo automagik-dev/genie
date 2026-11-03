@@ -37,7 +37,8 @@ struct Row<'a> {
     lead: &'a str,
     counted: bool,
     exclude_reason: &'a str,
-    pushed_after_open: i64,
+    /// JSON null when unknown; a known 0 stays 0.
+    pushed_after_open: Option<i64>,
     dedupe_key: &'a str,
 }
 

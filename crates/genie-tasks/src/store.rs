@@ -135,7 +135,8 @@ pub struct EventRow {
     pub at: Option<String>,
     pub counted: bool,
     pub exclude_reason: String,
-    pub pushed_after_open: i64,
+    /// Commits pushed after the PR opened; `None` when the forge cannot say.
+    pub pushed_after_open: Option<i64>,
 }
 
 impl EventRow {
@@ -154,7 +155,7 @@ impl EventRow {
             at: None,
             counted: true,
             exclude_reason: String::new(),
-            pushed_after_open: 0,
+            pushed_after_open: None,
         }
     }
 
@@ -201,7 +202,7 @@ pub struct StoredEvent {
     pub at: String,
     pub counted: bool,
     pub exclude_reason: String,
-    pub pushed_after_open: i64,
+    pub pushed_after_open: Option<i64>,
     pub dedupe_key: String,
 }
 

@@ -199,3 +199,42 @@ fn rebuild_reads_the_events_only_after_it_holds_the_lock() {
     assert!(keys.contains(&dedupe_key), "the event committed while rebuild waited is in the rebuilt file");
     fs::remove_dir_all(&dir).unwrap();
 }
+
+#[test]
+fn unknown_zero_and_two_pushed_after_open_survive_record_read_append_and_rebuild() {
+    let dir = tmp_dir("t10-pushed");
+    let home = dir.join("home");
+    let a = repo(&dir, "a");
+    let store = open_store_at(&a, &home).unwrap();
+    let cases = [("gh-1", None), ("gh-2", Some(0)), ("gh-3", Some(2))];
+    for (task, pushed) in cases {
+        let mut row = EventRow::new(TaskEvent::Opened);
+        row.task = task.into();
+        row.forge = "github".into();
+        row.url = format!("https://github.com/o/a/pull/{}", &task[3..]);
+        row.pushed_after_open = pushed;
+        record(&store, store.project(), &row).unwrap();
+    }
+    let raw: Vec<Option<i64>> = {
+        let db = rusqlite::Connection::open(a.join(".genie/genie.db")).unwrap();
+        let mut stmt = db.prepare("SELECT pushed_after_open FROM v7_task_events ORDER BY seq").unwrap();
+        stmt.query_map([], |r| r.get(0)).unwrap().map(Result::unwrap).collect()
+    };
+    let expected: Vec<Option<i64>> = cases.iter().map(|(_, p)| *p).collect();
+    assert_eq!(raw, expected, "unknown is SQL NULL, a known 0 is 0");
+    let read: Vec<Option<i64>> = store.events().unwrap().iter().map(|e| e.pushed_after_open).collect();
+    assert_eq!(read, expected);
+    let in_file = |text: &str| -> Vec<serde_json::Value> {
+        text.lines()
+            .map(|l| serde_json::from_str::<serde_json::Value>(l).unwrap()["pushed_after_open"].clone())
+            .collect()
+    };
+    let json = [serde_json::Value::Null, serde_json::json!(0), serde_json::json!(2)];
+    let appended = file(&home);
+    assert_eq!(in_file(&appended), json, "unknown is JSON null, a known 0 stays 0");
+    assert!(appended.contains("\"pushed_after_open\":null") && appended.contains("\"pushed_after_open\":0,"));
+    fs::remove_file(home.join("tasks.jsonl")).unwrap();
+    rebuild(&home, std::slice::from_ref(&a)).unwrap();
+    assert_eq!(file(&home), appended, "rebuild writes the same rows byte for byte");
+    fs::remove_dir_all(&dir).unwrap();
+}

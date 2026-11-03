@@ -58,7 +58,8 @@ anything else, external input included.
 ## Export
 
 One row per committed event: `{v, event, project, task, branch, forge, url, type, at, commit, lead,
-counted, exclude_reason, pushed_after_open, dedupe_key}`. `task` is JSON `null` for a PR with no task id.
+counted, exclude_reason, pushed_after_open, dedupe_key}`. `task` is JSON `null` for a PR with no task id, and
+`pushed_after_open` is JSON `null` when the forge cannot say (a known `0` stays `0`).
 Each append holds a shared lock on `tasks.jsonl.lock` and makes one `write(2)` on an `O_APPEND`
 descriptor. `export::rebuild(genie_home, projects)` takes the exclusive lock, only then reads each
 project's events, keeps every other project's rows, and replaces the file by temp + fsync + rename. An

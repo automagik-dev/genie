@@ -22,7 +22,8 @@ CREATE TABLE IF NOT EXISTS v7_task_events (
   at TEXT NOT NULL,
   counted INTEGER NOT NULL DEFAULT 1 CHECK (counted IN (0, 1)),
   exclude_reason TEXT NOT NULL DEFAULT '',
-  pushed_after_open INTEGER NOT NULL DEFAULT 0,
+  -- Commits pushed after the PR opened; NULL when the forge cannot say (never a measured-looking 0).
+  pushed_after_open INTEGER,
   dedupe_key TEXT NOT NULL UNIQUE
 );
 CREATE INDEX IF NOT EXISTS v7_task_events_by_task ON v7_task_events (project, task_key, seq);
