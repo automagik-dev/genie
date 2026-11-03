@@ -601,6 +601,8 @@ fn an_activity_tied_with_the_open_is_unknown_and_merge_activity_counts_like_a_pu
         merged(24, "fix/gh-24-pr-merge"),
         merged(25, "fix/gh-25-queue"),
         merged(26, "fix/gh-26-unknown"),
+        merged(27, "fix/gh-27-merge-tie"),
+        merged(28, "fix/gh-28-after-merge"),
     ];
     activity(&cases[0], &[("push", at(20), Some(1))]); // the same second as the open
     // Known zero: a push a fraction before the open, one after the merge, nothing in between.
@@ -610,11 +612,13 @@ fn an_activity_tied_with_the_open_is_unknown_and_merge_activity_counts_like_a_pu
     activity(&cases[4], &[("pr_merge", at(300), Some(1))]);
     activity(&cases[5], &[("merge_queue_merge", at(300), Some(2)), ("push", at(400), Some(1))]);
     activity(&cases[6], &[("push", at(300), Some(1)), ("branch_rename", at(400), Some(1))]);
+    activity(&cases[7], &[("push", at(300), Some(1)), ("push", at(900), Some(1))]); // the merge's second
+    activity(&cases[8], &[("push", at(300), Some(1)), ("push", at_frac(901, ".000"), Some(5))]);
     let mut items: Vec<Value> = cases.iter().map(|c| fx.render(c)).collect();
     items[3]["created_at"] = json!(at_frac(23, ".200"));
     fx.serve_values(items);
 
-    assert_eq!(fx.sync(t0() + 1_000).unwrap().appended, 7);
+    assert_eq!(fx.sync(t0() + 1_000).unwrap().appended, 9);
     assert_eq!(pushed(&fx, 20), None, "a push tied with the open is unresolved, never assumed pre-open");
     assert_eq!(pushed(&fx, 21), Some(0), "the known-zero control stays 0");
     assert_eq!(pushed(&fx, 22), None, "a fractional time inside the open's second is still a tie");
@@ -622,4 +626,6 @@ fn an_activity_tied_with_the_open_is_unknown_and_merge_activity_counts_like_a_pu
     assert_eq!(pushed(&fx, 24), Some(1), "a pr_merge into the head counts like a push");
     assert_eq!(pushed(&fx, 25), Some(3), "a merge_queue_merge counts like a push");
     assert_eq!(pushed(&fx, 26), None, "an unknown activity type after the open makes the count unknown");
+    assert_eq!(pushed(&fx, 27), None, "a push tied with the merge is unresolved, never credited or dropped");
+    assert_eq!(pushed(&fx, 28), Some(1), "a push resolvably after the merge is excluded, the one before counted");
 }

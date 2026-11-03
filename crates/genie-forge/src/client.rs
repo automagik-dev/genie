@@ -197,7 +197,7 @@ impl Cli {
     /// counted as `compare(before...after).ahead_by` (for a force push, the new commits not in the old
     /// head). `None` for a head in another repository (a fork's pushes are not in this repository's
     /// activity), for activity that does not reach back to the open, for an activity whose time ties
-    /// the open (its order is unresolved), for any other or unknown activity type after the open (a
+    /// the open or the merge (its order is unresolved), for any other or unknown activity type after the open (a
     /// ref recreated or deleted included), and for any call that fails or answers without the count.
     fn github_pushed_after_open(&self, pr: &Pr) -> Option<i64> {
         if !pr.head_repo.eq_ignore_ascii_case(&self.repo) {
@@ -223,8 +223,10 @@ impl Cli {
                 Order::Tie => return None,
                 Order::After => {}
             }
-            if order(at, merged) == Order::After {
-                continue;
+            match order(at, merged) {
+                Order::Before => {}
+                Order::Tie => return None,
+                Order::After => continue,
             }
             match activity.get("activity_type").and_then(Value::as_str)? {
                 "push" | "force_push" | "pr_merge" | "merge_queue_merge" => {
