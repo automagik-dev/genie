@@ -32,11 +32,12 @@ Root cause: <what is broken — file, line, condition>
 Evidence: <reproduction steps, traces, proof>
 Causal chain: <root cause → intermediate effects → observed symptom>
 Recommended correction: <what to change, where, why>
+Correction type: <root / containment / guard; a containment names the follow-up that removes the root>
 Affected scope: <other files or features impacted>
 Confidence: <high / medium / low>
 ```
 
-Give file paths and line numbers for every claim. Verify every symbol named in the correction against the real file with `rg -n '<symbol>' <path>` and cite the matching line; a wrong name sends `fix` into a failing type-check. When more than one system is at fault, report each with its own confidence. An inconclusive trace is reported as "investigation incomplete" with the evidence gathered so far.
+Type every recommended correction. A root correction removes the proven cause. A containment holds the symptom while the cause stays (a retry, a longer timeout, a skip, a special-case branch, a prompt rule standing in for a code defect), and is recommended only together with the follow-up that removes the root. A guard keeps the failure from coming back (a test, a lint, a gate), and every root correction gets one. A handler that only hides the error, such as an `except` that swallows it, is none of the three. Give file paths and line numbers for every claim. Verify every symbol named in the correction against the real file with `rg -n '<symbol>' <path>` and cite the matching line; a wrong name sends `fix` into a failing type-check. When more than one system is at fault, report each with its own confidence. An inconclusive trace is reported as "investigation incomplete" with the evidence gathered so far.
 
 Two further outcomes are first-class, not failures to hide. **No correct seam:** when no seam exercises the real failure pattern as it occurs at the call site, a regression test placed there would give false confidence — report that as the finding and route it to `wish`, because the architecture, not the bug, is what blocks the lock-down. **Architecture, not hypothesis:** when repair attempts keep surfacing a new problem somewhere else and the group's configured repair budget is spent, stop counting failed hypotheses and report a wrong architecture; a further attempt is not authorized.
 

@@ -6,6 +6,10 @@
  * skill variables. Every check reads the physical skills tree and the bundled
  * resources each SKILL.md names, so a skill that only works out of a source
  * checkout — or out of a plugin payload that no longer ships — fails here.
+ *
+ * `--genie-rs <path>` (the extracted payload's plugins/genie-rs/bin/genie-rs) adds the
+ * real-binary T6 smoke of genie-v7-tasks: the binary is 0755, and `genie task v7-list
+ * --json` resolves it as an installed host does and exits 0.
  */
 
 import {
@@ -17,6 +21,7 @@ import {
   readFileSync,
   readdirSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -39,6 +44,7 @@ function fail(message: string): never {
 interface SmokeArgs {
   skillsDir: string;
   requireShippedInventory: boolean;
+  genieRs: string | null;
 }
 
 /**
@@ -52,11 +58,19 @@ interface SmokeArgs {
 function parseArgs(argv: string[]): SmokeArgs {
   let skillsDir = join(REPO_ROOT, 'skills');
   let requireShippedInventory = true;
+  let genieRs: string | null = null;
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === '--skills-dir') {
       const next = argv[i + 1];
       if (!next) fail('--skills-dir requires a path argument');
       skillsDir = resolve(next);
+      i++;
+      continue;
+    }
+    if (argv[i] === '--genie-rs') {
+      const next = argv[i + 1];
+      if (!next) fail('--genie-rs requires a path argument');
+      genieRs = resolve(next);
       i++;
       continue;
     }
@@ -66,7 +80,7 @@ function parseArgs(argv: string[]): SmokeArgs {
     }
     fail(`unknown argument: ${argv[i]}`);
   }
-  return { skillsDir, requireShippedInventory };
+  return { skillsDir, requireShippedInventory, genieRs };
 }
 
 function assertShippedInventory(names: string[]): void {
@@ -297,6 +311,50 @@ function runWishScaffoldSmoke(skillsDir: string): void {
   }
 }
 
+/**
+ * T6 against the payload's own genie-rs: a TS-initialized repository, a GENIE_HOME holding the
+ * binary where promotion and update put it (<GENIE_HOME>/plugins/genie-rs/bin/genie-rs, mode
+ * preserved), no GENIE_RS_BIN, and the source front door — the extracted `genie` is not run,
+ * because a musl leg builds on a glibc runner, while the static Rust binary runs on every leg.
+ */
+function runGenieRsSmoke(binary: string): void {
+  if (!existsSync(binary) || !lstatSync(binary).isFile()) fail(`genie-rs is not a regular file: ${binary}`);
+  const mode = statSync(binary).mode & 0o777;
+  if (mode !== 0o755) fail(`genie-rs must be mode 0755, not ${mode.toString(8)}: ${binary}`);
+  const workRoot = mkdtempSync(join(tmpdir(), 'genie-rs-smoke-'));
+  try {
+    const home = join(workRoot, 'genie-home');
+    const installed = join(home, 'plugins', 'genie-rs', 'bin', 'genie-rs');
+    mkdirSync(dirname(installed), { recursive: true });
+    cpSync(binary, installed);
+    const repo = join(workRoot, 'repo');
+    mkdirSync(repo);
+    const { GENIE_RS_BIN: _explicit, ...inherited } = process.env;
+    const env = { ...inherited, GENIE_HOME: home };
+    const genie = (...args: string[]) =>
+      Bun.spawnSync([process.execPath, join(REPO_ROOT, 'src', 'genie.ts'), ...args], {
+        cwd: repo,
+        env,
+        stdout: 'pipe',
+        stderr: 'pipe',
+      });
+    const git = Bun.spawnSync(['git', 'init', '-q'], { cwd: repo, stdout: 'pipe', stderr: 'pipe' });
+    if (git.exitCode !== 0) fail(`git init failed: ${git.stderr.toString().trim()}`);
+    const init = genie('task', 'list');
+    if (init.exitCode !== 0)
+      fail(`genie task list (db init) exited ${init.exitCode}: ${init.stderr.toString().trim()}`);
+    const list = genie('task', 'v7-list', '--json');
+    if (list.exitCode !== 0) {
+      fail(`genie task v7-list --json exited ${list.exitCode}: ${list.stderr.toString().trim()}`);
+    }
+    const rows: unknown = JSON.parse(list.stdout.toString());
+    if (!Array.isArray(rows) || rows.length !== 0)
+      fail(`genie task v7-list --json printed ${list.stdout.toString().trim()}`);
+  } finally {
+    rmSync(workRoot, { recursive: true, force: true });
+  }
+}
+
 function main(): void {
   try {
     const args = parseArgs(process.argv.slice(2));
@@ -307,8 +365,9 @@ function main(): void {
     checkDesignReviewEvidenceTool(args.skillsDir, names);
     const refs = checkBundledReferences(args.skillsDir, names);
     runWishScaffoldSmoke(args.skillsDir);
+    if (args.genieRs) runGenieRsSmoke(args.genieRs);
     console.log(
-      `fresh-install-smoke: OK (${names.length} valid skills, ${refs} bundled references, Claude variables unset)`,
+      `fresh-install-smoke: OK (${names.length} valid skills, ${refs} bundled references, Claude variables unset${args.genieRs ? '; genie task v7-list --json exit 0 on the payload genie-rs' : ''})`,
     );
   } catch (error) {
     if (!(error instanceof SmokeFailure)) throw error;

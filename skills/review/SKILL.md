@@ -63,7 +63,7 @@ Load only the lens needed by the request. These are advisory evidence guides, no
 | MEDIUM | Bounded maintainability or evidence-write-up gap | No |
 | LOW | Optional style or naming improvement | No |
 
-Unjustified stateful machinery is a HIGH gap. If removing it changes the governing approach, return BLOCKED with `overdesigned-plan` for replanning.
+Unjustified stateful machinery is a HIGH gap. If removing it changes the governing approach, return BLOCKED with `overdesigned-plan` for replanning. A repair that contains a symptom without typing itself as containment, or without naming the follow-up that removes the root, is a MEDIUM gap; one presented as removing a cause that a criterion requires removed is HIGH, as a broken criterion.
 
 - **SHIP:** no CRITICAL/HIGH gaps and required validation passes.
 - **FIX-FIRST:** actionable blocking gaps or failed validation.

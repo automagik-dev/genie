@@ -42,6 +42,6 @@ Recursive confidence is not approval: attempts that converge on the same repair 
 
 ## Handoff
 
-Return resolved and remaining gaps with file locations, checks and results, cause and next route, `attempts=<used>/B`, and `effort_escalations=<used>/2`, and `budget_source=<config|instruction|default>`. Report any unresolved review disagreement.
+Return resolved and remaining gaps with file locations, checks and results, cause and next route, the correction type of each resolved gap (`correction=root` or `correction=containment`, the containment naming the follow-up that removes the root; a gap closed by containment is never reported as a root fix), `attempts=<used>/B`, and `effort_escalations=<used>/2`, and `budget_source=<config|instruction|default>`. Report any unresolved review disagreement.
 
 The fixer never changes task status and posts nothing to the card. The group stays `in_progress` through repair and review; only its coordinator marks it done after SHIP and passing validation. Each re-review verdict is relayed to the card by the coordinator as one `genie task comment <task-id> --worker orchestrator -- 'review: … — …'`; an exhausted loop or diagnosed route gets one `blocked: <cause> — <route>` comment. Without a task row, use the review evidence directly. Continue independent groups while one group is blocked.
