@@ -905,7 +905,7 @@ describe('Group E release and documentation contracts', () => {
     expect(postExtractVersion).toBeGreaterThan(extract);
 
     const rootPackage = JSON.parse(read('package.json')) as { license?: unknown; files?: unknown };
-    expect(rootPackage.license).toBe('MIT');
+    expect(rootPackage.license).toBe('Apache-2.0');
     expect(rootPackage.files).not.toContain('plugins/genie/');
   });
 

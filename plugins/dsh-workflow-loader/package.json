@@ -2,7 +2,7 @@
   "name": "@automagik/genie-dsh-workflow-loader",
   "version": "5.260919.8",
   "description": "Run a repository's saved .claude/workflows catalog on DSH, by name",
-  "license": "MIT",
+  "license": "Apache-2.0",
   "type": "module",
   "main": "dist/index.js",
   "exports": {

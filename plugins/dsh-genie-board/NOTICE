@@ -1,5 +1,5 @@
 Genie DSH Board
-Copyright 2026 Namastex Labs. Licensed under the repository MIT license.
+Copyright 2026 Namastex Labs. Licensed under the repository Apache-2.0 license.
 
 Original plugin implementation for the public Cordis lifecycle, DSH workspace
 registry and DSH WebServer interfaces. DSH is developed by DeepSeek AI and is
