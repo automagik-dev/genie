@@ -1109,4 +1109,4 @@ that reviewed version to be the released one. See
 
 ## License
 
-MIT — see [LICENSE](LICENSE) for the full text.
+Apache-2.0 — see [LICENSE](LICENSE) for the full text.
