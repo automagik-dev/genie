@@ -2,8 +2,8 @@
 
 Genie's v7 task record, as a library: the pure state machine, its Rust-owned tables in the per-repo
 `.genie/genie.db`, and the machine-wide `<GENIE_HOME>/tasks.jsonl` export usagemeter reads. Licensed
-Apache-2.0. The `genie-rs` verbs over it (`forge-sync`, `export --rebuild`, `status`, `list`, `start`,
-`push`) arrive in later groups of the `genie-v7-tasks` wish.
+Apache-2.0. It also owns the `start` and `push` verbs (below); the `genie-rs` binary dispatches
+`forge-sync`, `export --rebuild`, `status`, `list`, `start` and `push` over it.
 
 ## State machine
 
@@ -47,7 +47,11 @@ file with `readFileSync`.
 
 - `task_key` is the task id, or `pr:<forge>:<url>` for a PR/MR whose branch carries none.
 - `dedupe_key` is the SHA-256 of `project, task, event, url, commit, worktree` joined with NUL, `''` for
-  an absent part; a NUL in any part is refused (exit 1).
+  an absent part; a NUL in any part is refused (exit 1). A `created` event of a later lifecycle adds a
+  seventh part, its generation: the number of `closed` events the task already has, read inside the
+  event's transaction (R1-32). Generation 0 adds nothing, so every first-lifecycle key is the six-part
+  key, a retry inside one lifecycle keeps its key, and a task restarted after its PR closed appends a
+  new `created` even at the same base and worktree.
 - `commit` per event: created = the base sha, opened = the first head seen, merged = the merge sha,
   closed = the head at the sync that first sees the PR closed.
 - `title` rides on the event row as well as `v7_tasks`, so `v7_tasks` is always a replay of the events.
@@ -65,3 +69,36 @@ descriptor. `export::rebuild(genie_home, projects)` takes the exclusive lock, on
 project's events, keeps every other project's rows, and replaces the file by temp + fsync + rename. An
 event committed before that read but appended after the rename appears twice; readers dedupe on
 `dedupe_key`. The locks are `std::fs::File::lock_shared` / `File::lock`; no crate.
+
+## Start and push
+
+`start(repo, genie_home, opts, notes)` never defaults to the current directory. Before any fetch it
+refuses (exit 2, nothing written) an id whose task is `opened` or `merged`, a shared config with
+`core.bare = true` or `core.worktree`, and a request with no title to name the branch (an id falls back
+to its recorded title). The base is a local `dev`, else `origin/HEAD`'s branch, as
+`src/lib/v5/base-state.ts` resolves it, and it is always fetched:
+
+1. `git fetch --no-tags --no-write-fetch-head --refmap= origin +refs/heads/<base>:refs/genie/start/<secs>-<pid>-<n>`,
+   peeled, then deleted (one retry; a leftover older than 10 minutes is swept by the next start). A failed
+   fetch exits 1 and never falls back to a local ref.
+2. An id-less task reserves `gn-<seq>` in one short `BEGIN IMMEDIATE` (`Store::reserve_gn`).
+3. Under the start lock (`File::lock` on `<git-common-dir>/genie-start.lock`, which spans git only,
+   never a transaction or the network): claim `<repo>.worktrees/<id>-<slug>` with `create_dir` and
+   `<type>/<id>-<slug>` with `git branch --no-track <branch> <base sha>`, each failing when its target
+   exists, then `git worktree add <path> <branch>`.
+4. Still under it: `extensions.worktreeConfig=true` once per repository (one line on `notes`), then for
+   every remote a worktree-scoped `pushurl` list holding only `genie-no-push://use-genie-rs-push`
+   (an empty value first resets an inherited pushurl, git 2.46+), verified with
+   `git remote get-url --push --all`, and `genie.base = <base>`. A shared pushurl this git cannot reset is
+   refused before the fetch.
+5. The `created` event, `commit` = the base sha, after the lock is released.
+
+A failure after 2 abandons the reservation (the gap stays); after 3 it also removes what this start
+claimed, and nothing it did not; neither writes an event. A git failure outside the lock that names
+another start's work in flight (a `refs/genie/start/` ref, a half-written `.git/worktrees/<name>/commondir`)
+is retried a few times.
+
+`push(dir, genie_home, branch)` finds the task by the `created` event whose worktree contains `dir`, and
+pushes `HEAD:refs/heads/<recorded branch>` to each of the main checkout's
+`git remote get-url --push --all origin`, passed as argv. It refuses (exit 2) a requested or checked-out branch that is not the recorded one, or
+is `dev`, `main`, `master` or the recorded base.

@@ -19,6 +19,7 @@
  *   task import [file] [--replace]
  *   task sync
  *   task forge-sync|v7-status|v7-list [args...]   handed to genie-rs untouched (genie-v7-tasks 1b)
+ *   task start|push [args...]                     handed to genie-rs untouched (genie-v7-tasks 2)
  */
 
 import type { Database } from 'bun:sqlite';
@@ -796,18 +797,24 @@ function handleImport(file: string | undefined, opts: ImportOptions): void {
 }
 
 // ============================================================================
-// genie-rs pass-through (genie-v7-tasks group 1b)
+// genie-rs pass-through (genie-v7-tasks groups 1b and 2)
 // ============================================================================
 
 /**
  * The verbs the Rust front door owns: `genie task <verb>` hands its tail to `genie-rs <rust verb>`
  * untouched, exactly as `genie mikro call` hands its tail to the mikro runtime, and returns the
- * binary's exit code. Group 2 adds `start` and `push` to this table.
+ * binary's exit code.
  */
 const GENIE_RS_VERBS = [
   ['forge-sync', 'forge-sync', 'Record opened/merged/closed PRs/MRs from gh or glab, one pass (genie-rs forge-sync)'],
   ['v7-status', 'status', 'Show one v7 task: its state, lane and events (genie-rs status <id>)'],
   ['v7-list', 'list', "List this repository's v7 tasks with their lanes (genie-rs list)"],
+  [
+    'start',
+    'start',
+    'Start a task in its own worktree from a freshly fetched base: (<gh-N|gl-N> | --title <t>) --lead <bot id> [--type <t>] (genie-rs start)',
+  ],
+  ['push', 'push', "Push a task worktree's HEAD to its recorded task branch, and nowhere else (genie-rs push)"],
 ] as const;
 
 /** `GENIE_RS_BIN`, else the installed payload's binary, else a checkout's release build. */
