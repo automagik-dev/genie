@@ -7,8 +7,10 @@
 //! - A transition `apply` refuses (a reopened PR merged after its `closed` was recorded) is skipped
 //!   and reported; the rest of the pass still commits and the cursor still advances (Decision 12).
 //! - The whole reply is checked for NUL bytes before anything is written: exit 1, nothing written.
-//! - Every forge call of a pass, the per-PR commit counts included, is cached for 60 s in
-//!   `<GENIE_HOME>/cache/forge/<sha256(project)>.json`, which also holds the cursor.
+//! - Every forge call of a pass, the `pushed_after_open` calls for merged PRs included, is cached for
+//!   60 s in `<GENIE_HOME>/cache/forge/<sha256(project)>.json`. The cursor lives beside it in
+//!   `<sha256(project)>.cursor.json`, so it outlives every reply. Both record the origin only as
+//!   `host/path`: a remote URL can carry a token, and Genie stores no credential.
 
 use std::collections::{BTreeMap, HashMap};
 use std::ffi::OsString;
@@ -63,11 +65,46 @@ impl fmt::Display for Skip {
     }
 }
 
-/// Where the last pass stopped: the newest `updated_at` it processed and the PRs seen at that second.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+/// What a PR looked like when a pass last processed it. A PR is processed again whenever any of
+/// these differ, so a change inside the same second, or inside a fractional timestamp, is never lost.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct Seen {
+    /// The forge's own string, at full precision.
+    updated_at: String,
+    state: PrState,
+    head: String,
+}
+
+impl Seen {
+    fn of(pr: &Pr) -> Seen {
+        Seen { updated_at: pr.updated_at.clone(), state: pr.state, head: pr.head.clone() }
+    }
+}
+
+/// Where the last pass stopped: the newest `updated_at` second it processed (the list is fetched from
+/// there, inclusive) and the last-processed shape of each PR updated in or after that second.
+#[derive(Debug, Default, Serialize, Deserialize)]
 struct Cursor {
-    updated_at: i64,
-    seen: Vec<String>,
+    origin: String,
+    since: Option<i64>,
+    seen: BTreeMap<String, Seen>,
+}
+
+impl Cursor {
+    fn pending(&self, pr: &Pr) -> bool {
+        self.since.is_none_or(|since| pr.updated() >= since) && self.seen.get(&pr.url) != Some(&Seen::of(pr))
+    }
+
+    fn advance(&mut self, processed: &[&Pr]) {
+        for pr in processed {
+            self.seen.insert(pr.url.clone(), Seen::of(pr));
+        }
+        let newest = processed.iter().map(|p| p.updated()).chain(self.since).max();
+        if let Some(since) = newest {
+            self.since = Some(since);
+            self.seen.retain(|_, s| parse_time(&s.updated_at).is_some_and(|t| t >= since));
+        }
+    }
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -76,22 +113,25 @@ struct CacheFile {
     forge: Option<Forge>,
     fetched_at: i64,
     prs: Vec<Pr>,
-    /// `pushed_after_open` per `<url>@<head>`; null when the forge cannot say.
+    /// `pushed_after_open` per `<url>@<head>` of a merged PR; null when the forge cannot say.
     counts: BTreeMap<String, Option<i64>>,
-    cursor: Option<Cursor>,
 }
 
-fn cache_path(genie_home: &Path, project: &str) -> PathBuf {
+fn state_path(genie_home: &Path, project: &str, suffix: &str) -> PathBuf {
     let digest: String = Sha256::digest(project.as_bytes()).iter().map(|b| format!("{b:02x}")).collect();
-    genie_home.join("cache").join("forge").join(format!("{digest}.json"))
+    genie_home.join("cache").join("forge").join(format!("{digest}{suffix}"))
 }
 
-fn save(path: &Path, cache: &CacheFile) -> Result<(), Error> {
+fn load<T: for<'de> Deserialize<'de>>(path: &Path) -> Option<T> {
+    serde_json::from_slice(&fs::read(path).ok()?).ok()
+}
+
+fn save<T: Serialize>(path: &Path, value: &T) -> Result<(), Error> {
     let dir = path.parent().unwrap_or(Path::new("."));
     fs::create_dir_all(dir)?;
-    let tmp =
-        dir.join(format!(".{}.{}.tmp", path.file_name().unwrap_or_default().to_string_lossy(), std::process::id()));
-    fs::write(&tmp, serde_json::to_vec(cache).map_err(|e| Error::Reply(e.to_string()))?)?;
+    let name = path.file_name().unwrap_or_default().to_string_lossy();
+    let tmp = dir.join(format!(".{name}.{}.tmp", std::process::id()));
+    fs::write(&tmp, serde_json::to_vec(value).map_err(|e| Error::Reply(e.to_string()))?)?;
     fs::rename(&tmp, path)?;
     Ok(())
 }
@@ -159,26 +199,6 @@ fn check_nul(prs: &[Pr]) -> Result<(), Error> {
     Ok(())
 }
 
-fn after_cursor(pr: &Pr, cursor: Option<&Cursor>) -> bool {
-    cursor.is_none_or(|c| pr.updated() > c.updated_at || (pr.updated() == c.updated_at && !c.seen.contains(&pr.url)))
-}
-
-fn advance(old: Option<Cursor>, processed: &[&Pr]) -> Option<Cursor> {
-    let Some(newest) = processed.iter().map(|p| p.updated()).max() else {
-        return old;
-    };
-    let mut seen: Vec<String> = processed.iter().filter(|p| p.updated() == newest).map(|p| p.url.clone()).collect();
-    if let Some(old) = old {
-        if old.updated_at > newest {
-            return Some(old);
-        }
-        if old.updated_at == newest {
-            seen.extend(old.seen.into_iter().filter(|u| !seen.contains(u)).collect::<Vec<_>>());
-        }
-    }
-    Some(Cursor { updated_at: newest, seen })
-}
-
 /// The one event a PR yields given its task's recorded state, or `None`.
 fn plan(pr: &Pr, forge: Forge, state: Option<TaskState>) -> Option<EventRow> {
     let event = match (pr.state, state) {
@@ -217,19 +237,22 @@ pub fn sync(opts: &SyncOptions) -> Result<Report, Error> {
     let store = open_store_at(&opts.project, &opts.genie_home)?;
     let project = store.project().to_string();
     let remote = origin(Path::new(&project))?;
+    let origin_id = remote.id();
     let now = opts.now.unwrap_or_else(unix_now);
-    let path = cache_path(&opts.genie_home, &project);
-    let mut cache = fs::read(&path)
-        .ok()
-        .and_then(|bytes| serde_json::from_slice::<CacheFile>(&bytes).ok())
-        .filter(|c| c.origin == remote.url)
-        .unwrap_or_else(|| CacheFile { origin: remote.url.clone(), ..CacheFile::default() });
+    let (cache_path, cursor_path) =
+        (state_path(&opts.genie_home, &project, ".json"), state_path(&opts.genie_home, &project, ".cursor.json"));
+    let mut cache = load::<CacheFile>(&cache_path)
+        .filter(|c| c.origin == origin_id)
+        .unwrap_or_else(|| CacheFile { origin: origin_id.clone(), ..CacheFile::default() });
+    let mut cursor = load::<Cursor>(&cursor_path)
+        .filter(|c| c.origin == origin_id)
+        .unwrap_or_else(|| Cursor { origin: origin_id.clone(), ..Cursor::default() });
     let fresh = (0..CACHE_TTL_SECS).contains(&(now - cache.fetched_at));
     let (cli, cached) = match cache.forge {
         Some(forge) if fresh => (Cli::new(forge, &remote, opts.path.clone()), true),
         _ => {
             let cli = detect(&remote, opts.path.clone())?;
-            let prs = cli.list(cache.cursor.as_ref().map(|c| c.updated_at))?;
+            let prs = cli.list(cursor.since)?;
             check_nul(&prs)?;
             cache.forge = Some(cli.forge);
             cache.fetched_at = now;
@@ -240,23 +263,27 @@ pub fn sync(opts: &SyncOptions) -> Result<Report, Error> {
     };
 
     let states: HashMap<String, TaskState> = store.tasks()?.into_iter().map(|t| (t.task_key, t.state)).collect();
-    let processed: Vec<&Pr> = cache.prs.iter().filter(|p| after_cursor(p, cache.cursor.as_ref())).collect();
+    let processed: Vec<&Pr> = cache.prs.iter().filter(|p| cursor.pending(p)).collect();
     let mut planned = Vec::new();
     for pr in processed.iter().rev() {
         let task = task_id(&pr.branch).unwrap_or("");
         let key = genie_tasks::task_key(task, cli.forge.as_str(), &pr.url).unwrap_or_default();
-        if let Some(mut row) = plan(pr, cli.forge, states.get(&key).copied()) {
+        let Some(mut row) = plan(pr, cli.forge, states.get(&key).copied()) else {
+            continue;
+        };
+        // The contract's count is a property of the merge; other events carry null.
+        if row.event == TaskEvent::Merged {
             let count_key = format!("{}@{}", pr.url, pr.head);
             row.pushed_after_open = match cache.counts.get(&count_key) {
                 Some(count) => *count,
                 None => {
-                    let count = cli.pushed_after_open(pr)?;
+                    let count = cli.pushed_after_open(pr);
                     cache.counts.insert(count_key, count);
                     count
                 }
             };
-            planned.push(row);
         }
+        planned.push(row);
     }
 
     let mut report = Report {
@@ -280,7 +307,8 @@ pub fn sync(opts: &SyncOptions) -> Result<Report, Error> {
             Err(e) => return Err(e.into()),
         }
     }
-    cache.cursor = advance(cache.cursor.take(), &processed);
-    save(&path, &cache)?;
+    cursor.advance(&processed);
+    save(&cache_path, &cache)?;
+    save(&cursor_path, &cursor)?;
     Ok(report)
 }
