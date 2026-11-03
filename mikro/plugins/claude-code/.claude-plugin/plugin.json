@@ -10,7 +10,7 @@
   },
   "homepage": "https://github.com/automagik-dev/mikro/tree/main/plugins/claude-code",
   "repository": "https://github.com/automagik-dev/mikro",
-  "license": "MIT",
+  "license": "Apache-2.0",
   "keywords": [
     "mikro",
     "mcp",
