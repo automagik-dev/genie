@@ -120,4 +120,4 @@ npm test                            # node --test with the harness resolver
 
 ## License
 
-MIT, as the genie repository ([LICENSE](LICENSE)).
+Apache-2.0, as the genie repository ([LICENSE](LICENSE)). Releases before this change were MIT; the LICENSE keeps that notice.

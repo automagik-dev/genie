@@ -2,7 +2,7 @@
   "name": "@automagik/genie-dsh-board",
   "version": "5.260901.3",
   "minimumGenieVersion": "5.260901.3",
-  "license": "MIT",
+  "license": "Apache-2.0",
   "type": "module",
   "main": "dist/index.js",
   "exports": {

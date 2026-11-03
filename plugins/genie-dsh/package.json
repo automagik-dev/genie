@@ -12,7 +12,7 @@
     "url": "git+https://github.com/automagik-dev/genie.git",
     "directory": "plugins/genie-dsh"
   },
-  "license": "MIT",
+  "license": "Apache-2.0",
   "type": "module",
   "main": "index.js",
   "exports": {
