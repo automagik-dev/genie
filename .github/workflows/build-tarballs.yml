@@ -8,9 +8,11 @@ name: Build Tarballs
 #
 # Tarball contents (per wish G1 deliverable 3):
 #   genie       — bun --compile static executable
-#   plugins/    — the DSH payloads (dsh-genie-board, dsh-workflow-loader) and
-#                 an empty plugins/genie compat directory that earlier
-#                 binaries' update path requires (the Orca plugin is retired)
+#   plugins/    — the DSH payloads (dsh-genie-board, dsh-workflow-loader),
+#                 plugins/genie-rs/bin/genie-rs (the Rust front door, 0755,
+#                 built natively for the leg's Rust target) and an empty
+#                 plugins/genie compat directory that earlier binaries'
+#                 update path requires (the Orca plugin is retired)
 #   skills/     — canonical skills/<name>/SKILL.md + agents/openai.yaml/resources
 #   templates/  — wish-template, genie-config.template.json, the default mikro
 #                 agents (templates/mikro/agents/<name>/) staged from
@@ -74,6 +76,11 @@ on:
       - 'scripts/skills-lint.ts'
       - 'scripts/skills-inventory-parity.ts'
       - 'scripts/release-payload-version.ts'
+      # genie-rs is built from the Rust workspace into plugins/genie-rs/bin.
+      - 'crates/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'rust-toolchain.toml'
       - '.github/workflows/build-tarballs.yml'
 
 concurrency:
@@ -111,14 +118,20 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # rust_target mirrors rust_target_for in scripts/build-binary.sh: each
+          # runner builds its own target natively (static musl on linux).
           - platform: linux-x64-glibc
             runner:   ubuntu-latest
+            rust_target: x86_64-unknown-linux-musl
           - platform: linux-x64-musl
             runner:   ubuntu-latest
+            rust_target: x86_64-unknown-linux-musl
           - platform: linux-arm64
             runner:   ubuntu-24.04-arm
+            rust_target: aarch64-unknown-linux-musl
           - platform: darwin-arm64
             runner:   macos-latest
+            rust_target: aarch64-apple-darwin
 
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
@@ -136,6 +149,18 @@ jobs:
         uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
           node-version: '22'
+
+      # Rust (genie-v7-tasks 1c): the toolchain rust-toolchain.toml pins, plus
+      # this leg's release target.
+      - uses: dtolnay/rust-toolchain@dc08e2af391d489dff6d14cf743e574f7d1229c5 # 1.94.0
+        with:
+          toolchain: 1.94.0
+          targets: ${{ matrix.rust_target }}
+
+      - name: Install musl-tools (musl-gcc for the bundled SQLite)
+        if: startsWith(matrix.platform, 'linux-')
+        shell: bash
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends musl-tools
 
       - name: Install dependencies
         shell: bash
