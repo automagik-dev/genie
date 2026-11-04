@@ -237,20 +237,20 @@ cargo fmt --check && cargo clippy --workspace --all-targets --locked -- -D warni
   - The shared key `genie.tasks.waiting`: a positive integer, or null at 0.
 
 **Acceptance Criteria:**
-- [ ] **T2 discovery:** from injected `spaces()` and the probe loop's output, a local folder holding `.genie/genie.db` is one project even when two spaces reach it through a symlink; a worktree, a folder without the file, a remote space and a project whose `list` exits 2 are not shown. **Proof:** `plugins/genie-herdr/data.test.ts`.
-- [ ] **T3 lanes and card:** a canned `list --json` lands in Working, Review, Merged and Closed by `lane`; a null `task` renders "untracked" with its url; the card model carries title, id, lead, lane, cost, time and ETA and no action. **Proof:** `plugins/genie-herdr/data.test.ts`.
-- [ ] **T4 cost, time and ETA:** a canned doc with the pinned path joins by `(project, task)`, or by `url` for a null `task`.
+- [x] **T2 discovery:** from injected `spaces()` and the probe loop's output, a local folder holding `.genie/genie.db` is one project even when two spaces reach it through a symlink; a worktree, a folder without the file, a remote space and a project whose `list` exits 2 are not shown. **Proof:** `plugins/genie-herdr/data.test.ts`.
+- [x] **T3 lanes and card:** a canned `list --json` lands in Working, Review, Merged and Closed by `lane`; a null `task` renders "untracked" with its url; the card model carries title, id, lead, lane, cost, time and ETA and no action. **Proof:** `plugins/genie-herdr/data.test.ts`.
+- [x] **T4 cost, time and ETA:** a canned doc with the pinned path joins by `(project, task)`, or by `url` for a null `task`.
   - **Formatting and time:** null renders "–" and 0 renders `$0.00`. A merged card shows `lead_min`. A Working card whose `started_at` is an injected 90 minutes ago shows 1.5h, and a null `started_at` shows "–".
   - **ETA:** past `lead_min` values of 60, 120 and 240 with 90 elapsed give `~1.5h` left; 300 elapsed shows "over".
   - **Missing feed:** the live 0.3.0 shape, a missing task, `doc get` exiting 1, 2 or 3, a launch failure or invalid JSON leaves every number "–" and the lanes intact.
   - **Proof:** `plugins/genie-herdr/data.test.ts`.
-- [ ] **T5 badge:** 2 Review cards plus 1 Working card with a `blocked` worker gives 3.
+- [x] **T5 badge:** 2 Review cards plus 1 Working card with a `blocked` worker gives 3.
   - **Matching:** a labelled blocked terminal matches through `task`/`task.project` without reading `workers.jsonl`, also when its `task.project` is a symlink to the project's realpath. For unlabelled terminals, the branch-as-`task` and worktree fallbacks each match.
   - **Counting:** a card is never counted twice, and a blocked terminal with no matching card adds nothing.
   - **Writes:** no waiting card gives `null`, and an unchanged count makes no `setShared` call.
   - **Proof:** `plugins/genie-herdr/data.test.ts`.
-- [ ] **T6 degradation:** no binary gives one line naming `genie update` and the path; any failed forge-sync (a non-zero exit or an `exec` rejection) still runs `list` and shows the note; a failed `list` keeps the last list with its age; an older `list` without the row-1 fields yields nulls. **Proof:** `plugins/genie-herdr/data.test.ts`.
-- [ ] **T7 forge budget:** `planTick` and `skipWhileBusy`, over simulated minutes with 128 fake projects, one focused:
+- [x] **T6 degradation:** no binary gives one line naming `genie update` and the path; any failed forge-sync (a non-zero exit or an `exec` rejection) still runs `list` and shows the note; a failed `list` keeps the last list with its age; an older `list` without the row-1 fields yields nulls. **Proof:** `plugins/genie-herdr/data.test.ts`.
+- [x] **T7 forge budget:** `planTick` and `skipWhileBusy`, over simulated minutes with 128 fake projects, one focused:
   - **Cap:** no minute plans more than 10 forge-syncs, and the focused project is first every minute.
   - **Rotation:** with every project already synced once, each is synced within ceil(127/9) = 15 minutes; each tick lists all 128.
   - **Never-synced:** with 20 never-synced projects, no minute plans more than one of them, and all 20 are reached within 20 minutes. When the focused project is itself never-synced, it is first and it is that minute's one never-synced project: no other never-synced project is planned that minute (r4 LOW5).
@@ -259,9 +259,9 @@ cargo fmt --check && cargo clippy --workspace --all-targets --locked -- -D warni
   - **No overlap:** `skipWhileBusy` skips (never queues) a tick fired while the last tick's promise is pending, and runs again once it settles.
   - **Re-probe:** dropping and adding projects mid-rotation keeps the pointer, so no project waits past the bound.
   - **Proof:** `plugins/genie-herdr/data.test.ts`.
-- [ ] **T8 the mod loads (local, not CI: needs the desktop app):** `herdr-app check plugins/genie-herdr` exits 0. **Proof:** `herdr-app check plugins/genie-herdr`, run by the group's engineer and pasted into the PR body.
-- [ ] **T9 payload:** `scripts/build-binary.sh`'s `required` list names `plugins/genie-herdr/mod.json`, so a tarball without it fails the build; the release-docs test pins that entry. **Proof:** `scripts/release-docs.test.ts`.
-- [ ] `main.js` runs the probe as `exec('sh', ['-c', PROBE_SCRIPT, 'sh', ...folders])` with the imported constant, never a second copy of the loop (read in review).
+- [x] **T8 the mod loads (local, not CI: needs the desktop app):** `herdr-app check plugins/genie-herdr` exits 0. **Proof:** `herdr-app check plugins/genie-herdr`, run by the group's engineer and pasted into the PR body.
+- [x] **T9 payload:** `scripts/build-binary.sh`'s `required` list names `plugins/genie-herdr/mod.json`, so a tarball without it fails the build; the release-docs test pins that entry. **Proof:** `scripts/release-docs.test.ts`.
+- [x] `main.js` runs the probe as `exec('sh', ['-c', PROBE_SCRIPT, 'sh', ...folders])` with the imported constant, never a second copy of the loop (read in review).
 
 **Validation:**
 ```bash

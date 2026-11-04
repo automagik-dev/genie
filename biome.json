@@ -51,6 +51,8 @@
       "dist",
       "mikro",
       "plugins/genie-dsh/client.js",
+      "plugins/genie-herdr/gpui-kit.d.ts",
+      "plugins/genie-herdr/jsconfig.json",
       "*.min.js",
       ".dev",
       ".hermes",
