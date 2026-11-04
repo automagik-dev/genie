@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | APPROVED |
+| **Status** | SHIPPED |
 | **Slug** | `genie-v7-board` |
 | **Date** | 2026-11-04 |
 | **Author** | Genie Orchestrator t2ww |
@@ -98,10 +98,10 @@ genie-v7-tasks (SHIPPED 2026-11-03) is the prerequisite and is met. External, no
 
 The design's criteria T1–T10, each owned by one group and copied in full into that group's Acceptance Criteria with the r4 fold-ins added:
 
-- [ ] **T1 list fields, T1b read-only, T1c first pass** — group 1 (`crates/genie-rs/tests/exit_codes.rs`, `crates/genie-forge/tests/sync.rs`), plus the M4 `--full` cursor criterion and the LOW1/LOW3/LOW6 clauses.
-- [ ] **T2 discovery, T3 lanes and card, T4 cost/time/ETA, T5 badge, T6 degradation, T7 forge budget, T9 payload** — group 2 (`plugins/genie-herdr/data.test.ts`, `scripts/release-docs.test.ts`), plus the M5 probe criterion and the LOW4/LOW5 clauses.
+- [x] **T1 list fields, T1b read-only, T1c first pass** — group 1 (`crates/genie-rs/tests/exit_codes.rs`, `crates/genie-forge/tests/sync.rs`), plus the M4 `--full` cursor criterion and the LOW1/LOW3/LOW6 clauses.
+- [x] **T2 discovery, T3 lanes and card, T4 cost/time/ETA, T5 badge, T6 degradation, T7 forge budget, T9 payload** — group 2 (`plugins/genie-herdr/data.test.ts`, `scripts/release-docs.test.ts`), plus the M5 probe criterion and the LOW4/LOW5 clauses.
 - [ ] **T8 the mod loads** — group 2, local only (needs the desktop app): `herdr-app check plugins/genie-herdr` exits 0.
-- [ ] **T10 mod channel** — group 3 (`src/lib/herdr-mod-installer.test.ts`), plus the Decision 22 carry-forward criterion.
+- [x] **T10 mod channel** — group 3 (`src/lib/herdr-mod-installer.test.ts`), plus the Decision 22 carry-forward criterion.
 - [ ] `bun run check` exits 0 on every group's branch, on the linux and `unit-darwin` CI legs.
 
 ## Execution Strategy
@@ -376,6 +376,29 @@ _The read-only reviewer returns evidence; the invoking orchestrator appends a ti
 - **Verdict:** SHIP. All ten r1 findings (HIGH-1, MEDIUM-1, MEDIUM-2, LOW-1..7) verified fixed.
 - **Three LOWs, folded in after the review as worded:** LOW-1, T1c Resume and the `--full` cursor criterion prove page 1 completed by a `page=2` line in `calls.log` (`fake-forge:14` logs a request before its outcome); LOW-2, deliverable 6 says the fake matches `*[?&]page=*` and a page followed by another holds exactly `PAGE` = 100 rows (`client.rs:14`); LOW-3, deliverable 3 "Per page" says a per-page save leaves `since` unchanged (null on a first pass, N on an incremental one).
 - **Status:** APPROVED.
+
+### Delivery — 2026-11-04
+
+All three groups are merged to `dev`. Each got an independent execution review that ended in SHIP. The review reports are in the orchestrator scratchpad (`board-g1-review.md`, `board-g2-review.md`, `board-g3-review.md`).
+
+| Group | PR | Merge sha | Reviewer | Verdicts | Repairs |
+|-------|----|-----------|----------|----------|---------|
+| 1 | [#3221](https://github.com/automagik-dev/genie/pull/3221) | `677e34500212d32bd48ea5a2f0a2086891e28500` | Codex (t36b) | FIX-FIRST, then SHIP | 1 |
+| 2 | [#3222](https://github.com/automagik-dev/genie/pull/3222) | `b5de7f004ca708927b19a4724718a8d6669632a9` | Codex (t389) | FIX-FIRST, FIX-FIRST, then SHIP | 2 |
+| 3 | [#3223](https://github.com/automagik-dev/genie/pull/3223) | `e7ecc12a34d97e31bde6e341825df4699332a000` | Codex, then Claude (Opus 5.5) for the re-review | FIX-FIRST, then SHIP | 1 |
+
+- **Group 1:** r1 found one HIGH and one MEDIUM. HIGH-1: the completed cursor's `since` did not equal the newest listed `updated_at`. MEDIUM-1: a NUL on page 2 printed "nothing was written" after page 1 had committed. HIGH-1 was settled by Decision 24, an orchestrator call: `since` = max(the newest listed, the previous `since`, the floor). MEDIUM-1 was fixed in code. Re-review r2 returned SHIP at `3060e6eef`.
+- **Group 2:** r1 found two HIGH and one MEDIUM. A failed binary launch never reached the missing-binary state; lead selection could open another worker's terminal; the fallback ledger was read even when every worker was labelled. Repair 1 fixed all three. Re-review r2 found two new HIGH regressions: unlabelled live workers lost their terminal icons, and one launch failure discarded sibling projects' forge outcomes. Repair 2 fixed both, and re-review r3 returned SHIP at `1415c4dcb`. The PR is 2,216 inserted lines, over the 2,000-line guideline. This was reported as the Risks row requires, and the scope was not cut.
+- **Group 3:** r1 (Codex) found two HIGH and one MEDIUM: symlinked paths were followed across copy and delete, an archive could overwrite an existing backup root, and stale record entries skipped the generated-file exclusion. The repair fixed all three. Codex was stopped by its cyber filter, so Claude ran the re-review. It returned SHIP at `a1f7760e5`: all 15 probe scenarios hold on the new head, and 11 break on the old one. It also reported three non-blocking LOWs. `state-backups/` is created 0755 instead of 0700. Only the publish path re-checks for a check-then-act window. The "parent changed while publishing" branch has no test.
+- **CI merged unrun, with the owner's approval:** group 1's darwin bun 1.3.11 unit leg did not run because GitHub cancelled it 3 times before a runner picked it up. Its darwin bun 1.4.4 leg passed. Because the aggregate requires every variant to succeed, #3221's required Quality Gate check shows FAILURE. Group 2's Build darwin-arm64 did not run because GitHub cancelled it twice. Group 3's checks all passed.
+- **Ticked:** the Success Criteria T1–T7, T9 and T10, each against its group's acceptance criteria and merged tests.
+- **Not ticked:** T8, because `herdr-app check` needs the desktop app. Group 2's tick rests on the engineer's pasted check line, and the owner has not run it. Also not ticked: the `bun run check` row, because group 1's darwin bun 1.3.11 leg never ran. The QA Criteria are not ticked either: they need a live run on a dev release carrying all three groups.
+- **Persisted status:** SHIPPED (orchestrator t2ww, 2026-11-04).
+
+#### Follow-ups
+
+- **herdr-mod and a symlinked `mods/`:** when Herdr's `mods/` or `mods/genie-herdr` is a symlink, the channel reports `failed` and `genie update` exits 1 on every run. The remedy line names only `genie update`. It should also say to point `HERDR_APP_HOME` at the real location or make the directory physical (group 3 re-review).
+- **Owner's local check after the next dev release:** T8 (`herdr-app check plugins/genie-herdr` exits 0) and the Functional QA criterion (`genie update --dev`, then open the Tasks board).
 
 ---
 
