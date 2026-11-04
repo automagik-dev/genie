@@ -1,10 +1,10 @@
-import { h_flex, v_flex } from 'gpui-base';
 // The Tasks board, read-only: one board per Genie project (a local space folder holding
 // `.genie/genie.db`). Tasks come only from `genie-rs list --json --project <p>`; cost and time
 // only from usagemeter's `herdr-meter` doc. While the tab is mounted it refreshes each minute and
 // runs forge-sync on a budget (data.js `planTick`). `mod.open:genie-herdr` (the footer's Tasks
 // entry) opens a 1×1 popup copy of this mod that toggles the tab, refreshes the badge from `list`
 // alone and closes itself. The rules live in data.js; this file only spawns and draws.
+import { h_flex, v_flex } from 'gpui-base';
 import { View, div, svg } from 'gpui-kit';
 import {
   appHome,
@@ -24,36 +24,25 @@ import {
   theme,
 } from 'herdr';
 import {
-  BIN_SCRIPT,
-  MAX_IN_FLIGHT,
   MOD,
   PROBE_SCRIPT,
-  REALPATH_SCRIPT,
   TICK_MS,
-  applyList,
-  docFeed,
   feedRows,
   fmtMin,
   fmtUsd,
+  focusedProjectOf,
   forgeNote,
-  joinPaths,
   lanesOf,
   listAge,
   localFolders,
-  mapLimit,
   missingBinaryLine,
-  parseBin,
-  parseProbe,
-  parseRealpaths,
-  parseWorkers,
-  planTick,
+  newModel,
   publishWaiting,
-  settle,
+  refresh,
   shownProjects,
   skipWhileBusy,
-  syncOk,
   terminalFor,
-  waitingCount,
+  waitingOf,
 } from './data.js';
 
 const DRAWER = 360;
@@ -125,16 +114,8 @@ export function toggleTasks() {
 export default class Tasks extends View {
   init(_props, cx) {
     this.overlay = props()?.overlay ?? null;
-    this.bin = null; // {found, path}
-    this.projects = [];
-    this.never = new Set();
-    this.foldersKey = null;
-    this.lists = {}; // realpath -> applyList entry
-    this.feed = null;
-    this.sched = undefined; // planTick state
-    this.results = {}; // the last forge-sync outcome per project
-    this.realpaths = new Map(); // label / folder -> realpath, for the tab's life
-    this.workers = new Map();
+    // The board's model (data.js `newModel`): what one refresh leaves for the next.
+    this.m = newModel();
     this.tick = skipWhileBusy((acx, opts) => this.refresh(acx, opts));
     if (this.overlay) {
       // Opened by mod.open: toggle the tab, refresh the badge from `list` alone (A11), go away.
@@ -165,7 +146,7 @@ export default class Tasks extends View {
     });
   }
 
-  // ---------- refresh: probe, list, doc, badge, forge-sync ----------
+  // ---------- refresh: data.js `refresh` with this host ----------
 
   focusedFolder() {
     const f = focused();
@@ -173,67 +154,35 @@ export default class Tasks extends View {
   }
 
   focusedProject() {
-    const real = this.realpaths.get(this.focusedFolder());
-    return real && this.projects.includes(real) ? real : null;
-  }
-
-  boards() {
-    const out = {};
-    for (const p of shownProjects(this.projects, this.lists)) out[p] = this.lists[p]?.rows ?? [];
-    return out;
+    return focusedProjectOf(this.m, this.focusedFolder());
   }
 
   publish() {
-    const ctx = { realpaths: this.realpaths, workers: this.workers };
-    publishWaiting(waitingCount(this.boards(), terminals(), ctx), { shared, setShared });
+    publishWaiting(waitingOf(this.m, terminals()), { shared, setShared });
   }
 
-  async refresh(cx, { sync = true, feed = true } = {}) {
-    if (!this.bin?.found) this.bin = parseBin(await settle(exec('sh', ['-c', BIN_SCRIPT])));
-    if (!this.bin.found) return cx.notify();
-    const bin = this.bin.path;
-
-    const folders = localFolders(spaces(), home());
-    this.foldersKey = folders.join('\n');
-    const probe = await settle(exec('sh', ['-c', PROBE_SCRIPT, 'sh', ...folders]));
-    if (probe.ok) ({ projects: this.projects, neverSynced: this.never } = parseProbe(probe.stdout));
-
-    const tail = await settle(exec('tail', ['-n', '2000', `${appHome()}/automagik-herdr/workers.jsonl`]));
-    this.workers = tail.ok ? parseWorkers(tail.stdout) : new Map();
-    const want = [this.focusedFolder(), ...joinPaths(terminals(), this.workers)].filter(
-      (p) => p && !this.realpaths.has(p),
+  refresh(cx, opts) {
+    return refresh(
+      this.m,
+      {
+        exec,
+        probe: (folders) => exec('sh', ['-c', PROBE_SCRIPT, 'sh', ...folders]),
+        spaces,
+        home,
+        terminals,
+        focusedFolder: () => this.focusedFolder(),
+        workersFile: `${appHome()}/automagik-herdr/workers.jsonl`,
+        now: () => Date.now(),
+        notify: () => cx.notify(),
+        publish: () => this.publish(),
+      },
+      opts,
     );
-    if (want.length) {
-      const r = await settle(exec('sh', ['-c', REALPATH_SCRIPT, 'sh', ...want]));
-      for (const [k, v] of parseRealpaths(r.stdout)) this.realpaths.set(k, v);
-    }
-
-    let syncs = [];
-    if (sync) {
-      const plan = planTickFor(this);
-      this.sched = plan.state;
-      syncs = plan.sync;
-    }
-
-    const listed = [...this.projects];
-    const outs = await mapLimit(listed, MAX_IN_FLIGHT, (p) => settle(exec(bin, ['list', '--json', '--project', p])));
-    listed.forEach((p, i) => {
-      this.lists[p] = applyList(this.lists[p], outs[i], Date.now());
-    });
-    if (feed) this.feed = docFeed(await settle(exec('automagik-herdr', ['doc', 'get', 'herdr-meter'])));
-    this.publish();
-    cx.notify();
-
-    if (syncs.length) {
-      const done = await mapLimit(syncs, MAX_IN_FLIGHT, (p) => settle(exec(bin, ['forge-sync', '--project', p])));
-      this.results = Object.fromEntries(syncs.map((p, i) => [p, syncOk(done[i])]));
-      cx.notify();
-    }
   }
 
   forgeNote(p) {
-    if (p in this.results) return this.results[p] ? null : 'forge not synced';
-    return forgeNote(this.sched, p);
+    if (p in this.m.results) return this.m.results[p] ? null : 'forge not synced';
+    return forgeNote(this.m.sched, p);
   }
 
   // ---------- state ----------
@@ -268,7 +217,7 @@ export default class Tasks extends View {
 
   header(t, shown) {
     const tab = (p) => {
-      const rows = this.lists[p]?.rows ?? [];
+      const rows = this.m.lists[p]?.rows ?? [];
       const open = rows.filter((r) => isOpen(r.lane)).length;
       const on = p === this.proj;
       const [bg, fg] = on ? [t.selected, t.foreground] : [t.surface, t.muted];
@@ -303,7 +252,7 @@ export default class Tasks extends View {
 
   // The project's notes: the last forge-sync failed, or `list` failed and an older list shows.
   notes(now) {
-    const entry = this.lists[this.proj];
+    const entry = this.m.lists[this.proj];
     const notes = [];
     const forge = this.forgeNote(this.proj);
     if (forge) notes.push(forge);
@@ -318,7 +267,7 @@ export default class Tasks extends View {
   }
 
   worker(x) {
-    return terminalFor(x, this.terms, { realpaths: this.realpaths, workers: this.workers });
+    return terminalFor(x, this.terms, { realpaths: this.m.realpaths, workers: this.m.workers });
   }
 
   card(x, t, selKey) {
@@ -546,22 +495,22 @@ export default class Tasks extends View {
     const now = Date.now();
     this.terms = terminals();
     const root = v_flex().id('root').size_full().bg(t.background).p(16).text_color(t.foreground);
-    if (!this.bin) return root.child(text('Loading…', 13, t.dim));
-    if (!this.bin.found) return root.child(text(missingBinaryLine(this.bin.path), 13, LATE));
+    if (!this.m.bin) return root.child(text('Loading…', 13, t.dim));
+    if (!this.m.bin.found) return root.child(text(missingBinaryLine(this.m.bin.path), 13, LATE));
 
     // A space came or went: re-probe and list now (no forge-sync: that stays once a minute).
-    if (this.foldersKey !== null && localFolders(spaces(), home()).join('\n') !== this.foldersKey)
+    if (this.m.foldersKey !== null && localFolders(spaces(), home()).join('\n') !== this.m.foldersKey)
       cx.spawn((acx) => this.tick(acx, { sync: false }));
     // The badge follows the workers' live status between refreshes too.
     this.publish();
 
-    const shown = shownProjects(this.projects, this.lists);
+    const shown = shownProjects(this.m.projects, this.m.lists);
     if (!shown.length)
       return root.child(text('No Genie project: no local space folder holds .genie/genie.db.', 13, t.dim));
     if (!shown.includes(this.proj)) this.proj = this.focusedProject() ?? shown[0];
 
-    const rows = this.lists[this.proj]?.rows ?? [];
-    const lanes = lanesOf(this.proj, rows, feedRows(this.feed, this.proj), now);
+    const rows = this.m.lists[this.proj]?.rows ?? [];
+    const lanes = lanesOf(this.proj, rows, feedRows(this.m.feed, this.proj), now);
     const sel = this.selected[this.proj] ?? null;
     const selX = sel ? (lanes.flatMap((l) => l.cards).find((x) => x.key === sel) ?? null) : null;
     const notes = this.notes(now);
@@ -617,18 +566,4 @@ function press(id, t) {
     .rounded(5)
     .cursor_pointer()
     .hover((s) => s.bg(t.hover).text_color(t.foreground));
-}
-
-// The tick's plan for this view: data.js `planTick` over what the last probe found. The previous
-// plan's forge-sync outcomes go to exactly this one plan.
-function planTickFor(view) {
-  const results = view.results;
-  view.results = {};
-  return planTick(view.sched, {
-    now: Date.now(),
-    projects: view.projects,
-    focused: view.focusedProject(),
-    neverSynced: view.never,
-    results,
-  });
 }

@@ -34,11 +34,11 @@ export const PROBE_SCRIPT = [
   'done',
 ].join('\n');
 
-/** `genie-rs` as the TS front door finds it: GENIE_RS_BIN, else the payload's copy. Exit 0 when it is there. */
+/** `genie-rs` as the TS front door finds it: GENIE_RS_BIN, else the payload's copy. Exit 0 when it can run. */
 export const BIN_SCRIPT = [
   'b="${GENIE_RS_BIN:-${GENIE_HOME:-$HOME/.genie}/plugins/genie-rs/bin/genie-rs}"',
   'printf \'%s\\n\' "$b"',
-  '[ -f "$b" ]',
+  '[ -f "$b" ] && [ -x "$b" ]',
 ].join('\n');
 
 /** `<given>\t<pwd -P>` for each folder that exists, for the labels' `task.project` and workers' `project`. */
@@ -49,16 +49,32 @@ export const REALPATH_SCRIPT = [
   'exit 0',
 ].join('\n');
 
-/** An exec as a value: `{ok, code, stdout, stderr, error}`; a rejection (no program, the 30 s limit) is `ok: false`. */
+/**
+ * An exec as a value: `{ok, code, stdout, stderr, error, errorCode}`. A rejection (no program, the
+ * 30 s limit) is `ok: false` with `error` its message and `errorCode` its `code`, when it has one.
+ */
 export async function settle(promise) {
   try {
     const r = await promise;
     const code = typeof r?.code === 'number' ? r.code : null;
-    return { ok: code === 0, code, stdout: String(r?.stdout ?? ''), stderr: String(r?.stderr ?? ''), error: null };
+    const out = { stdout: String(r?.stdout ?? ''), stderr: String(r?.stderr ?? '') };
+    return { ok: code === 0, code, ...out, error: null, errorCode: null };
   } catch (e) {
-    return { ok: false, code: null, stdout: '', stderr: '', error: String(/** @type {any} */ (e)?.message ?? e) };
+    const err = /** @type {any} */ (e);
+    const errorCode = typeof err?.code === 'string' ? err.code : null;
+    return { ok: false, code: null, stdout: '', stderr: '', error: String(err?.message ?? e), errorCode };
   }
 }
+
+const LAUNCH_CODES = new Set(['ENOENT', 'EACCES', 'ENOEXEC', 'EPERM', 'ENOTDIR']);
+const LAUNCH_TEXT = /ENOENT|EACCES|ENOEXEC|EPERM|spawn|not found|no such file|permission denied|exec format/i;
+
+/**
+ * A rejection that says the program could not be started (missing, not executable, the wrong
+ * format), as opposed to a run that timed out or exited non-zero.
+ */
+export const launchFailed = (outcome) =>
+  outcome?.error != null && (LAUNCH_CODES.has(outcome.errorCode) || LAUNCH_TEXT.test(outcome.error));
 
 export const syncOk = (outcome) => Boolean(outcome?.ok);
 
@@ -405,7 +421,8 @@ export function cardOfTerminal(t, boards, { realpaths, workers }) {
   if (labelled(t)) {
     const project = real(realpaths, t.labels['task.project']);
     const row = (boards?.[project] ?? []).find((r) => r.task === t.labels.task);
-    return row ? { project, row, lead: t.labels['worker.of'] === t.labels['task.lead'] } : null;
+    const lead = t.labels['task.lead'];
+    return row ? { project, row, lead: Boolean(lead) && t.labels['worker.of'] === lead } : null;
   }
   const w = workers?.get(t?.address);
   if (!w) return null;
@@ -417,7 +434,9 @@ export function cardOfTerminal(t, boards, { realpaths, workers }) {
     (w.branch && rows.find((r) => r.branch === w.branch)) ||
     (w.worktree && rows.find((r) => r.worktree === w.worktree)) ||
     null;
-  return row ? { project, row, lead: Boolean(w.botId) && w.botId === w.lead } : null;
+  // The card's own lead decides; the start row's `lead` only when the card names none.
+  const lead = row?.lead || w.lead;
+  return row ? { project, row, lead: Boolean(w.botId) && Boolean(lead) && w.botId === lead } : null;
 }
 
 /**
@@ -466,4 +485,119 @@ export function joinPaths(terminals, workers) {
     else if (t?.address && workers?.get(t.address)?.project) out.add(workers.get(t.address).project);
   }
   return [...out];
+}
+
+/**
+ * Whether the badge or an icon may need `workers.jsonl`: a live terminal without the full task
+ * labels that is blocked (the badge) or is a worker (`worker.of`, the icon). Fully labelled
+ * workers never cost the read (Decision 14).
+ */
+export function needsWorkers(terminals) {
+  return (terminals ?? []).some(
+    (t) =>
+      t?.address &&
+      (!t.state || t.state === 'live') &&
+      !labelled(t) &&
+      (t.status === 'blocked' || t.labels?.['worker.of']),
+  );
+}
+
+// ---------- one refresh ----------
+
+/** The board's state between refreshes (main.js keeps it on the view). */
+export const newModel = () => ({
+  bin: null, // {found, path}
+  projects: [],
+  never: new Set(),
+  foldersKey: null,
+  lists: {}, // realpath -> applyList entry
+  feed: null,
+  sched: undefined, // planTick state
+  results: {}, // the last forge-sync outcome per project, for the next plan
+  realpaths: new Map(), // label / folder -> realpath, for the tab's life
+  workers: new Map(),
+});
+
+/** The shown projects' rows, for the badge. */
+export function boardsOf(m) {
+  const out = {};
+  for (const p of shownProjects(m.projects, m.lists)) out[p] = m.lists[p]?.rows ?? [];
+  return out;
+}
+
+export const focusedProjectOf = (m, folder) => {
+  const r = folder ? m.realpaths.get(folder) : null;
+  return r && m.projects.includes(r) ? r : null;
+};
+
+export const waitingOf = (m, terminals) =>
+  waitingCount(boardsOf(m), terminals, { realpaths: m.realpaths, workers: m.workers });
+
+/**
+ * After a batch of `genie-rs` runs: true (and the model in the missing-binary state, its path kept
+ * so the next refresh resolves again) when one of them could not be launched, or when any of them
+ * was rejected and BIN_SCRIPT no longer finds a runnable binary. A timeout or a non-zero exit with
+ * the binary still in place is an ordinary failure: stale list, forge backoff.
+ */
+async function binaryGone(m, io, outcomes) {
+  if (!outcomes.some((o) => o.error != null)) return false;
+  if (!outcomes.some(launchFailed) && parseBin(await settle(io.exec('sh', ['-c', BIN_SCRIPT]))).found) return false;
+  m.bin = { found: false, path: m.bin.path };
+  return true;
+}
+
+/**
+ * One refresh of model `m`. `io` is the host: `exec(cmd, args)`, `probe(folders)` (main.js runs
+ * PROBE_SCRIPT), `spaces()`, `home()`, `terminals()`, `focusedFolder()`, `workersFile`, `now()`,
+ * `notify()` and `publish()`. Order: binary, probe, the workers tail only when needed, realpaths,
+ * the plan, `list` for every project, `doc get`, the badge, then the planned forge-syncs (their
+ * outcomes go to the next plan). `sync: false` plans no forge-sync; `feed: false` skips `doc get`.
+ */
+export async function refresh(m, io, { sync = true, feed = true } = {}) {
+  if (!m.bin?.found) m.bin = parseBin(await settle(io.exec('sh', ['-c', BIN_SCRIPT])));
+  if (!m.bin.found) return io.notify();
+  const bin = m.bin.path;
+
+  const folders = localFolders(io.spaces(), io.home());
+  m.foldersKey = folders.join('\n');
+  const probe = await settle(io.probe(folders));
+  if (probe.ok) ({ projects: m.projects, neverSynced: m.never } = parseProbe(probe.stdout));
+
+  const terms = io.terminals();
+  m.workers = new Map();
+  if (needsWorkers(terms)) {
+    const tail = await settle(io.exec('tail', ['-n', '2000', io.workersFile]));
+    if (tail.ok) m.workers = parseWorkers(tail.stdout);
+  }
+  const want = [io.focusedFolder(), ...joinPaths(terms, m.workers)].filter((p) => p && !m.realpaths.has(p));
+  if (want.length) {
+    const r = await settle(io.exec('sh', ['-c', REALPATH_SCRIPT, 'sh', ...want]));
+    for (const [k, v] of parseRealpaths(r.stdout)) m.realpaths.set(k, v);
+  }
+
+  let syncs = [];
+  if (sync) {
+    const results = m.results;
+    m.results = {};
+    const focused = focusedProjectOf(m, io.focusedFolder());
+    const plan = planTick(m.sched, { now: io.now(), projects: m.projects, focused, neverSynced: m.never, results });
+    m.sched = plan.state;
+    syncs = plan.sync;
+  }
+
+  const listed = [...m.projects];
+  const outs = await mapLimit(listed, MAX_IN_FLIGHT, (p) => settle(io.exec(bin, ['list', '--json', '--project', p])));
+  if (await binaryGone(m, io, outs)) return io.notify();
+  listed.forEach((p, i) => {
+    m.lists[p] = applyList(m.lists[p], outs[i], io.now());
+  });
+  if (feed) m.feed = docFeed(await settle(io.exec('automagik-herdr', ['doc', 'get', 'herdr-meter'])));
+  io.publish();
+  io.notify();
+
+  if (!syncs.length) return;
+  const done = await mapLimit(syncs, MAX_IN_FLIGHT, (p) => settle(io.exec(bin, ['forge-sync', '--project', p])));
+  if (await binaryGone(m, io, done)) return io.notify();
+  m.results = Object.fromEntries(syncs.map((p, i) => [p, syncOk(done[i])]));
+  io.notify();
 }

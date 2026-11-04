@@ -410,6 +410,42 @@ describe('T5 badge', () => {
       }),
     ).toBe('t6');
   });
+
+  test('a labelled terminal with no lead identity is not the lead; the explicit lead wins though listed second', () => {
+    const base = labelled('t0', 'gh-1', 'working').labels;
+    const noLead = { task: base.task, 'task.project': base['task.project'] }; // neither worker.of nor task.lead
+    const terms = [
+      { address: 't-unknown', state: 'live', status: 'working', labels: noLead },
+      { address: 't-empty', state: 'live', status: 'working', labels: { ...noLead, 'task.lead': '', 'worker.of': '' } },
+      { address: 't-lead', state: 'live', status: 'idle', labels: { ...base, 'worker.of': 'b-lead' } },
+    ];
+    const card = D.lanesOf(P, board[P], null, NOW)[0].cards.find((c) => c.id === 'gh-1');
+    expect(D.terminalFor(card, terms, { realpaths, workers: noWorkers })).toBe('t-lead');
+    expect(D.terminalFor(card, terms.slice(0, 2), { realpaths, workers: noWorkers })).toBe('t-unknown');
+  });
+
+  test("an unlabelled worker is the lead when its botId is the card's lead, even with no lead on its start row", () => {
+    const start = (terminal: string, botId: string) =>
+      JSON.stringify({
+        event: 'start',
+        kind: 'worker',
+        terminal,
+        botId,
+        worktree: '/work/repo.worktrees/gh-6',
+        project: P,
+      });
+    const workers = D.parseWorkers(`${start('t-other', 'b-other')}\n${start('t-lead', 'b-lead')}\n`);
+    const terms = ['t-other', 't-lead'].map((address) => ({ address, state: 'live', status: 'idle', labels: {} }));
+    const card = D.lanesOf(P, board[P], null, NOW)[0].cards.find((c) => c.id === 'gh-6');
+    expect(card.lead).toBe('b-lead');
+    expect(D.terminalFor(card, terms, { realpaths, workers })).toBe('t-lead');
+    // A card with no lead falls back to the start row's own lead.
+    const leadless = { ...card, lead: null };
+    const rows = D.parseWorkers(
+      `${JSON.stringify({ event: 'start', kind: 'worker', terminal: 't-other', botId: 'b-other', lead: 'b-x', worktree: '/work/repo.worktrees/gh-6', project: P })}\n${JSON.stringify({ event: 'start', kind: 'worker', terminal: 't-lead', botId: 'b-x', lead: 'b-x', worktree: '/work/repo.worktrees/gh-6', project: P })}\n`,
+    );
+    expect(D.terminalFor(leadless, terms, { realpaths, workers: rows })).toBe('t-lead');
+  });
 });
 
 describe('T6 degradation', () => {
@@ -438,6 +474,11 @@ describe('T6 degradation', () => {
       found: false,
       path: join(root, 'missing'),
     });
+    // A file that cannot be executed is not a binary.
+    const plain = join(root, 'plain-genie-rs');
+    writeFileSync(plain, '#!/bin/sh\n');
+    chmodSync(plain, 0o644);
+    expect(outcome({ GENIE_RS_BIN: plain })).toEqual({ found: false, path: plain });
     const rejected = await D.settle(Promise.reject(new Error('spawn sh ENOENT')));
     expect(rejected.ok).toBe(false);
     expect(D.parseBin(rejected).found).toBe(false);
@@ -500,6 +541,148 @@ describe('T6 degradation', () => {
       project: null,
     });
     expect(D.lanesOf(P, [r], null, NOW)[1].cards[0].id).toBe('gh-1');
+  });
+});
+
+describe('refresh (data.js `refresh`, the host injected)', () => {
+  const BIN = '/opt/genie/bin/genie-rs';
+  const REPO = '/work/repo';
+  type Reply = { code: number; stdout?: string } | Error;
+  /** A fake host. `bin` answers `genie-rs` runs; BIN_SCRIPT finds BIN while `binThere()`. */
+  function host({
+    bin,
+    binThere = () => true,
+    terminals = [] as unknown[],
+    workersText = '',
+  }: { bin: (args: string[]) => Reply; binThere?: () => boolean; terminals?: unknown[]; workersText?: string }) {
+    const calls: string[][] = [];
+    const answer = (r: Reply) =>
+      r instanceof Error ? Promise.reject(r) : Promise.resolve({ stdout: '', stderr: '', ...r });
+    const io = {
+      exec: (cmd: string, args: string[] = []) => {
+        calls.push([cmd, ...args]);
+        if (cmd === 'sh' && args[1] === D.BIN_SCRIPT) return answer({ code: binThere() ? 0 : 1, stdout: `${BIN}\n` });
+        if (cmd === 'sh' && args[1] === D.REALPATH_SCRIPT) return answer({ code: 0, stdout: '' });
+        if (cmd === 'tail') return answer({ code: 0, stdout: workersText });
+        if (cmd === 'automagik-herdr') return answer({ code: 3 });
+        if (cmd === BIN) return answer(bin(args));
+        return answer(new Error(`unexpected exec ${cmd}`));
+      },
+      probe: (folders: string[]) => {
+        calls.push(['probe', ...folders]);
+        return Promise.resolve({ code: 0, stdout: `synced\t${REPO}\n`, stderr: '' });
+      },
+      spaces: () => [{ folder: REPO, machine: null }],
+      home: () => '/home/me',
+      terminals: () => terminals,
+      focusedFolder: () => null,
+      workersFile: '/app/automagik-herdr/workers.jsonl',
+      now: () => NOW,
+      notify: () => {},
+      published: [] as unknown[],
+      publish: () => {},
+    };
+    return { io, calls };
+  }
+  const listJson = JSON.stringify([row({ task: 'gh-1', lane: 'Review' }), row({ task: 'gh-2', lane: 'Working' })]);
+  const enoent = () => Object.assign(new Error(`spawn ${BIN} ENOENT`), { code: 'ENOENT' });
+  const runs = (calls: string[][], verb: string) => calls.filter((c) => c[0] === BIN && c[1] === verb).length;
+  const binScripts = (calls: string[][]) => calls.filter((c) => c[0] === 'sh' && c[2] === D.BIN_SCRIPT).length;
+
+  test('discovery finds the binary but launching it rejects: the missing-binary line, then a re-resolve', async () => {
+    const m = D.newModel();
+    const { io, calls } = host({ bin: () => enoent() });
+    await D.refresh(m, io);
+    expect(m.bin).toEqual({ found: false, path: BIN });
+    expect(D.missingBinaryLine(m.bin.path)).toBe(`genie-rs not found: run 'genie update' (${BIN})`);
+    expect(runs(calls, 'forge-sync')).toBe(0);
+    expect(m.lists[REPO]).toBeUndefined();
+    await D.refresh(m, io);
+    expect(binScripts(calls)).toBeGreaterThanOrEqual(2); // resolved again on the later refresh
+  });
+
+  test('the binary disappears after a good refresh: the missing-binary line, whatever the rejection says', async () => {
+    let there = true;
+    let gone = false;
+    const m = D.newModel();
+    const { io } = host({
+      bin: (args) => (gone ? new Error('boom') : args[0] === 'list' ? { code: 0, stdout: listJson } : { code: 0 }),
+      binThere: () => there,
+    });
+    await D.refresh(m, io);
+    expect(m.bin).toEqual({ found: true, path: BIN });
+    expect(m.lists[REPO].rows).toHaveLength(2);
+    there = false;
+    gone = true;
+    await D.refresh(m, io);
+    expect(m.bin).toEqual({ found: false, path: BIN });
+    expect(m.lists[REPO].rows).toHaveLength(2); // the last good list is kept for when it returns
+    there = true;
+    gone = false;
+    await D.refresh(m, io);
+    expect(m.bin).toEqual({ found: true, path: BIN });
+  });
+
+  test('a timeout or a non-zero exit keeps the binary: a stale list and the forge backoff', async () => {
+    for (const mode of ['timeout', 'exit'] as const) {
+      let fail = false;
+      const m = D.newModel();
+      const { io } = host({
+        bin: (args) => {
+          if (fail && mode === 'timeout') return new Error('the command took longer than 30 s');
+          if (fail) return { code: 1 };
+          return args[0] === 'list' ? { code: 0, stdout: listJson } : { code: 0 };
+        },
+      });
+      await D.refresh(m, io);
+      fail = true;
+      await D.refresh(m, io);
+      expect(m.bin).toEqual({ found: true, path: BIN });
+      expect(m.lists[REPO]).toMatchObject({ stale: true });
+      expect(m.lists[REPO].rows).toHaveLength(2);
+      expect(m.results).toEqual({ [REPO]: false });
+    }
+  });
+
+  test('workers.jsonl is not read while every relevant terminal carries the task labels', async () => {
+    const terminals = [
+      {
+        address: 't1',
+        state: 'live',
+        status: 'blocked',
+        labels: { task: 'gh-2', 'task.project': REPO, 'worker.of': 'b', 'task.lead': 'b' },
+      },
+      { address: 't9', state: 'live', status: 'working', labels: {} }, // a shell: neither blocked nor a worker
+    ];
+    const m = D.newModel();
+    const { io, calls } = host({
+      bin: (args) => (args[0] === 'list' ? { code: 0, stdout: listJson } : { code: 0 }),
+      terminals,
+    });
+    const exec = io.exec;
+    io.exec = (cmd: string, args: string[] = []) => {
+      if (cmd === 'tail') throw new Error('workers.jsonl read with every worker labelled');
+      return exec(cmd, args);
+    };
+    await D.refresh(m, io);
+    expect(calls.some((c) => c[0] === 'tail')).toBe(false);
+    expect(D.waitingOf(m, terminals)).toBe(2);
+  });
+
+  test('an unlabelled blocked worker reads the workers.jsonl tail and joins through it', async () => {
+    const terminals = [{ address: 't5', state: 'live', status: 'blocked', labels: { 'worker.of': 'b' } }];
+    const workersText = `${JSON.stringify({ event: 'start', kind: 'worker', terminal: 't5', task: 'gh-2', project: REPO })}\n`;
+    const m = D.newModel();
+    const { io, calls } = host({
+      bin: (args) => (args[0] === 'list' ? { code: 0, stdout: listJson } : { code: 0 }),
+      terminals,
+      workersText,
+    });
+    await D.refresh(m, io);
+    expect(calls.filter((c) => c[0] === 'tail')).toEqual([
+      ['tail', '-n', '2000', '/app/automagik-herdr/workers.jsonl'],
+    ]);
+    expect(D.waitingOf(m, terminals)).toBe(2);
   });
 });
 
