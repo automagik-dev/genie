@@ -297,7 +297,7 @@ bun test plugins/genie-herdr/data.test.ts scripts/release-docs.test.ts && bun ru
   - The optional `herdrMod` field on `skills-install.json`.
 
 **Acceptance Criteria:**
-- [ ] **T10 mod channel:** against a temp `GENIE_HOME` and Herdr app home:
+- [x] **T10 mod channel:** against a temp `GENIE_HOME` and Herdr app home:
   - **Runs:** the first run copies every payload file and records its sha256; a second run changes nothing and creates no backup root.
   - **Backups:** a hand-edited genie file is copied to `state-backups/herdr-mod-collision-*` before replacement.
   - **Hands off:** a file genie never delivered, `gpui-kit.d.ts` and `jsconfig.json` stay byte-identical, and a host with no Herdr app home is skipped with one line.
@@ -305,10 +305,10 @@ bun test plugins/genie-herdr/data.test.ts scripts/release-docs.test.ts && bun ru
   - **Consent:** a `'none'` selection or a missing install record skips the channel and writes nothing.
   - **No mod in payload (review r1 MEDIUM-1):** with a recorded, installed mod and no `<GENIE_HOME>/plugins/genie-herdr`, the run prints the one `no mod in payload` line, every installed file stays byte-identical, and the `herdrMod` record field is unchanged.
   - **Proof:** `src/lib/herdr-mod-installer.test.ts`.
-- [ ] **Stale file (A19):** an unmodified recorded file the payload no longer ships is removed and dropped from the record; a modified one is backed up first. **Proof:** `src/lib/herdr-mod-installer.test.ts`.
-- [ ] **Record carry-forward (Decision 22):** a skills-channel record rewrite keeps an existing `herdrMod` field byte-for-byte, and a record without the field still parses. **Proof:** the skills-installer test beside the `workflows` carry-forward case.
-- [ ] **Exit code:** a `failed` herdr-mod result on the update seam reaches the exit code as a `failed` workflows result does, and `genie install` exits 1 on a `failed` herdr-mod result (`install.ts:243`, beside `skills`/`workflows`; review r1 LOW-3). **Proof:** `src/lib/herdr-mod-installer.test.ts` or the existing update and install convergence tests.
-- [ ] Before editing, the engineer reads `.claude/rules/workflows-channel.md`, `.claude/rules/skills-installer.md` and `.claude/rules/release-pipeline.md`, whose `paths:` globs cover the files this group edits.
+- [x] **Stale file (A19):** an unmodified recorded file the payload no longer ships is removed and dropped from the record; a modified one is backed up first. **Proof:** `src/lib/herdr-mod-installer.test.ts`.
+- [x] **Record carry-forward (Decision 22):** a skills-channel record rewrite keeps an existing `herdrMod` field byte-for-byte, and a record without the field still parses. **Proof:** the skills-installer test beside the `workflows` carry-forward case.
+- [x] **Exit code:** a `failed` herdr-mod result on the update seam reaches the exit code as a `failed` workflows result does, and `genie install` exits 1 on a `failed` herdr-mod result (`install.ts:243`, beside `skills`/`workflows`; review r1 LOW-3). **Proof:** `src/lib/herdr-mod-installer.test.ts` or the existing update and install convergence tests.
+- [x] Before editing, the engineer reads `.claude/rules/workflows-channel.md`, `.claude/rules/skills-installer.md` and `.claude/rules/release-pipeline.md`, whose `paths:` globs cover the files this group edits.
 
 **Validation:**
 ```bash

@@ -34,6 +34,7 @@ import {
   loadGenieConfigSync,
   saveGenieConfig,
 } from '../lib/genie-config.js';
+import { type HerdrModChannelConvergenceResult, runHerdrModChannelConvergence } from '../lib/herdr-mod-installer.js';
 import {
   type InstallStagingDirectoryGuard,
   admitExternalInstallStaging,
@@ -1915,7 +1916,7 @@ function applyDowngradeGuard(
 
 /**
  * Map a convergence outcome to the process exit code:
- *   - a failed skills.sh or workflows install → exit 1 (retry)
+ *   - a failed skills.sh, workflows or Herdr mod install → exit 1 (retry)
  *   - else success (exit 0), caller prints its own success line.
  *
  * The former action-required exit-2 arm left with the Codex plugin activation
@@ -1924,7 +1925,11 @@ function applyDowngradeGuard(
  * convergence either succeeds or is retryable.
  */
 export function applyConvergenceExitSignal(convergence: ManualUpdateConvergenceResult): void {
-  if (convergence.skills?.status === 'failed' || convergence.workflows?.status === 'failed') {
+  if (
+    convergence.skills?.status === 'failed' ||
+    convergence.workflows?.status === 'failed' ||
+    convergence.herdrMod?.status === 'failed'
+  ) {
     process.exitCode = 1;
   }
 }
@@ -2647,6 +2652,8 @@ export interface ManualUpdateConvergenceOptions {
   runSkills?: SkillsChannelRunner;
   /** Test seam for the workflows channel step (production writes `~/.claude/workflows`). */
   runWorkflows?: WorkflowsChannelRunner;
+  /** Test seam for the Herdr mod channel step (production writes Herdr's mods folder). */
+  runHerdrMod?: HerdrModChannelRunner;
 }
 
 export type SkillsChannelRunner = (
@@ -2690,6 +2697,25 @@ export function runUpdateWorkflowsChannel(
   return runWorkflowsChannelConvergence({ selection, version: VERSION, genieHome: GENIE_HOME, log: emit });
 }
 
+export type HerdrModChannelRunner = (
+  selection: IntegrationSelection,
+  emit: (line: string) => void,
+) => HerdrModChannelConvergenceResult;
+
+/**
+ * The Herdr mod channel as `genie update` runs it (wish `genie-v7-board` group
+ * 3). Like the workflows channel it executes inside the freshly promoted
+ * binary's `update --post-delivery-converge`, after the OLD binary converged
+ * `<GENIE_HOME>/plugins`, so the mod it copies is the freshly delivered one and
+ * always matches the `genie-rs` shipped beside it.
+ */
+export function runUpdateHerdrModChannel(
+  selection: IntegrationSelection,
+  emit: (line: string) => void,
+): HerdrModChannelConvergenceResult {
+  return runHerdrModChannelConvergence({ selection, version: VERSION, genieHome: GENIE_HOME, log: emit });
+}
+
 export interface ManualUpdateConvergenceResult {
   /**
    * The skills.sh channel outcome, or `null` when the channel never ran
@@ -2704,12 +2730,18 @@ export interface ManualUpdateConvergenceResult {
    * workflows install must reach the exit code rather than be discarded.
    */
   workflows: WorkflowsChannelConvergenceResult | null;
+  /**
+   * The Herdr mod channel outcome, or `null` when the channel never ran
+   * (consent `none`). Surfaced beside `workflows` so a failed mod install
+   * reaches the exit code too.
+   */
+  herdrMod: HerdrModChannelConvergenceResult | null;
 }
 
 export function runManualUpdateConvergence(options: ManualUpdateConvergenceOptions): ManualUpdateConvergenceResult {
   const emit = options.log ?? log;
   const selection = options.selection ?? readIntegrationConsent(GENIE_HOME);
-  if (selection === 'none') return { skills: null, workflows: null };
+  if (selection === 'none') return { skills: null, workflows: null, herdrMod: null };
   // Skills FIRST: a host must never pass through a state with neither the
   // plugin-era skills nor the skills.sh skills (wish `skills-everywhere`
   // decision 2). Any non-`none` consent installs to every detected agent
@@ -2729,7 +2761,9 @@ export function runManualUpdateConvergence(options: ManualUpdateConvergenceOptio
   // it writes its field into the record that channel just rewrote, and installs
   // nothing at all when no readable record survives (wish decision 4).
   const workflows = (options.runWorkflows ?? runUpdateWorkflowsChannel)(selection, emit);
-  return { skills, workflows };
+  // Then the Herdr mod channel, which appends its own field to the same record.
+  const herdrMod = (options.runHerdrMod ?? runUpdateHerdrModChannel)(selection, emit);
+  return { skills, workflows, herdrMod };
 }
 
 function errMsg(err: unknown): string {

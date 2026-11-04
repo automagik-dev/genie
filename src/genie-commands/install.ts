@@ -4,7 +4,8 @@
  * install.sh downloads, verifies, extracts, links and PATH-wires the binary in
  * bash, then hands off to `genie install` on the freshly linked binary for the
  * finishing steps that belong in TypeScript: canonical payload normalization,
- * v4 cleanup, consent, the skills channel and then the workflows channel.
+ * v4 cleanup, consent, the skills channel, the workflows channel and then the
+ * Herdr mod channel.
  *
  * Opt out of the v4 cleanup with `--skip-v4-cleanup` — install.sh forwards its
  * CLI args, so `curl ... | bash -s -- --skip-v4-cleanup` reaches this flag.
@@ -14,6 +15,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { loadGenieConfigSync } from '../lib/genie-config.js';
+import { type HerdrModChannelConvergenceResult, runHerdrModChannelConvergence } from '../lib/herdr-mod-installer.js';
 import { retireInstallVersionMarker } from '../lib/install-version-marker.js';
 import {
   type LifecycleLease,
@@ -69,6 +71,8 @@ type NormalizeAuxLayoutFn = (genieHome: string) => AuxiliaryTreeOutcome[] | unde
 type SkillsChannelRunner = (selection: IntegrationSelection) => SkillsChannelConvergenceResult;
 /** The workflows channel step, which runs after the skills channel wrote the record. */
 type WorkflowsChannelRunner = (selection: IntegrationSelection) => WorkflowsChannelConvergenceResult;
+/** The Herdr mod channel step, which runs after the workflows channel. */
+type HerdrModChannelRunner = (selection: IntegrationSelection) => HerdrModChannelConvergenceResult;
 type LifecycleLeaseAcquirer = () => LifecycleLease | LifecycleLeaseSkip;
 type ConsentWriter = (selection: IntegrationSelection) => void;
 type InstallMarkerRetirer = () => void;
@@ -199,6 +203,8 @@ export async function installCommand(
     }),
   runWorkflows: WorkflowsChannelRunner = (selection) =>
     runWorkflowsChannelConvergence({ selection, version: VERSION, genieHome: GENIE_HOME }),
+  runHerdrMod: HerdrModChannelRunner = (selection) =>
+    runHerdrModChannelConvergence({ selection, version: VERSION, genieHome: GENIE_HOME }),
 ): Promise<void> {
   const selection = resolveIntegrationSelection(options);
   // The bounded wait wraps the acquirer actually in play (injected seam
@@ -234,13 +240,19 @@ export async function installCommand(
     // into the record that channel just rewrote, and installs nothing at all
     // when there is no readable record to write into (wish decision 4).
     const workflows = runWorkflows(selection);
+    // Then the Herdr mod channel (wish `genie-v7-board` group 3), which writes
+    // its own field into the same record under the same consent gate.
+    const herdrMod = runHerdrMod(selection);
     // Decision 14: marker retirement is the LAST successful finisher. A later
     // consent or legacy-cleanup failure must leave the marker intact so the
     // whole install remains retryable.
     retireInstallMarkerSafe(retireMarker);
-    // A failed skills or workflows install is a FAILURE: the delivered bytes
-    // stay committed, and the operator gets exit 1 with the remedy command.
-    if (skills.status === 'failed' || workflows.status === 'failed') process.exitCode = 1;
+    // A failed skills, workflows or Herdr mod install is a FAILURE: the
+    // delivered bytes stay committed, and the operator gets exit 1 with the
+    // remedy command.
+    if (skills.status === 'failed' || workflows.status === 'failed' || herdrMod.status === 'failed') {
+      process.exitCode = 1;
+    }
   } finally {
     releaseOrderedLifecycleLeases(lease);
   }

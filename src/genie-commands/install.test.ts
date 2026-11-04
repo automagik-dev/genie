@@ -26,6 +26,7 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+import type { HerdrModChannelConvergenceResult } from '../lib/herdr-mod-installer.js';
 import { acquireLifecycleLease, lifecycleLockPath } from '../lib/lifecycle-lease.js';
 import type { SkillsChannelConvergenceResult } from '../lib/skills-installer.js';
 import type { WorkflowsChannelConvergenceResult } from '../lib/workflows-installer.js';
@@ -73,11 +74,19 @@ const noSkillsChannel = (): SkillsChannelConvergenceResult => ({ status: 'skippe
  */
 const noWorkflowsChannel = (): WorkflowsChannelConvergenceResult => ({ status: 'skipped', warnings: [] });
 
+/**
+ * And for the Herdr mod channel: the production default writes the operator's
+ * real `~/.config/herdr-app/mods/genie-herdr`. Its behavior lives in
+ * `src/lib/herdr-mod-installer.test.ts`.
+ */
+const noHerdrModChannel = (): HerdrModChannelConvergenceResult => ({ status: 'skipped', warnings: [] });
+
 /** Keep every command-wiring test isolated from the operator's real install marker. */
 function installCommand(...args: Parameters<typeof runInstallCommand>): ReturnType<typeof runInstallCommand> {
   args[5] ??= () => undefined;
   args[6] ??= noSkillsChannel;
   args[7] ??= noWorkflowsChannel;
+  args[8] ??= noHerdrModChannel;
   return runInstallCommand(...args);
 }
 
