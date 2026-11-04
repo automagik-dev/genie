@@ -13,6 +13,7 @@ use genie_forge::{Forge, ForgeSyncPart, Report, SyncOptions, classify, parse_rem
 use genie_part::{Effect, Part};
 use genie_tasks::{StoredEvent, TaskState, open_store_at};
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 
 static N: AtomicUsize = AtomicUsize::new(0);
 const T0: &str = "2026-11-01T10:00:00Z";
@@ -195,11 +196,17 @@ impl Fx {
     }
 
     fn sync(&self, now: i64) -> Result<Report, genie_forge::Error> {
+        self.sync_mode(now, false)
+    }
+
+    /// One pass, `--full` when `full`.
+    fn sync_mode(&self, now: i64, full: bool) -> Result<Report, genie_forge::Error> {
         sync(&SyncOptions {
             project: self.repo.clone(),
             genie_home: self.home.clone(),
             path: Some(self.bin.clone().into_os_string()),
             now: Some(now),
+            full,
         })
     }
 
@@ -218,6 +225,42 @@ impl Fx {
     fn export(&self) -> Vec<Value> {
         let text = fs::read_to_string(self.home.join("tasks.jsonl")).unwrap_or_default();
         text.lines().map(|l| serde_json::from_str(l).unwrap()).collect()
+    }
+
+    /// Serve `pages` as `list-<N>.json`, each page newest first as given, and drop `list.json` so no
+    /// later page falls back to it.
+    fn serve_pages(&self, pages: &[&[Case]]) {
+        let _ = fs::remove_file(self.bin.join("list.json"));
+        for (i, page) in pages.iter().enumerate() {
+            let items: Vec<Value> = page.iter().map(|c| self.render(c)).collect();
+            fs::write(self.bin.join(format!("list-{}.json", i + 1)), Value::Array(items).to_string()).unwrap();
+        }
+    }
+
+    /// Make page `n` of the list fail.
+    fn fail_page(&self, n: usize) {
+        fs::write(self.bin.join(format!("list-{n}.json")), "!fail\n").unwrap();
+    }
+
+    /// The list calls that asked for page `n`.
+    fn page_calls(&self, n: usize) -> usize {
+        let tail = format!("&page={n}");
+        self.calls().iter().filter(|c| c.contains("/pulls?") && c.ends_with(&tail)).count()
+    }
+
+    /// The cursor file, named by a sha256 of the project computed here, independently of `sync.rs`.
+    fn cursor_path(&self) -> PathBuf {
+        let digest: String =
+            Sha256::digest(self.repo.to_str().unwrap().as_bytes()).iter().map(|b| format!("{b:02x}")).collect();
+        self.home.join("cache/forge").join(format!("{digest}.cursor.json"))
+    }
+
+    fn cursor(&self) -> Value {
+        serde_json::from_slice(&fs::read(self.cursor_path()).unwrap()).unwrap()
+    }
+
+    fn recorded_urls(&self) -> std::collections::BTreeSet<String> {
+        self.events().into_iter().map(|e| e.url).collect()
     }
 }
 
@@ -628,4 +671,161 @@ fn an_activity_tied_with_the_open_is_unknown_and_merge_activity_counts_like_a_pu
     assert_eq!(pushed(&fx, 26), None, "an unknown activity type after the open makes the count unknown");
     assert_eq!(pushed(&fx, 27), None, "a push tied with the merge is unresolved, never credited or dropped");
     assert_eq!(pushed(&fx, 28), Some(1), "a push resolvably after the merge is excluded, the one before counted");
+}
+
+const DAY: i64 = 86_400;
+
+/// The clock of the paging tests: 90 days after `T0`.
+fn now90() -> i64 {
+    t0() + 90 * DAY
+}
+
+/// An open PR on an untracked branch, updated `age` seconds before `now90()`.
+fn aged(n: u64, age: i64) -> Case {
+    Case { updated: 90 * DAY - age, ..case(n, "chore/paged", "chore: paged", "open", "head-p") }
+}
+
+/// Page `k` (1-based) of a 90-day history: 100 PRs, newest first. Page 1 spans ages 0.2-20 days,
+/// page 2 20.2-40 days (the 30-day horizon is its 50th row), page 3 40.5-90 days.
+fn history_page(k: u64) -> Vec<Case> {
+    (1..=100_i64)
+        .map(|j| {
+            let age = match k {
+                1 => j * DAY / 5,
+                2 => 20 * DAY + j * DAY / 5,
+                _ => 40 * DAY + j * DAY / 2,
+            };
+            aged((k - 1) * 100 + j as u64, age)
+        })
+        .collect()
+}
+
+fn urls(fx: &Fx, ns: impl IntoIterator<Item = u64>) -> std::collections::BTreeSet<String> {
+    ns.into_iter().map(|n| fx.url(n)).collect()
+}
+
+#[test]
+fn t1c_a_first_pass_stops_at_the_30_day_horizon_and_records_nothing_older() {
+    let fx = fixture("horizon", Forge::Github);
+    let (p1, p2, p3) = (history_page(1), history_page(2), history_page(3));
+    fx.serve_pages(&[&p1, &p2, &p3]);
+    let report = fx.sync(now90()).unwrap();
+    assert_eq!((fx.page_calls(1), fx.page_calls(2), fx.page_calls(3)), (1, 1, 0), "{:?}", fx.calls());
+    assert_eq!(report.appended, 150, "page 1 and the 50 rows of page 2 inside the horizon");
+    assert_eq!(fx.recorded_urls(), urls(&fx, 1..=150), "no PR older than 30 days is recorded");
+    assert_eq!(fx.cursor()["since"], json!(now90() - DAY / 5), "a completed pass: page 1's newest updated_at");
+}
+
+#[test]
+fn t1c_a_cut_first_pass_keeps_page_1_and_since_null_and_its_rerun_repeats_no_count_call() {
+    let fx = fixture("resume", Forge::Github);
+    let mut p1 = history_page(1);
+    let merged = Case { updated: 90 * DAY - DAY, ..case(5, "fix/gh-5-merged", "fix: merged", "merged", "head-5") };
+    p1[4] = merged.clone();
+    fx.pushes(&merged, &[("push", 60, Some(2))], true);
+    fx.serve_pages(&[&p1]);
+    fx.fail_page(2);
+
+    assert!(fx.sync(now90()).is_err(), "page 2 fails");
+    assert_eq!((fx.page_calls(1), fx.page_calls(2)), (1, 1), "page 2 is only asked after a full page 1");
+    assert_eq!(fx.recorded_urls(), urls(&fx, 1..=100), "page 1's events committed");
+    let cursor = fx.cursor();
+    assert_eq!(cursor["since"], Value::Null, "a cut pass completes nothing");
+    let seen: Vec<&String> = cursor["seen"].as_object().unwrap().keys().collect();
+    assert_eq!(seen.len(), 100, "page 1's PRs are seen");
+    assert!(String::from_utf8(fs::read(fx.cursor_path()).unwrap()).unwrap().contains("\"since\":null"));
+    let cache = fx.cursor_path().to_string_lossy().replace(".cursor.json", ".json");
+    assert!(!Path::new(&cache).exists(), "the reply cache is written only when a pass completes");
+    let counts = |fx: &Fx| fx.calls().iter().filter(|c| c.contains("/activity?ref=refs%2Fheads%2Ffix%2Fgh-5")).count();
+    assert_eq!(counts(&fx), 1);
+
+    fx.serve_pages(&[&p1, &history_page(2)]);
+    let rerun = fx.sync(now90()).unwrap(); // the same clock: the horizon row stays inside
+    assert_eq!((fx.page_calls(1), fx.page_calls(2)), (2, 2), "the rerun re-lists from the newest page");
+    assert_eq!(counts(&fx), 1, "no pushed_after_open call repeats");
+    assert_eq!((rerun.appended, rerun.duplicates), (50, 0), "page 1's seen PRs are skipped");
+    assert_eq!(fx.of(5)[0].pushed_after_open, Some(2));
+    assert_eq!(
+        fx.cursor()["since"],
+        json!(now90() - DAY / 5),
+        "since is what page 1 LISTED, though its PRs were all seen and none processed"
+    );
+}
+
+#[test]
+fn t1c_an_incremental_pass_cut_on_page_2_keeps_its_since_and_adds_page_1_to_seen() {
+    let fx = fixture("incremental", Forge::Github);
+    fx.serve_values(vec![fx.render(&aged(900, 11 * DAY)), fx.render(&aged(901, 10 * DAY))]);
+    fx.sync(now90()).unwrap();
+    let since = now90() - 10 * DAY;
+    assert_eq!(fx.cursor()["since"], json!(since));
+
+    let p1: Vec<Case> = (1..=100_i64).map(|j| aged(j as u64, j * DAY / 20)).collect();
+    fx.serve_pages(&[&p1]);
+    fx.fail_page(2);
+    assert!(fx.sync(now90() + 100).is_err());
+    assert_eq!((fx.page_calls(1), fx.page_calls(2)), (2, 1), "page 1 again, then page 2");
+    let cursor = fx.cursor();
+    assert_eq!(cursor["since"], json!(since), "a cut incremental pass leaves since = N, never null");
+    let seen = cursor["seen"].as_object().unwrap();
+    assert!((1..=100).all(|n| seen.contains_key(&fx.url(n))), "page 1's new seen entries are added");
+}
+
+#[test]
+fn t1c_a_first_pass_that_lists_nothing_writes_the_horizon() {
+    let fx = fixture("empty", Forge::Github);
+    fx.sync(now90()).unwrap();
+    assert_eq!(fx.cursor()["since"], json!(now90() - 30 * DAY));
+}
+
+#[test]
+fn full_records_a_merge_older_than_the_horizon_even_within_the_cache_window() {
+    let fx = fixture("full", Forge::Github);
+    let old = Case { updated: 90 * DAY - 60 * DAY, ..case(7, "fix/gh-7-old", "fix: old", "merged", "head-7") };
+    fx.pushes(&old, &[("push", 60, Some(1))], true);
+    fx.serve(&[old]);
+    assert_eq!(fx.sync(now90()).unwrap().appended, 0, "older than the horizon: not recorded");
+    let full = fx.sync_mode(now90() + 10, true).unwrap();
+    assert!(!full.cached, "--full lists the whole history, never the cached window");
+    assert_eq!(full.appended, 1);
+    assert_eq!(fx.of(7)[0].event.as_str(), "merged");
+}
+
+#[test]
+fn full_cut_on_page_2_leaves_the_cursor_byte_identical_and_full_completion_writes_the_newest_listed() {
+    let fx = fixture("full-cut", Forge::Github);
+    fx.serve_values(vec![fx.render(&aged(900, 6 * DAY)), fx.render(&aged(901, 5 * DAY))]);
+    fx.sync(now90()).unwrap();
+    let before = fs::read(fx.cursor_path()).unwrap();
+    assert_eq!(fx.cursor()["since"], json!(now90() - 5 * DAY), "a completed cursor");
+
+    let p1: Vec<Case> = (1..=100_i64).map(|j| aged(j as u64, j * DAY / 2)).collect();
+    fx.serve_pages(&[&p1]);
+    fx.fail_page(2);
+    assert!(fx.sync_mode(now90() + 100, true).is_err());
+    assert_eq!((fx.page_calls(1), fx.page_calls(2)), (2, 1), "the --full run listed page 1 in full");
+    assert_eq!(fs::read(fx.cursor_path()).unwrap(), before, "a killed --full leaves the cursor byte-identical");
+
+    let p2: Vec<Case> = (101..=105_u64).map(|n| aged(n, 51 * DAY + n as i64)).collect();
+    fx.serve_pages(&[&p1, &p2]);
+    fx.sync_mode(now90() + 200, true).unwrap();
+    assert_eq!(fx.cursor()["since"], json!(now90() - DAY / 2), "a completed --full: the newest updated_at it listed");
+    assert!(fx.recorded_urls().is_superset(&urls(&fx, 1..=105)), "--full ignores the horizon");
+}
+
+#[test]
+fn the_cursor_file_is_named_by_the_sha256_of_the_project() {
+    let fx = fixture("cursor-name", Forge::Github);
+    fx.serve(&[case(1, "feat/gh-1-x", "feat: x", "open", "head-1")]);
+    fx.sync(t0() + 1_000).unwrap();
+    let names: Vec<String> = fs::read_dir(fx.home.join("cache/forge"))
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .filter(|n| n.ends_with(".cursor.json"))
+        .collect();
+    let expected = fx.cursor_path().file_name().unwrap().to_string_lossy().into_owned();
+    assert_eq!(names, [expected], "<lowercase hex sha256(store.project())>.cursor.json");
+    assert_eq!(fx.repo.to_str().unwrap(), open_store_at(&fx.repo, &fx.home).unwrap().project());
+    let text = String::from_utf8(fs::read(fx.cursor_path()).unwrap()).unwrap();
+    assert!(text.contains("\"since\":1"), "compact JSON the never-synced probe greps: {text}");
 }

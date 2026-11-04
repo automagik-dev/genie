@@ -242,6 +242,26 @@ pub struct TaskRow {
     pub updated_at: String,
 }
 
+/// When a task's lifecycle reached each event, from its `v7_task_events` rows; `None` when there is
+/// no such row or its value is `''`. `created_at` and `worktree` come from the LATEST `created` row
+/// (a restart is a new lifecycle); `opened_at`, `merged_at` and `closed_at` from the first row of
+/// their kind.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Lifecycle {
+    pub created_at: Option<String>,
+    pub worktree: Option<String>,
+    pub opened_at: Option<String>,
+    pub merged_at: Option<String>,
+    pub closed_at: Option<String>,
+}
+
+/// One `v7_tasks` row with its lifecycle.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Listed {
+    pub row: TaskRow,
+    pub lifecycle: Lifecycle,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Recorded {
     Appended {
@@ -342,12 +362,36 @@ pub fn open_store(repo: &Path) -> Result<Store, Error> {
 
 /// Open `repo`'s store with an explicit `<GENIE_HOME>`.
 pub fn open_store_at(repo: &Path, genie_home: &Path) -> Result<Store, Error> {
+    open_with(repo, genie_home, Access::Write)
+}
+
+/// Open `repo`'s store to read only, exporting to the environment's `<GENIE_HOME>`.
+pub fn open_store_read(repo: &Path) -> Result<Store, Error> {
+    open_with(repo, &genie_home(), Access::Read)
+}
+
+/// Open `repo`'s store to read only: the refusals of [`open_store_at`] (a missing file, the global
+/// path, `user_version = 0`, a newer `v7_schema`), checked before any read, but no write statement
+/// at all (no `journal_mode`, no `synchronous`, no `SCHEMA_SQL`), so the main file stays
+/// byte-identical and a database without the `v7_` tables reads as empty. The flags stay read-write:
+/// `SQLITE_OPEN_READONLY` refuses a WAL database copied without its `-shm` sidecar.
+pub fn open_store_read_at(repo: &Path, genie_home: &Path) -> Result<Store, Error> {
+    open_with(repo, genie_home, Access::Read)
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Access {
+    Read,
+    Write,
+}
+
+fn open_with(repo: &Path, genie_home: &Path, access: Access) -> Result<Store, Error> {
     let location = locate(repo, genie_home)?;
-    let conn = retry_busy(|| open_conn(&location.db_path))?;
+    let conn = retry_busy(|| open_conn(&location.db_path, access))?;
     Ok(Store { conn, location, genie_home: genie_home.to_path_buf(), clock: Box::new(SystemClock) })
 }
 
-fn open_conn(db_path: &Path) -> Result<Connection, Error> {
+fn open_conn(db_path: &Path, access: Access) -> Result<Connection, Error> {
     // No CREATE flag: a file that vanished since `locate` is an error, never a new database.
     let conn =
         Connection::open_with_flags(db_path, OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX)?;
@@ -357,12 +401,14 @@ fn open_conn(db_path: &Path) -> Result<Connection, Error> {
     if user_version == 0 {
         return Err(Error::Uninitialized(db_path.to_path_buf()));
     }
-    let _mode: String = conn.query_row("PRAGMA journal_mode = WAL", [], |r| r.get(0))?;
-    conn.execute_batch("PRAGMA foreign_keys = ON; PRAGMA synchronous = FULL;")?;
+    if access == Access::Write {
+        let _mode: String = conn.query_row("PRAGMA journal_mode = WAL", [], |r| r.get(0))?;
+        conn.execute_batch("PRAGMA foreign_keys = ON; PRAGMA synchronous = FULL;")?;
+    }
     let version: Option<i64> = match conn.query_row("SELECT version FROM v7_schema WHERE id = 1", [], |r| r.get(0)) {
         Ok(v) => Some(v),
         Err(rusqlite::Error::QueryReturnedNoRows) => None,
-        Err(rusqlite::Error::SqliteFailure(_, Some(msg))) if msg.contains("no such table") => None,
+        Err(e) if no_such_table(&e) => None,
         Err(e) => return Err(e.into()),
     };
     match version {
@@ -370,6 +416,7 @@ fn open_conn(db_path: &Path) -> Result<Connection, Error> {
         Some(v) => {
             return Err(Error::NewerSchema { path: db_path.to_path_buf(), version: v });
         }
+        None if access == Access::Read => {}
         None => {
             conn.execute_batch("BEGIN IMMEDIATE")?;
             if let Err(e) = conn.execute_batch(SCHEMA_SQL).and_then(|()| conn.execute_batch("COMMIT")) {
@@ -412,14 +459,26 @@ fn event_from_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<StoredEvent> {
     })
 }
 
+fn no_such_table(e: &rusqlite::Error) -> bool {
+    matches!(e, rusqlite::Error::SqliteFailure(_, Some(msg)) if msg.contains("no such table"))
+}
+
+/// The lifecycle of one event kind: the `at` (and, for `created`, the `worktree`) of its first row,
+/// or of its latest when `latest`, as one correlated subquery over `v7_task_events_by_task`.
+fn lifecycle_sql(column: &str, event: &str, latest: bool) -> String {
+    let order = if latest { "DESC" } else { "ASC" };
+    format!(
+        "(SELECT NULLIF(e.{column}, '') FROM v7_task_events e WHERE e.project = t.project \
+         AND e.task_key = t.task_key AND e.event = '{event}' ORDER BY e.seq {order} LIMIT 1)"
+    )
+}
+
 /// Every event of `project` in `conn`, in replay order. A database without the table has none.
 pub(crate) fn read_events(conn: &Connection, project: &str) -> Result<Vec<StoredEvent>, Error> {
     let sql = format!("SELECT {EVENT_COLUMNS} FROM v7_task_events WHERE project = ?1 ORDER BY seq");
     let mut stmt = match conn.prepare(&sql) {
         Ok(stmt) => stmt,
-        Err(rusqlite::Error::SqliteFailure(_, Some(msg))) if msg.contains("no such table") => {
-            return Ok(Vec::new());
-        }
+        Err(e) if no_such_table(&e) => return Ok(Vec::new()),
         Err(e) => return Err(e.into()),
     };
     let rows = stmt.query_map([project], event_from_row)?;
@@ -450,14 +509,31 @@ impl Store {
         read_events(&self.conn, &self.location.project)
     }
 
+    /// This project's `v7_tasks` rows; a database without the table has none.
     pub fn tasks(&self) -> Result<Vec<TaskRow>, Error> {
-        let mut stmt = self.conn.prepare(
-            "SELECT project, task_key, task, state, title, lead, forge, url, branch, last_seq, updated_at \
-             FROM v7_tasks WHERE project = ?1 ORDER BY task_key",
-        )?;
+        Ok(self.listed()?.into_iter().map(|l| l.row).collect())
+    }
+
+    /// This project's `v7_tasks` rows with their lifecycle, in one aggregate query and no schema
+    /// change; a database without the tables has none.
+    pub fn listed(&self) -> Result<Vec<Listed>, Error> {
+        let sql = format!(
+            "SELECT t.project, t.task_key, t.task, t.state, t.title, t.lead, t.forge, t.url, t.branch, t.last_seq, \
+             t.updated_at, {}, {}, {}, {}, {} FROM v7_tasks t WHERE t.project = ?1 ORDER BY t.task_key",
+            lifecycle_sql("at", "created", true),
+            lifecycle_sql("worktree", "created", true),
+            lifecycle_sql("at", "opened", false),
+            lifecycle_sql("at", "merged", false),
+            lifecycle_sql("at", "closed", false),
+        );
+        let mut stmt = match self.conn.prepare(&sql) {
+            Ok(stmt) => stmt,
+            Err(e) if no_such_table(&e) => return Ok(Vec::new()),
+            Err(e) => return Err(e.into()),
+        };
         let rows = stmt.query_map([&self.location.project], |r| {
             let state: String = r.get(3)?;
-            Ok(TaskRow {
+            let row = TaskRow {
                 project: r.get(0)?,
                 task_key: r.get(1)?,
                 task: r.get(2)?,
@@ -469,7 +545,15 @@ impl Store {
                 branch: r.get(8)?,
                 last_seq: r.get(9)?,
                 updated_at: r.get(10)?,
-            })
+            };
+            let lifecycle = Lifecycle {
+                created_at: r.get(11)?,
+                worktree: r.get(12)?,
+                opened_at: r.get(13)?,
+                merged_at: r.get(14)?,
+                closed_at: r.get(15)?,
+            };
+            Ok(Listed { row, lifecycle })
         })?;
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }

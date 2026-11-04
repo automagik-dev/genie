@@ -9,7 +9,10 @@ use std::os::unix::fs::{PermissionsExt, symlink};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::{SystemTime, UNIX_EPOCH};
 
+use genie_forge::client::{parse_time, rfc3339};
+use genie_tasks::{EventRow, TaskEvent, open_store_at, record};
 use serde_json::{Value, json};
 
 static N: AtomicUsize = AtomicUsize::new(0);
@@ -81,12 +84,22 @@ impl Fx {
     }
 }
 
+/// These tests' fixed dates, moved to yesterday with their time of day kept: the binary runs on the
+/// wall clock, and forge-sync's first pass records nothing older than 30 days.
+fn recent(at: &str) -> String {
+    let day = |s: i64| s - s.rem_euclid(86_400);
+    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() as i64;
+    let at = parse_time(at).unwrap();
+    rfc3339(at - day(at) + day(now) - 86_400)
+}
+
 fn pr(n: u64, branch: &str, state: &str, updated: &str) -> Value {
+    let (created, updated) = (recent("2026-11-01T10:00:00Z"), recent(updated));
     json!({
         "number": n, "html_url": format!("https://github.com/o/r/pull/{n}"), "title": "fix: x",
         "state": if state == "open" { "open" } else { "closed" },
         "head": {"ref": branch, "sha": format!("head-{n}")}, "merge_commit_sha": format!("merge-{n}"),
-        "created_at": "2026-11-01T10:00:00Z", "updated_at": updated,
+        "created_at": created, "updated_at": updated,
         "merged_at": if state == "merged" { json!(updated) } else { Value::Null },
         "closed_at": if state == "open" { Value::Null } else { json!(updated) },
     })
@@ -267,4 +280,174 @@ fn a_token_in_the_origin_url_reaches_neither_genie_home_nor_stderr() {
     let out = fx.run(&["forge-sync"]);
     assert_eq!(code(&out), 1, "{}", stderr(&out));
     assert!(stderr(&out).contains("names no forge host") && !stderr(&out).contains(TOKEN), "{}", stderr(&out));
+}
+
+/// Record `event` for `task` through the store, as `start` and forge-sync do.
+fn seed(fx: &Fx, task: &str, event: TaskEvent, at: &str, worktree: &str) {
+    let store = open_store_at(&fx.repo, &fx.home).unwrap();
+    let mut row = EventRow::new(event);
+    let n = &task[3..];
+    row.task = task.to_string();
+    row.title = format!("feat: task {n}");
+    row.branch = format!("feat/{task}-x");
+    row.lead = "bot".to_string();
+    row.worktree = worktree.to_string();
+    row.at = Some(at.to_string());
+    row.commit = format!("{event:?}-{at}");
+    if event != TaskEvent::Created {
+        row.forge = "github".to_string();
+        row.url = format!("https://github.com/o/r/pull/{n}");
+    }
+    record(&store, store.project(), &row).unwrap();
+}
+
+fn json_out(out: &Output) -> Value {
+    assert_eq!(code(out), 0, "{}", stderr(out));
+    serde_json::from_slice(&out.stdout).unwrap()
+}
+
+#[test]
+fn t1_list_and_status_carry_the_lifecycle_timestamps_worktree_and_project() {
+    let fx = fixture("fields", true);
+    seed(&fx, "gh-1", TaskEvent::Created, "2026-11-02T09:00:00Z", "/wt/gh-1-x");
+    seed(&fx, "gh-1", TaskEvent::Opened, "2026-11-02T09:10:00Z", "");
+    seed(&fx, "gh-1", TaskEvent::Merged, "2026-11-02T09:20:00Z", "");
+    seed(&fx, "gh-2", TaskEvent::Created, "2026-11-02T08:00:00Z", "/wt/gh-2-first");
+    seed(&fx, "gh-2", TaskEvent::Closed, "2026-11-02T08:30:00Z", "");
+    seed(&fx, "gh-2", TaskEvent::Created, "2026-11-02T10:00:00Z", "/wt/gh-2-second");
+    seed(&fx, "gh-3", TaskEvent::Opened, "2026-11-02T11:00:00Z", "");
+
+    let link = fx.repo.parent().unwrap().join("link");
+    symlink(&fx.repo, &link).unwrap();
+    let list = json_out(&fx.run(&["list", "--json", "--project", link.to_str().unwrap()]));
+    let project = fx.repo.to_str().unwrap();
+    let keys: Vec<&str> = list[0].as_object().unwrap().keys().map(String::as_str).collect();
+    let mut expected = vec![
+        "task",
+        "task_key",
+        "state",
+        "lane",
+        "title",
+        "lead",
+        "forge",
+        "url",
+        "branch",
+        "updated_at",
+        "created_at",
+        "opened_at",
+        "merged_at",
+        "closed_at",
+        "worktree",
+        "project",
+    ];
+    expected.sort_unstable();
+    assert_eq!(keys, expected, "every old key kept, six added");
+    let task = |id: &str| list.as_array().unwrap().iter().find(|t| t["task"] == id).unwrap().clone();
+    let life =
+        |t: &Value| ["created_at", "opened_at", "merged_at", "closed_at", "worktree", "project"].map(|k| t[k].clone());
+    let (gh1, gh2, gh3) = (task("gh-1"), task("gh-2"), task("gh-3"));
+    assert_eq!(
+        life(&gh1),
+        [
+            json!("2026-11-02T09:00:00Z"),
+            json!("2026-11-02T09:10:00Z"),
+            json!("2026-11-02T09:20:00Z"),
+            Value::Null,
+            json!("/wt/gh-1-x"),
+            json!(project),
+        ]
+    );
+    assert_eq!((gh1["state"].as_str(), gh1["lane"].as_str()), (Some("merged"), Some("Merged")));
+    assert_eq!(
+        life(&gh2),
+        [
+            json!("2026-11-02T10:00:00Z"),
+            Value::Null,
+            Value::Null,
+            json!("2026-11-02T08:30:00Z"),
+            json!("/wt/gh-2-second"),
+            json!(project),
+        ],
+        "a restart: the LATEST created row's at and worktree"
+    );
+    assert_eq!(
+        life(&gh3),
+        [Value::Null, json!("2026-11-02T11:00:00Z"), Value::Null, Value::Null, Value::Null, json!(project)],
+        "a forge-first task has no created row"
+    );
+
+    let status = json_out(&fx.run(&["status", "gh-1", "--json"]));
+    assert_eq!(life(&status), life(&gh1), "status --json carries the same six fields");
+    assert_eq!(status["events"].as_array().unwrap().len(), 3);
+
+    let text = fx.run(&["list"]);
+    assert_eq!(code(&text), 0);
+    assert_eq!(
+        String::from_utf8_lossy(&text.stdout),
+        "gh-1  merged  Merged  feat: task 1\ngh-2  created  Working  feat: task 2\ngh-3  opened  Review  feat: task 3\n",
+        "the text output is unchanged"
+    );
+}
+
+fn v7_tables(db: &Path) -> Vec<String> {
+    let conn = rusqlite::Connection::open(db).unwrap();
+    let mut stmt = conn.prepare("SELECT name FROM sqlite_master WHERE name LIKE 'v7_%'").unwrap();
+    stmt.query_map([], |r| r.get(0)).unwrap().collect::<Result<_, _>>().unwrap()
+}
+
+#[test]
+fn t1b_list_and_status_run_no_write_statement() {
+    let fx = fixture("read-only", true);
+    let db = fx.repo.join(".genie/genie.db");
+    let before = fs::read(&db).unwrap(); // the fixture's writer is closed: an empty WAL
+    let list = fx.run(&["list", "--json"]);
+    assert_eq!((code(&list), String::from_utf8_lossy(&list.stdout).as_ref()), (0, "[]\n"), "{}", stderr(&list));
+    let status = fx.run(&["status", "gh-1", "--json"]);
+    assert_eq!(code(&status), 2, "{}", stderr(&status));
+    assert!(stderr(&status).contains("no v7 task gh-1"), "{}", stderr(&status));
+    assert!(fs::read(&db).unwrap() == before, "a v5-only main file stays byte-identical");
+    assert!(v7_tables(&db).is_empty(), "list and status create no v7_ table");
+
+    // A WAL database copied without its sidecars still lists.
+    seed(&fx, "gh-1", TaskEvent::Created, "2026-11-02T09:00:00Z", "/wt/gh-1-x");
+    let main = fs::read(&db).unwrap();
+    for suffix in ["", "-wal", "-shm"] {
+        let _ = fs::remove_file(format!("{}{suffix}", db.display()));
+    }
+    fs::write(&db, &main).unwrap();
+    assert_eq!((main[18], main[19]), (2, 2), "the copy is a WAL-mode database");
+    let list = json_out(&fx.run(&["list", "--json"]));
+    assert_eq!(list[0]["task"], "gh-1");
+    assert!(fs::read(&db).unwrap() == main, "listing a sidecar-less WAL database leaves it byte-identical");
+
+    // A newer v7 schema refuses with 2 before any read and leaves the file unchanged.
+    rusqlite::Connection::open(&db).unwrap().execute_batch("UPDATE v7_schema SET version = 99").unwrap();
+    let before = fs::read(&db).unwrap();
+    for verb in [&["list", "--json"][..], &["status", "gh-1"]] {
+        let out = fx.run(verb);
+        assert_eq!(code(&out), 2, "{verb:?}: {}", stderr(&out));
+        assert!(stderr(&out).contains("has v7 schema 99, newer than this build's"), "{}", stderr(&out));
+    }
+    assert!(fs::read(&db).unwrap() == before, "a newer-schema file stays byte-identical");
+}
+
+#[test]
+fn full_is_in_the_help_with_its_cost_and_forge_sync_help_still_refuses() {
+    let fx = fixture("help", true);
+    let help = fx.run(&["help"]);
+    assert_eq!(code(&help), 0);
+    let usage = String::from_utf8_lossy(&help.stdout).into_owned();
+    let line = usage.lines().find(|l| l.trim_start().starts_with("forge-sync ")).unwrap();
+    assert!(line.contains("[--full]"), "{line}");
+    assert!(usage.contains("one count call per merged PR/MR"), "{usage}");
+    assert!(usage.contains("thousands on a large repository"), "{usage}");
+
+    let out = fx.run(&["forge-sync", "--help"]);
+    assert_eq!(code(&out), 2);
+    assert!(stderr(&out).contains("unknown option '--help'") && stderr(&out).contains(line), "{}", stderr(&out));
+    for args in [&["forge-sync", "--bogus"][..], &["list", "--full"], &["status", "gh-1", "--full"]] {
+        let out = fx.run(args);
+        assert_eq!(code(&out), 2, "{args:?}: {}", stderr(&out));
+        assert!(stderr(&out).contains("unknown option"), "{args:?}");
+    }
 }
