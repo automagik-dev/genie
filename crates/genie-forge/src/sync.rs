@@ -5,8 +5,9 @@
 //! - A pass with no completed predecessor (`since` null) looks back [`HORIZON_SECS`] only; older PRs
 //!   are never recorded. Each page's events commit, newest first, and then the cursor's `seen` map
 //!   saves with `since` unchanged, so a cut pass resumes from the newest page without repeating a
-//!   count call. Only a completed pass sets `since`, to the newest `updated_at` it LISTED (or the
-//!   horizon when it listed nothing): `"since":null` means exactly "no completed pass".
+//!   count call. Only a completed pass sets `since`: the newest `updated_at` it LISTED, never below
+//!   the previous `since` or the pass's floor (the horizon when there is none of those), so `since`
+//!   never moves backward and `"since":null` means exactly "no completed pass".
 //! - `--full` (hand-run only) lists the whole history once, ignoring the horizon and `since`, and
 //!   saves its cursor only when it completes, so a killed `--full` leaves the cursor byte-identical.
 //! - `opened` only for a task with no row or at `created`, so a later push never yields a second
@@ -15,7 +16,7 @@
 //! - A transition `apply` refuses (a reopened PR merged after its `closed` was recorded) is skipped
 //!   and reported; the rest of the pass still commits and the cursor still advances (Decision 12).
 //! - Each page of the reply is checked for NUL bytes before any of its events is written: exit 1, and
-//!   nothing of that page or a later one is written.
+//!   nothing of that page or a later one is written; earlier pages may have committed.
 //! - Every forge call of a pass, the `pushed_after_open` calls for merged PRs included, is cached for
 //!   60 s in `<GENIE_HOME>/cache/forge/<sha256(project)>.json`, written only when the pass completes
 //!   (in every mode). The cursor lives beside it in `<sha256(project)>.cursor.json`, so it outlives
@@ -203,8 +204,9 @@ pub fn classify(title: &str) -> (String, Option<&'static str>) {
     (kind, reason)
 }
 
-/// Refuse a reply with a NUL byte in any part that reaches a dedupe key (url, head, merge commit,
-/// and the branch the task id comes from), before anything is written.
+/// Refuse a page with a NUL byte in any part that reaches a dedupe key (url, head, merge commit, and
+/// the branch the task id comes from), before any of that page's events is written. Earlier pages of
+/// the same pass may already have committed (each page commits on its own).
 fn check_nul(prs: &[Pr]) -> Result<(), Error> {
     for pr in prs {
         for (name, part) in
@@ -212,7 +214,8 @@ fn check_nul(prs: &[Pr]) -> Result<(), Error> {
         {
             if part.contains('\0') {
                 return Err(Error::Reply(format!(
-                    "the forge reply for #{} carries a NUL byte in its {name}; nothing was written",
+                    "the forge reply for #{} carries a NUL byte in its {name}; no events from this page were \
+                     written; earlier pages may have committed",
                     pr.number
                 )));
             }

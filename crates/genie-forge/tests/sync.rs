@@ -829,3 +829,23 @@ fn the_cursor_file_is_named_by_the_sha256_of_the_project() {
     let text = String::from_utf8(fs::read(fx.cursor_path()).unwrap()).unwrap();
     assert!(text.contains("\"since\":1"), "compact JSON the never-synced probe greps: {text}");
 }
+
+#[test]
+fn since_never_moves_back_when_every_listed_pr_is_older_than_the_horizon() {
+    let fx = fixture("old-only", Forge::Github);
+    let old = Case { updated: 90 * DAY - 60 * DAY, ..case(8, "fix/gh-8-old", "fix: old", "merged", "head-8") };
+    fx.pushes(&old, &[("push", 60, Some(1))], true);
+    fx.serve(&[old]);
+    let horizon = json!(now90() - 30 * DAY);
+    assert_eq!(fx.sync(now90()).unwrap().appended, 0, "a default pass records nothing older than the horizon");
+    assert_eq!(fx.cursor()["since"], horizon, "its only PR is 60 days old: the pass writes the horizon");
+
+    let full = fx.sync_mode(now90() + 10, true).unwrap();
+    assert!(!full.cached && full.appended == 1, "--full within the cache TTL lists and imports the old PR");
+    assert_eq!(fx.of(8)[0].event.as_str(), "merged");
+    assert_eq!(fx.cursor()["since"], horizon, "since stays at the horizon, never the older listed time");
+
+    let empty = fixture("old-only-empty", Forge::Github);
+    empty.sync(now90()).unwrap();
+    assert_eq!(empty.cursor()["since"], horizon, "an empty pass writes the horizon");
+}

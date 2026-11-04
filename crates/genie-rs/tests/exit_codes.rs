@@ -451,3 +451,23 @@ fn full_is_in_the_help_with_its_cost_and_forge_sync_help_still_refuses() {
         assert!(stderr(&out).contains("unknown option"), "{args:?}");
     }
 }
+
+#[test]
+fn a_nul_on_page_2_exits_1_keeps_page_1_and_says_only_that_page_was_not_written() {
+    let fx = fixture("nul-page-2", true);
+    let page1: Vec<Value> = (1..=100).rev().map(|n| pr(n, "chore/paged", "open", "2026-11-01T10:05:00Z")).collect();
+    fs::write(fx.bin.join("list-1.json"), Value::Array(page1).to_string()).unwrap();
+    let mut bad = pr(101, "chore/paged", "open", "2026-11-01T10:04:00Z");
+    bad["head"]["sha"] = json!("head\u{0}101");
+    fs::write(fx.bin.join("list-2.json"), Value::Array(vec![bad]).to_string()).unwrap();
+
+    let out = fx.run(&["forge-sync"]);
+    assert_eq!(code(&out), 1, "{}", stderr(&out));
+    let err = stderr(&out);
+    assert!(err.contains("#101 carries a NUL byte"), "{err}");
+    assert!(err.contains("no events from this page were written; earlier pages may have committed"), "{err}");
+    assert!(!err.contains("nothing was written"), "the pass did write page 1: {err}");
+    assert_eq!(fx.rows(), 100, "page 1's rows persist in tasks.jsonl");
+    let list = json_out(&fx.run(&["list", "--json"]));
+    assert_eq!(list.as_array().unwrap().len(), 100, "page 1's tasks persist in genie.db");
+}
