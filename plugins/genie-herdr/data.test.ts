@@ -554,7 +554,16 @@ describe('refresh (data.js `refresh`, the host injected)', () => {
     binThere = () => true,
     terminals = [] as unknown[],
     workersText = '',
-  }: { bin: (args: string[]) => Reply; binThere?: () => boolean; terminals?: unknown[]; workersText?: string }) {
+    projects = [REPO],
+    now = () => NOW,
+  }: {
+    bin: (args: string[]) => Reply;
+    binThere?: () => boolean;
+    terminals?: unknown[] | (() => unknown[]);
+    workersText?: string;
+    projects?: string[];
+    now?: () => number;
+  }) {
     const calls: string[][] = [];
     const answer = (r: Reply) =>
       r instanceof Error ? Promise.reject(r) : Promise.resolve({ stdout: '', stderr: '', ...r });
@@ -570,14 +579,14 @@ describe('refresh (data.js `refresh`, the host injected)', () => {
       },
       probe: (folders: string[]) => {
         calls.push(['probe', ...folders]);
-        return Promise.resolve({ code: 0, stdout: `synced\t${REPO}\n`, stderr: '' });
+        return Promise.resolve({ code: 0, stdout: projects.map((p) => `synced\t${p}\n`).join(''), stderr: '' });
       },
-      spaces: () => [{ folder: REPO, machine: null }],
+      spaces: () => projects.map((folder) => ({ folder, machine: null })),
       home: () => '/home/me',
-      terminals: () => terminals,
+      terminals: () => (typeof terminals === 'function' ? terminals() : terminals),
       focusedFolder: () => null,
       workersFile: '/app/automagik-herdr/workers.jsonl',
-      now: () => NOW,
+      now,
       notify: () => {},
       published: [] as unknown[],
       publish: () => {},
@@ -652,7 +661,8 @@ describe('refresh (data.js `refresh`, the host injected)', () => {
         status: 'blocked',
         labels: { task: 'gh-2', 'task.project': REPO, 'worker.of': 'b', 'task.lead': 'b' },
       },
-      { address: 't9', state: 'live', status: 'working', labels: {} }, // a shell: neither blocked nor a worker
+      { address: 't9', state: 'live', status: 'working', labels: { bot: 'b-main' } }, // a bot's own pane: never a worker
+      { address: 't8', state: 'dead', status: null, labels: {} }, // no longer live
     ];
     const m = D.newModel();
     const { io, calls } = host({
@@ -683,6 +693,80 @@ describe('refresh (data.js `refresh`, the host injected)', () => {
       ['tail', '-n', '2000', '/app/automagik-herdr/workers.jsonl'],
     ]);
     expect(D.waitingOf(m, terminals)).toBe(2);
+  });
+
+  test('an unlabelled live worker keeps its icon while working, idle, blocked and working again', async () => {
+    // A legacy worker: no labels at all, only its workers.jsonl start row joins it to gh-2.
+    const workersText = `${JSON.stringify({ event: 'start', kind: 'worker', terminal: 't7', task: 'gh-2', project: REPO })}\n`;
+    let status = 'working';
+    const terminals = () => [{ address: 't7', state: 'live', status, labels: {} }];
+    const m = D.newModel();
+    const { io, calls } = host({
+      bin: (args) => (args[0] === 'list' ? { code: 0, stdout: listJson } : { code: 0 }),
+      terminals,
+      workersText,
+    });
+    for (const s of ['working', 'idle', 'blocked', 'working']) {
+      status = s;
+      await D.refresh(m, io, { sync: false });
+      const card = D.lanesOf(REPO, m.lists[REPO].rows, null, NOW)[0].cards.find((c) => c.id === 'gh-2');
+      expect([s, D.terminalFor(card, terminals(), { realpaths: m.realpaths, workers: m.workers })]).toEqual([s, 't7']);
+    }
+    expect(calls.filter((c) => c[0] === 'tail')).toHaveLength(4);
+  });
+
+  test('a mixed forge batch: a finished exit 1 backs off and a finished success resets, though a sibling failed to launch', async () => {
+    const A = '/work/a';
+    const B = '/work/b';
+    let minute = 0;
+    const forge: Record<string, Reply> = {};
+    const { io, calls } = host({
+      projects: [A, B],
+      now: () => minute * MIN,
+      bin: (args) => (args[0] === 'list' ? { code: 0, stdout: '[]' } : (forge[args[2]] ?? { code: 0 })),
+    });
+    const synced = (at: number) =>
+      calls
+        .slice(at)
+        .filter((c) => c[0] === BIN && c[1] === 'forge-sync')
+        .map((c) => c[3]);
+
+    // Case 1: A finishes with exit 1 while B fails to launch.
+    let m = D.newModel();
+    forge[A] = { code: 1 };
+    forge[B] = enoent();
+    await D.refresh(m, io);
+    expect(m.bin).toEqual({ found: false, path: BIN }); // the missing-binary line still shows
+    expect(m.results).toEqual({ [A]: false }); // B never launched: no result for it
+    minute = 1;
+    forge[A] = { code: 0 };
+    forge[B] = { code: 0 };
+    let at = calls.length;
+    await D.refresh(m, io); // the binary runs again: resolved anew, A's failure is in the plan
+    expect(m.bin).toEqual({ found: true, path: BIN });
+    expect(synced(at)).toEqual([B]); // A sits out its one-minute backoff
+    expect(m.sched.backoff[A]).toEqual({ fails: 1, until: 2 * MIN });
+
+    // Case 2: A, two failures behind, finishes successfully while B fails to launch.
+    m = D.newModel();
+    m.sched = { pointer: null, neverPointer: null, backoff: { [A]: { fails: 2, until: 0 } } };
+    minute = 0;
+    forge[A] = { code: 0 };
+    forge[B] = enoent();
+    await D.refresh(m, io);
+    expect(m.results).toEqual({ [A]: true });
+    minute = 1;
+    forge[A] = { code: 1 };
+    forge[B] = { code: 0 };
+    at = calls.length;
+    await D.refresh(m, io); // the plan resets A, so A runs and fails once
+    expect(synced(at)).toEqual([A, B]);
+    expect(m.sched.backoff[A]).toBeUndefined();
+    minute = 2;
+    at = calls.length;
+    await D.refresh(m, io);
+    expect(m.sched.backoff[A]).toEqual({ fails: 1, until: 3 * MIN }); // one failure, one minute: not 3 and four
+    expect(synced(at)).toEqual([B]);
   });
 });
 

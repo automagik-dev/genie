@@ -488,17 +488,14 @@ export function joinPaths(terminals, workers) {
 }
 
 /**
- * Whether the badge or an icon may need `workers.jsonl`: a live terminal without the full task
- * labels that is blocked (the badge) or is a worker (`worker.of`, the icon). Fully labelled
- * workers never cost the read (Decision 14).
+ * Whether the badge or an icon may need `workers.jsonl`: any live terminal without the full task
+ * labels, whatever its status, may be a worker the fallback joins. Only a bot's own pane (its
+ * `bot` label) is ruled out: Herdr never gives a worker one (am-sidebar `workers.js`). When every
+ * other live terminal is fully labelled, nothing is read (Decision 14).
  */
 export function needsWorkers(terminals) {
   return (terminals ?? []).some(
-    (t) =>
-      t?.address &&
-      (!t.state || t.state === 'live') &&
-      !labelled(t) &&
-      (t.status === 'blocked' || t.labels?.['worker.of']),
+    (t) => t?.address && (!t.state || t.state === 'live') && !labelled(t) && !t.labels?.bot,
   );
 }
 
@@ -597,7 +594,9 @@ export async function refresh(m, io, { sync = true, feed = true } = {}) {
 
   if (!syncs.length) return;
   const done = await mapLimit(syncs, MAX_IN_FLIGHT, (p) => settle(io.exec(bin, ['forge-sync', '--project', p])));
+  // Every outcome known on its own terms reaches the next plan, before any missing-binary return:
+  // only a call that is known not to have launched carries no forge result.
+  m.results = Object.fromEntries(syncs.flatMap((p, i) => (launchFailed(done[i]) ? [] : [[p, syncOk(done[i])]])));
   if (await binaryGone(m, io, done)) return io.notify();
-  m.results = Object.fromEntries(syncs.map((p, i) => [p, syncOk(done[i])]));
   io.notify();
 }
