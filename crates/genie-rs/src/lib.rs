@@ -14,12 +14,17 @@ use std::io::Write;
 use std::path::PathBuf;
 
 use genie_forge::SyncOptions;
-use genie_tasks::{Lane, StartOptions, StoredEvent, TaskRow, VerbError, genie_home, open_store, rebuild};
+use genie_tasks::store::{Listed, open_store_read};
+use genie_tasks::{Lane, StartOptions, StoredEvent, VerbError, genie_home, rebuild};
 use serde_json::{Value, json};
 
 pub const USAGE: &str = "usage: genie-rs <verb> [options]
 
-  forge-sync [--project <path>] [--json]          record the project's opened/merged/closed PRs/MRs, one pass
+  forge-sync [--project <path>] [--full] [--json] record the project's opened/merged/closed PRs/MRs, one pass;
+                                                  a first pass looks back 30 days. --full (hand-run only)
+                                                  lists the whole history once: one count call per merged PR/MR
+                                                  in it, thousands on a large repository, against the shared
+                                                  gh/glab quota
   export --rebuild --project <path>... [--json]   rewrite those projects' rows in GENIE_HOME/tasks.jsonl
   status <id> [--project <path>] [--json]         one v7 task: its state, lane and events
   list [--project <path>] [--json]                the project's v7 tasks with their lanes
@@ -69,6 +74,7 @@ impl From<std::io::Error> for Failure {
 struct Flags {
     json: bool,
     rebuild: bool,
+    full: bool,
     projects: Vec<PathBuf>,
     positional: Vec<String>,
 }
@@ -84,14 +90,24 @@ impl Flags {
     }
 }
 
-/// `--json`, `--project <path>` (or `--project=<path>`), `--rebuild` where `rebuild`, positionals.
-fn parse(args: &[String], rebuild: bool) -> Result<Flags, Failure> {
+/// Which verb-specific option `parse` accepts beside `--json` and `--project`.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Extra {
+    None,
+    Rebuild,
+    Full,
+}
+
+/// `--json`, `--project <path>` (or `--project=<path>`), `--rebuild` or `--full` where `extra` names
+/// it, positionals.
+fn parse(args: &[String], extra: Extra) -> Result<Flags, Failure> {
     let mut flags = Flags::default();
     let mut it = args.iter();
     while let Some(arg) = it.next() {
         match arg.as_str() {
             "--json" => flags.json = true,
-            "--rebuild" if rebuild => flags.rebuild = true,
+            "--rebuild" if extra == Extra::Rebuild => flags.rebuild = true,
+            "--full" if extra == Extra::Full => flags.full = true,
             "--project" => match it.next() {
                 Some(p) => flags.projects.push(PathBuf::from(p)),
                 None => return Err(Failure::usage("--project needs a path")),
@@ -120,7 +136,9 @@ fn lane(lane: Lane) -> &'static str {
     }
 }
 
-fn task_json(t: &TaskRow) -> Value {
+/// A task's JSON: every `v7_tasks` key, then its lifecycle and the realpath `project`.
+fn task_json(listed: &Listed) -> Value {
+    let (t, life) = (&listed.row, &listed.lifecycle);
     json!({
         "task": if t.task.is_empty() { Value::Null } else { json!(t.task) },
         "task_key": t.task_key,
@@ -132,6 +150,12 @@ fn task_json(t: &TaskRow) -> Value {
         "url": t.url,
         "branch": t.branch,
         "updated_at": t.updated_at,
+        "created_at": life.created_at,
+        "opened_at": life.opened_at,
+        "merged_at": life.merged_at,
+        "closed_at": life.closed_at,
+        "worktree": life.worktree,
+        "project": t.project,
     })
 }
 
@@ -150,9 +174,10 @@ fn event_json(e: &StoredEvent) -> Value {
 }
 
 fn forge_sync(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> Result<(), Failure> {
-    let flags = parse(args, false)?;
+    let flags = parse(args, Extra::Full)?;
     no_positionals(&flags)?;
-    let opts = SyncOptions { project: flags.project()?, genie_home: genie_home(), path: None, now: None };
+    let opts =
+        SyncOptions { project: flags.project()?, genie_home: genie_home(), path: None, now: None, full: flags.full };
     let report = genie_forge::sync(&opts)?;
     for skip in &report.skipped {
         writeln!(err, "{skip}")?;
@@ -175,7 +200,7 @@ fn forge_sync(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> Resu
 }
 
 fn export(args: &[String], out: &mut dyn Write) -> Result<(), Failure> {
-    let flags = parse(args, true)?;
+    let flags = parse(args, Extra::Rebuild)?;
     no_positionals(&flags)?;
     if !flags.rebuild || flags.projects.is_empty() {
         return Err(Failure::usage("export needs --rebuild and at least one --project <path>"));
@@ -194,17 +219,18 @@ fn export(args: &[String], out: &mut dyn Write) -> Result<(), Failure> {
 }
 
 fn status(args: &[String], out: &mut dyn Write) -> Result<(), Failure> {
-    let flags = parse(args, false)?;
+    let flags = parse(args, Extra::None)?;
     let [id] = flags.positional.as_slice() else {
         return Err(Failure::usage("status takes exactly one task id"));
     };
-    let store = open_store(&flags.project()?)?;
-    let Some(task) = store.tasks()?.into_iter().find(|t| &t.task == id || &t.task_key == id) else {
+    let store = open_store_read(&flags.project()?)?;
+    let Some(listed) = store.listed()?.into_iter().find(|l| &l.row.task == id || &l.row.task_key == id) else {
         return Err(Failure { code: 2, message: format!("no v7 task {id} in {}", store.project()) });
     };
+    let task = &listed.row;
     let events: Vec<StoredEvent> = store.events()?.into_iter().filter(|e| e.task_key == task.task_key).collect();
     if flags.json {
-        let mut body = task_json(&task);
+        let mut body = task_json(&listed);
         body["events"] = events.iter().map(event_json).collect();
         writeln!(out, "{body}")?;
     } else {
@@ -217,14 +243,14 @@ fn status(args: &[String], out: &mut dyn Write) -> Result<(), Failure> {
 }
 
 fn list(args: &[String], out: &mut dyn Write) -> Result<(), Failure> {
-    let flags = parse(args, false)?;
+    let flags = parse(args, Extra::None)?;
     no_positionals(&flags)?;
-    let store = open_store(&flags.project()?)?;
-    let tasks = store.tasks()?;
+    let store = open_store_read(&flags.project()?)?;
+    let tasks = store.listed()?;
     if flags.json {
         writeln!(out, "{}", Value::Array(tasks.iter().map(task_json).collect()))?;
     } else {
-        for t in &tasks {
+        for t in tasks.iter().map(|l| &l.row) {
             writeln!(out, "{}  {}  {}  {}", t.task_key, t.state.as_str(), lane(t.state.lane()), t.title)?;
         }
     }
@@ -273,7 +299,7 @@ fn start(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> Result<()
 }
 
 fn push(args: &[String], out: &mut dyn Write) -> Result<(), Failure> {
-    let flags = parse(args, false)?;
+    let flags = parse(args, Extra::None)?;
     let branch = match flags.positional.as_slice() {
         [] => None,
         [one] => Some(one.as_str()),

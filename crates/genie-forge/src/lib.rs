@@ -126,7 +126,7 @@ impl Part for ForgeSyncPart {
                 Some(p) => PathBuf::from(p),
                 None => std::env::current_dir().map_err(|e| e.to_string())?,
             };
-            let opts = SyncOptions { project, genie_home: self.genie_home.clone(), path: None, now: None };
+            let opts = SyncOptions { project, genie_home: self.genie_home.clone(), path: None, now: None, full: false };
             Ok(match sync(&opts) {
                 Ok(report) => PartOutput { text: json!(report).to_string(), is_error: false },
                 Err(e) => PartOutput { text: e.to_string(), is_error: true },

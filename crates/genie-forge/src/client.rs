@@ -151,35 +151,24 @@ impl Cli {
     }
 
     /// Every PR/MR updated at or after `since` (all of them without one), newest first.
-    pub fn list(&self, since: Option<i64>) -> Result<Vec<Pr>, Error> {
-        let mut prs = Vec::new();
-        for page in 1.. {
-            let endpoint = match self.forge {
-                Forge::Github => {
-                    format!(
-                        "repos/{}/pulls?state=all&sort=updated&direction=desc&per_page={PAGE}&page={page}",
-                        self.repo
-                    )
-                }
-                Forge::Gitlab => {
-                    let after = since.map_or(String::new(), |s| format!("&updated_after={}", rfc3339(s)));
-                    format!(
-                        "projects/{}/merge_requests?state=all&order_by=updated_at&sort=desc&per_page={PAGE}&page={page}{after}",
-                        self.repo.replace('/', "%2F")
-                    )
-                }
-            };
-            let reply = self.api(&endpoint)?;
-            let items = reply.as_array().ok_or_else(|| Error::Reply(format!("{endpoint}: the reply is not a list")))?;
-            for item in items {
-                prs.push(Pr::from_reply(self.forge, item)?);
+    /// One page of PRs/MRs, newest-updated first (`PAGE` per page). GitLab is asked for those
+    /// updated after `floor`; GitHub has no such filter, so [`last_page`] stops the paging instead.
+    pub fn list_page(&self, page: usize, floor: Option<i64>) -> Result<Vec<Pr>, Error> {
+        let endpoint = match self.forge {
+            Forge::Github => {
+                format!("repos/{}/pulls?state=all&sort=updated&direction=desc&per_page={PAGE}&page={page}", self.repo)
             }
-            let older = since.is_some_and(|s| prs.last().is_some_and(|p| p.updated() < s));
-            if items.len() < PAGE || older {
-                break;
+            Forge::Gitlab => {
+                let after = floor.map_or(String::new(), |s| format!("&updated_after={}", rfc3339(s)));
+                format!(
+                    "projects/{}/merge_requests?state=all&order_by=updated_at&sort=desc&per_page={PAGE}&page={page}{after}",
+                    self.repo.replace('/', "%2F")
+                )
             }
-        }
-        Ok(prs)
+        };
+        let reply = self.api(&endpoint)?;
+        let items = reply.as_array().ok_or_else(|| Error::Reply(format!("{endpoint}: the reply is not a list")))?;
+        items.iter().map(|item| Pr::from_reply(self.forge, item)).collect()
     }
 
     /// `pushed_after_open` for a merged PR/MR: the commits pushed to it after it opened, from the
@@ -392,6 +381,12 @@ impl Pr {
 /// Unix seconds as RFC 3339 UTC.
 pub fn rfc3339(secs: i64) -> String {
     genie_tasks::state::rfc3339(u64::try_from(secs).unwrap_or(0))
+}
+
+/// Whether a listing stops after this page: a short page, or one whose last (oldest) PR was
+/// updated before `floor`, so every later page is older still.
+pub fn last_page(page: &[Pr], floor: Option<i64>) -> bool {
+    page.len() < PAGE || floor.is_some_and(|f| page.last().is_some_and(|p| p.updated() < f))
 }
 
 /// How two timestamps order once each is read as the interval its precision allows.
