@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
 import {
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -406,6 +407,291 @@ describe('stale files (A19)', () => {
     expect(lines[0]).toBe(
       `herdr-mod: retired assets/tasks.svg — no longer shipped, modified locally; previous contents backed up to ${backupRoot}`,
     );
+  });
+});
+
+/**
+ * Review fix1 HIGH-1: a symlink (or any non-directory) at any directory
+ * component below a configured root is refused and left in place, never
+ * traversed. Each fixture points the redirect at an `outside` tree and asserts
+ * that tree and the install record are unchanged.
+ */
+describe('redirected paths are refused, never traversed (fix1 HIGH-1)', () => {
+  let outside: string;
+  const OWNER = 'outside owner data\n';
+
+  beforeEach(() => {
+    outside = join(root, 'outside');
+    mkdirSync(outside, { recursive: true });
+  });
+
+  function plantOutside(files: Record<string, string>): void {
+    for (const [path, content] of Object.entries(files)) {
+      mkdirSync(dirname(join(outside, path)), { recursive: true });
+      writeFileSync(join(outside, path), content);
+    }
+  }
+
+  function failsWithNothingWritten(lines: string[], redirected: string): void {
+    expect(lines.at(-1)).toContain(`Herdr mod install failed: ${redirected} is not a physical directory`);
+  }
+
+  test('a symlinked payload mod root is refused: nothing is copied from outside the payload', () => {
+    writeRecord();
+    plantOutside({ 'mod.json': '{"name":"not-genie"}\n', 'main.js': OWNER });
+    mkdirSync(dirname(payload), { recursive: true });
+    symlinkSync(outside, payload);
+    const before = snapshot(outside);
+    const lines: string[] = [];
+
+    const exitCode = capturingExitCode(() => expect(converge({ lines }).status).toBe('failed'));
+
+    expect(exitCode).toBe(1);
+    failsWithNothingWritten(lines, join(genieHome, 'plugins', 'genie-herdr'));
+    expect(existsSync(join(herdrAppHome, 'mods'))).toBe(false);
+    expect(snapshot(outside)).toEqual(before);
+    expect(rawRecordField()).toBeUndefined();
+  });
+
+  test('a symlinked mods root is refused before any write', () => {
+    writeRecord();
+    deliver();
+    plantOutside({ 'genie-herdr/main.js': OWNER });
+    symlinkSync(outside, join(herdrAppHome, 'mods'));
+    const before = snapshot(outside);
+    const lines: string[] = [];
+
+    const exitCode = capturingExitCode(() => expect(converge({ lines }).status).toBe('failed'));
+
+    expect(exitCode).toBe(1);
+    failsWithNothingWritten(lines, join(herdrAppHome, 'mods'));
+    expect(snapshot(outside)).toEqual(before);
+    expect(rawRecordField()).toBeUndefined();
+  });
+
+  test('a symlinked mod root is refused before any write, and a recorded install is left as recorded', () => {
+    writeRecord();
+    deliver();
+    converge();
+    const field = rawRecordField();
+    rmSync(modDir, { recursive: true, force: true });
+    plantOutside({ 'main.js': OWNER, 'data.js': MOD_FILES['data.js'] ?? '' });
+    symlinkSync(outside, modDir);
+    const before = snapshot(outside);
+    const lines: string[] = [];
+
+    const exitCode = capturingExitCode(() => expect(converge({ lines }).status).toBe('failed'));
+
+    expect(exitCode).toBe(1);
+    failsWithNothingWritten(lines, join(herdrAppHome, 'mods', 'genie-herdr'));
+    expect(snapshot(outside)).toEqual(before);
+    expect(rawRecordField()).toBe(field);
+  });
+
+  test('a symlinked nested directory preserves the file behind it and keeps its recorded receipt', () => {
+    writeRecord();
+    deliver();
+    converge();
+    const recordedSvg = readSkillsInstallRecord(genieHome)?.herdrMod?.files['assets/tasks.svg'];
+    rmSync(join(modDir, 'assets'), { recursive: true, force: true });
+    plantOutside({ 'tasks.svg': OWNER });
+    symlinkSync(outside, join(modDir, 'assets'));
+    deliver({ ...MOD_FILES, 'assets/tasks.svg': '<svg id="v2"/>\n' });
+    const before = snapshot(outside);
+    const lines: string[] = [];
+
+    expect(converge({ lines }).status).toBe('installed');
+
+    expect(snapshot(outside)).toEqual(before);
+    expect(lines).toContain(
+      `herdr-mod: preserved assets/tasks.svg — ${join(modDir, 'assets')} is not a physical directory; left in place`,
+    );
+    expect(readSkillsInstallRecord(genieHome)?.herdrMod?.files['assets/tasks.svg']).toBe(recordedSvg);
+    expect(readFileSync(join(modDir, 'main.js'), 'utf8')).toBe(MOD_FILES['main.js']);
+  });
+
+  test('a symlinked parent of a stale recorded file is preserved: nothing outside is deleted', () => {
+    writeRecord();
+    deliver();
+    converge();
+    const recordedSvg = readSkillsInstallRecord(genieHome)?.herdrMod?.files['assets/tasks.svg'];
+    rmSync(join(modDir, 'assets'), { recursive: true, force: true });
+    // Byte-equal to the recorded file, so without the chain check it would be retired.
+    plantOutside({ 'tasks.svg': MOD_FILES['assets/tasks.svg'] ?? '' });
+    symlinkSync(outside, join(modDir, 'assets'));
+    const { 'assets/tasks.svg': _dropped, ...rest } = MOD_FILES;
+    deliver(rest);
+    const before = snapshot(outside);
+    const lines: string[] = [];
+
+    expect(converge({ lines }).status).toBe('installed');
+
+    expect(snapshot(outside)).toEqual(before);
+    expect(readSkillsInstallRecord(genieHome)?.herdrMod?.files['assets/tasks.svg']).toBe(recordedSvg);
+    expect(lines.some((line) => line.startsWith('herdr-mod: preserved assets/tasks.svg — no longer shipped'))).toBe(
+      true,
+    );
+    expect(backupRoots()).toEqual([]);
+  });
+
+  test('a planted staging-name symlink is never followed: staging is a private mkdtemp dir', () => {
+    writeRecord();
+    deliver();
+    mkdirSync(modDir, { recursive: true });
+    const victim = join(outside, 'victim.txt');
+    writeFileSync(victim, OWNER);
+    // Every name the pre-fix `.genie-staging-<pid>-<Date.now()>` scheme could
+    // pick in the next few seconds.
+    const start = Date.now();
+    const planted: string[] = [];
+    for (let at = start; at < start + 4000; at += 1) {
+      const name = join(modDir, `.genie-staging-${process.pid}-${at}`);
+      symlinkSync(victim, name);
+      planted.push(name);
+    }
+
+    expect(converge().status).toBe('installed');
+
+    expect(readFileSync(victim, 'utf8')).toBe(OWNER);
+    expect(planted.every((name) => lstatSync(name).isSymbolicLink())).toBe(true);
+    for (const [path, content] of Object.entries(MOD_FILES)) {
+      expect(readFileSync(join(modDir, path), 'utf8')).toBe(content);
+    }
+    // The private staging dir is gone afterwards.
+    expect(
+      readdirSync(modDir).filter((name) => name.startsWith('.genie-staging-') && !name.includes(`-${process.pid}-`)),
+    ).toEqual([]);
+  });
+
+  test('symlinked configured roots and system aliases are followed, by policy', () => {
+    // The operator chose GENIE_HOME and HERDR_APP_HOME; a symlink AT them (and
+    // the macOS /var -> /private/var alias every tmpdir here sits under) is
+    // resolved, not refused.
+    writeRecord();
+    deliver();
+    const genieLink = join(root, 'genie-home-link');
+    const appLink = join(root, 'herdr-app-link');
+    symlinkSync(genieHome, genieLink);
+    symlinkSync(herdrAppHome, appLink);
+
+    const result = runHerdrModChannelConvergence({
+      selection: 'auto',
+      version: VERSION,
+      genieHome: genieLink,
+      herdrAppHome: appLink,
+      log: () => undefined,
+      now: () => STAMP,
+    });
+
+    expect(result.status).toBe('installed');
+    expect(snapshot(modDir)).toEqual(MOD_FILES);
+    expect(readSkillsInstallRecord(genieHome)?.herdrMod?.dir).toBe(join(appLink, 'mods', 'genie-herdr'));
+  });
+});
+
+/**
+ * Review fix1 HIGH-2: `state-backups/` is an archive. Every run allocates a
+ * FRESH root and never writes into an existing one, whatever is at its name.
+ */
+describe('archives are allocated exclusively (fix1 HIGH-2)', () => {
+  const base = 'herdr-mod-collision-2026-11-04T12-34-56-000Z';
+
+  function backupRootPath(name: string): string {
+    return join(genieHome, 'state-backups', name);
+  }
+
+  test('two runs with the same timestamp keep both earlier archives byte-identical', () => {
+    writeRecord();
+    deliver();
+    converge();
+    writeFileSync(join(modDir, 'main.js'), 'owner version one\n');
+    converge();
+    writeFileSync(join(modDir, 'main.js'), 'owner version two\n');
+    converge();
+
+    expect(backupRoots()).toEqual([base, `${base}-1`]);
+    expect(snapshot(backupRootPath(base))).toEqual({ 'main.js': 'owner version one\n' });
+    expect(snapshot(backupRootPath(`${base}-1`))).toEqual({ 'main.js': 'owner version two\n' });
+  });
+
+  test('an archive root name that is already a symlink is skipped, never written through', () => {
+    writeRecord();
+    deliver();
+    converge();
+    const outside = join(root, 'outside-archive');
+    mkdirSync(outside, { recursive: true });
+    writeFileSync(join(outside, 'main.js'), 'outside owner data\n');
+    mkdirSync(join(genieHome, 'state-backups'), { recursive: true });
+    symlinkSync(outside, backupRootPath(base));
+    writeFileSync(join(modDir, 'main.js'), 'owner edit\n');
+
+    expect(converge().status).toBe('installed');
+
+    expect(lstatSync(backupRootPath(base)).isSymbolicLink()).toBe(true);
+    expect(snapshot(outside)).toEqual({ 'main.js': 'outside owner data\n' });
+    expect(snapshot(backupRootPath(`${base}-1`))).toEqual({ 'main.js': 'owner edit\n' });
+  });
+
+  test('an existing root holding a symlinked archive file is never reused', () => {
+    writeRecord();
+    deliver();
+    converge();
+    const victim = join(root, 'victim.txt');
+    writeFileSync(victim, 'outside owner data\n');
+    mkdirSync(backupRootPath(base), { recursive: true });
+    symlinkSync(victim, join(backupRootPath(base), 'main.js'));
+    writeFileSync(join(modDir, 'main.js'), 'owner edit\n');
+
+    expect(converge().status).toBe('installed');
+
+    expect(readFileSync(victim, 'utf8')).toBe('outside owner data\n');
+    expect(readdirSync(backupRootPath(base))).toEqual(['main.js']);
+    expect(lstatSync(join(backupRootPath(base), 'main.js')).isSymbolicLink()).toBe(true);
+    expect(snapshot(backupRootPath(`${base}-1`))).toEqual({ 'main.js': 'owner edit\n' });
+  });
+
+  test('a backup that cannot be made fails the channel and keeps the original target', () => {
+    writeRecord();
+    deliver();
+    converge();
+    const field = rawRecordField();
+    writeFileSync(join(genieHome, 'state-backups'), 'not a directory\n');
+    writeFileSync(join(modDir, 'main.js'), 'owner edit\n');
+    const lines: string[] = [];
+
+    const exitCode = capturingExitCode(() => expect(converge({ lines }).status).toBe('failed'));
+
+    expect(exitCode).toBe(1);
+    expect(readFileSync(join(modDir, 'main.js'), 'utf8')).toBe('owner edit\n');
+    expect(rawRecordField()).toBe(field);
+    expect(lines.at(-1)).toMatch(/^Herdr mod install failed: could not archive: .+\. Run: genie update$/);
+  });
+});
+
+describe('Herdr-generated files are never retired (fix1 MEDIUM-1)', () => {
+  test('a valid record naming gpui-kit.d.ts and jsconfig.json loses the claim and the files stay', () => {
+    const generated = { 'gpui-kit.d.ts': 'declare module "gpui-kit";\n', 'jsconfig.json': '{"compilerOptions":{}}\n' };
+    deliver();
+    mkdirSync(modDir, { recursive: true });
+    for (const [path, content] of Object.entries(generated)) writeFileSync(join(modDir, path), content);
+    // Recorded digests equal the on-disk bytes: without the exclusion they read
+    // as genie's own unmodified stale files and would be retired.
+    writeRecord({
+      herdrMod: {
+        dir: modDir,
+        ref: 'v6.261104.2',
+        files: Object.fromEntries(Object.entries(generated).map(([path, content]) => [path, digest(content)])),
+      },
+    });
+
+    expect(converge().status).toBe('installed');
+
+    for (const [path, content] of Object.entries(generated)) {
+      expect(readFileSync(join(modDir, path), 'utf8')).toBe(content);
+    }
+    const files = readSkillsInstallRecord(genieHome)?.herdrMod?.files ?? {};
+    expect(Object.keys(files).sort()).toEqual(Object.keys(MOD_FILES).sort());
+    expect(backupRoots()).toEqual([]);
   });
 });
 
