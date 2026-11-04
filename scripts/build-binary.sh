@@ -229,6 +229,7 @@ for required in \
   "plugins/dsh-workflow-loader/cordis.patch.yml" \
   "plugins/dsh-workflow-loader/README.md" \
   "plugins/dsh-workflow-loader/dist/index.js" \
+  "plugins/genie-herdr/mod.json" \
   "plugins/genie-rs/bin/genie-rs"; do
   [[ -f "${STAGE}/${required}" ]] || { echo "error: release payload missing ${required}" >&2; exit 1; }
 done

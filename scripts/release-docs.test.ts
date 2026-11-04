@@ -626,6 +626,9 @@ describe('Group E release and documentation contracts', () => {
     expect(script).toContain('export "CC_${RUST_TARGET//-/_}=musl-gcc"');
     expect(script).toContain('install -m 0755 "${GENIE_RS_BUILT}" "${STAGE}/plugins/genie-rs/bin/genie-rs"');
     expect(script).toContain('"plugins/genie-rs/bin/genie-rs"; do');
+    // The Tasks board mod ships inside the same plugins member: a payload without its manifest
+    // fails the build. Listed just before genie-rs, which stays the last entry.
+    expect(script).toContain('  "plugins/genie-herdr/mod.json" \\\n  "plugins/genie-rs/bin/genie-rs"; do');
     expect(script).toContain('must be mode 0755, not');
     // Staged after the plugins tree is copied, so the copy cannot clobber it.
     expect(script.indexOf('install -m 0755')).toBeGreaterThan(script.indexOf('cp -R "${REPO_ROOT}/plugins"'));
