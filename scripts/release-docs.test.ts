@@ -137,74 +137,70 @@ describe('Group E release and documentation contracts', () => {
     expect(read('.github/workflows/ci.yml')).toContain('workflow_dispatch:');
   });
 
-  test('privileged reusable workflows admit only the exact channel-specific main caller', () => {
+  // Owner decision 2026-11-05: the release pipeline carries no caller
+  // admission, no approval environment and no provenance guard. Pin the
+  // absence so the gates cannot creep back without a decision.
+  test('the release chain carries no caller-admission, approval or provenance-guard job', () => {
     for (const path of ['.github/workflows/sign-attest.yml', '.github/workflows/release-publish.yml']) {
       const workflow = read(path);
-      expect(workflow).toContain(
-        'EXPECTED_STABLE_CALLER: automagik-dev/genie/.github/workflows/release.yml@refs/heads/main',
-      );
-      expect(workflow).toContain(
-        'EXPECTED_AUTOMATED_CALLER: automagik-dev/genie/.github/workflows/version.yml@refs/heads/main',
-      );
-      expect(workflow).toContain('EXPECTED_EVENT=workflow_dispatch');
-      expect(workflow).toContain('EXPECTED_EVENT=workflow_run');
-      expect(workflow).toContain('"$CALLER_REF" != refs/heads/main');
-      expect(workflow).toContain('"$CALLER_WORKFLOW_REF" != "$EXPECTED_CALLER"');
-      expect(workflow).toContain('"$CALLER_WORKFLOW_SHA" != "$CALLER_SHA"');
-      expect(workflow).toContain('needs: admit');
+      expect(workflow).not.toContain('\n  admit:');
+      expect(workflow).not.toContain('needs: admit');
+      expect(workflow).not.toContain('needs.admit.');
+      expect(workflow).not.toContain('EXPECTED_STABLE_CALLER');
+      expect(workflow).not.toContain('EXPECTED_AUTOMATED_CALLER');
+      expect(workflow).not.toContain('release-caller.untrusted');
     }
-
-    // sign-attest's admit needs no token at all. release-publish's admit holds
-    // exactly contents:read — the least that lets the replay guard ask whether
-    // the tag already carries a published release — and never write, so an
-    // unproven caller still cannot mutate anything.
-    const signAdmit = read('.github/workflows/sign-attest.yml').split('\n  admit:')[1]?.split('\n  prepare:')[0] ?? '';
-    expect(signAdmit).toContain('permissions: {}');
-    expect(signAdmit).not.toContain('contents: write');
-    expect(signAdmit).not.toContain('id-token:');
-    const publishAdmit =
-      read('.github/workflows/release-publish.yml')
-        .split('\n  admit:')[1]
-        ?.split('\n  prepare-delivery-evidence:')[0] ?? '';
-    expect(publishAdmit).toContain('permissions:\n      # Read-only');
-    expect(publishAdmit).toContain('contents: read');
-    expect(publishAdmit).not.toContain('contents: write');
-    expect(publishAdmit).not.toContain('id-token:');
+    const release = read('.github/workflows/release.yml');
+    for (const removed of ['\n  guard:', '\n  approve-stable:', '\n  authorize:']) {
+      expect(release).not.toContain(removed);
+    }
+    expect(release).not.toContain('scripts/release-guard.sh');
+    expect(release).not.toContain('name: production');
+    const build = release.split('\n  build:')[1]?.split('\n  sign-attest:')[0] ?? '';
+    expect(build).not.toContain('needs:');
+    expect(build).not.toContain('if:');
+    expect(
+      read('.github/workflows/sign-attest.yml').split('\n  prepare:')[1]?.split('\n  provenance:')[0],
+    ).not.toContain('needs:');
   });
 
   // A published release is immutable and this pipeline can no longer replay
   // one (asset fanout grew past the 12 assets pre-fanout releases carry, and
   // released_at became deterministic), so re-dispatching a published version
-  // fails only AFTER the release is locked. Admit must refuse it up front,
-  // while still admitting a draft so an interrupted run can finish. #2674.
-  test('admit refuses re-dispatch of a version that already has a published release', () => {
-    const admit =
+  // fails only AFTER the release is locked. The first step of the chain must
+  // refuse it up front, while still admitting a draft so an interrupted run can
+  // finish. #2674. It moved from the deleted admit job, verbatim.
+  test('prepare-delivery-evidence refuses re-dispatch of a version that already has a published release', () => {
+    const prepare =
       read('.github/workflows/release-publish.yml')
-        .split('\n  admit:')[1]
-        ?.split('\n  prepare-delivery-evidence:')[0] ?? '';
-    expect(admit).toContain('name: Refuse re-dispatch of an already published release');
-    expect(admit).toContain('GH_TOKEN: ${{ github.token }}');
-    expect(admit).toContain('gh api "repos/${RELEASE_REPOSITORY}/releases/tags/v${INPUT_VERSION}"');
+        .split('\n  prepare-delivery-evidence:')[1]
+        ?.split('\n  attest-delivery-evidence:')[0] ?? '';
+    expect(prepare).toContain('name: Refuse re-dispatch of an already published release');
+    expect(prepare).toContain('GH_TOKEN: ${{ github.token }}');
+    expect(prepare).toContain('gh api "repos/${RELEASE_REPOSITORY}/releases/tags/v${INPUT_VERSION}"');
     // non-draft is the refusal, and the refusal cites the rule + issue
-    expect(admit).toContain(`jq -r '.draft'`);
-    expect(admit).toContain('release-replay.published');
-    expect(admit).toContain('allocate a fresh version');
-    expect(admit).toContain('automagik-dev/genie#2674');
+    expect(prepare).toContain(`jq -r '.draft'`);
+    expect(prepare).toContain('release-replay.published');
+    expect(prepare).toContain('allocate a fresh version');
+    expect(prepare).toContain('automagik-dev/genie#2674');
     // ambiguous API failures fail closed rather than silently admitting
-    expect(admit).toContain('release-replay.unknown');
-    expect(admit).toContain(`grep -q 'HTTP 404'`);
+    expect(prepare).toContain('release-replay.unknown');
+    expect(prepare).toContain(`grep -q 'HTTP 404'`);
     // the probe retries transient API failures (bounded), never permission
     // failures — behavior pinned by release-replay-guard.test.ts
-    expect(admit).toContain('for attempt in 1 2 3 4; do');
-    expect(admit).toContain('release_probe=unknown');
-    // the guard runs only after the caller is proven
-    expect(admit.indexOf('name: Refuse re-dispatch of an already published release')).toBeGreaterThan(
-      admit.indexOf('name: Bind caller workflow and control commit'),
+    expect(prepare).toContain('for attempt in 1 2 3 4; do');
+    expect(prepare).toContain('release_probe=unknown');
+    // the guard runs before any other step of the job, and the job holds no write
+    expect(prepare.indexOf('name: Refuse re-dispatch of an already published release')).toBeLessThan(
+      prepare.indexOf('uses: actions/checkout@'),
     );
+    expect(prepare).not.toContain('contents: write');
+    expect(prepare).not.toContain('id-token:');
   });
 
   // The publish job used to keep its own CHANNEL="${INPUT_CHANNEL:-}" default
-  // to stable. admit already rejects an empty/unknown channel, so it was dead;
+  // to stable. delivery-evidence-compatibility rejects an empty/unknown
+  // channel (admit did, before 2026-11-05), so it was dead;
   // had it ever fired, publish would have uploaded a 36-asset stable inventory
   // that finalize aborts on, leaving a published-but-unfinalized release. #2675
   test('publish reads the channel input directly instead of defaulting it', () => {
@@ -284,8 +280,7 @@ describe('Group E release and documentation contracts', () => {
     const attest = publish.indexOf('id: endorse');
     const materialize = publish.indexOf('bash scripts/materialize-release-subjects.sh');
     const descriptorBuild = publish.indexOf('bun scripts/build-delivery-evidence.ts');
-    const compatibilityJob =
-      publish.split('\n  delivery-evidence-compatibility:')[1]?.split('\n  skills-install-smoke:')[0] ?? '';
+    const compatibilityJob = publish.split('\n  delivery-evidence-compatibility:')[1]?.split('\n  publish:')[0] ?? '';
     const publishJob = publish.split('\n  publish:')[1]?.split('\n  manifests:')[0] ?? '';
     const releaseUpload = publish.indexOf('bash scripts/reconcile-release-assets.sh');
     const manifestsJob = publish.split('\n  manifests:')[1]?.split('\n  finalize:')[0] ?? '';
@@ -295,7 +290,7 @@ describe('Group E release and documentation contracts', () => {
     expect(descriptorBuild).toBeGreaterThan(materialize);
     expect(attest).toBeGreaterThan(descriptorBuild);
     expect(releaseUpload).toBeGreaterThan(attest);
-    expect(compatibilityJob).toContain('needs: [admit, attest-delivery-evidence]');
+    expect(compatibilityJob).toContain('needs: [attest-delivery-evidence]');
     expect(compatibilityJob).toContain('permissions:\n      contents: read');
     expect(compatibilityJob).not.toContain('id-token:');
     expect(compatibilityJob).not.toContain('attestations:');
@@ -304,8 +299,9 @@ describe('Group E release and documentation contracts', () => {
     expect(compatibilityJob).toContain('bun scripts/verify-delivery-evidence-pack.ts');
     expect(compatibilityJob).toContain('name: delivery-candidate-manifests');
     expect(publishJob).not.toContain('- codex-dogfood-completeness');
-    expect(publishJob).toContain('- stable-release-security-gate');
-    expect(publishJob).toContain("needs.stable-release-security-gate.result == 'success'");
+    expect(publishJob).toContain('- delivery-evidence-compatibility');
+    expect(publishJob).toContain("needs.delivery-evidence-compatibility.result == 'success'");
+    expect(publishJob).not.toContain('- stable-release-security-gate');
     expect(publishJob).toContain('name: delivery-candidate-manifests');
     expect(manifestsJob).toContain('needs: finalize');
     expect(manifestsJob).toContain('git push origin "HEAD:refs/heads/main"');
@@ -327,26 +323,31 @@ describe('Group E release and documentation contracts', () => {
    * Wish `skills-everywhere-b`, G6: the `Codex standalone task/board dogfood`
    * matrix and its completeness roll-up were deleted with the Codex plugin
    * subsystem they exercised. What survives is the manifest-derived inventory
-   * they were built on — `scripts/candidate-dogfood-matrix.ts` is DELIBERATELY
-   * kept, because `prepare-delivery-evidence` derives the platform list and the
-   * update-path projection from it and `stable-release-security-gate`
-   * (a `publish.needs` edge) re-derives and `cmp`s it — plus the independent
-   * security gate. This test now pins both halves and the removal itself.
+   * they were built on — `scripts/candidate-dogfood-matrix.ts` is kept because
+   * `prepare-delivery-evidence` derives the platform list from it. The owner
+   * decision of 2026-11-05 then removed the independent security gate and both
+   * candidate smokes; publish now waits on the delivery evidence alone.
    */
-  test('the manifest-derived inventory and the independent security gate block publication', () => {
+  test('the manifest-derived inventory and the delivery evidence block publication', () => {
     const workflow = read('.github/workflows/release-publish.yml');
     const prepare =
       workflow.split('\n  prepare-delivery-evidence:')[1]?.split('\n  attest-delivery-evidence:')[0] ?? '';
-    const security = workflow.split('\n  stable-release-security-gate:')[1]?.split('\n  publish:')[0] ?? '';
     const publish = workflow.split('\n  publish:')[1]?.split('\n  manifests:')[0] ?? '';
 
-    // The two retired jobs are gone, and nothing depends on them.
-    expect(workflow).not.toContain('\n  codex-native-dogfood:');
-    expect(workflow).not.toContain('\n  codex-dogfood-completeness:');
-    expect(workflow).not.toContain('needs.codex-native-dogfood');
-    expect(workflow).not.toContain('needs.codex-dogfood-completeness');
-    expect(workflow).not.toContain('- codex-dogfood-completeness');
-    // ...and so are the three release controls deleted with them.
+    // The retired jobs are gone, and nothing depends on them.
+    for (const removed of [
+      'codex-native-dogfood',
+      'codex-dogfood-completeness',
+      'admit',
+      'skills-install-smoke',
+      'release-update-path-smoke',
+      'stable-release-security-gate',
+    ]) {
+      expect(workflow).not.toContain(`\n  ${removed}:`);
+      expect(workflow).not.toContain(`needs.${removed}.`);
+      expect(workflow).not.toContain(`- ${removed}\n`);
+    }
+    // ...and so are the three release controls deleted with the dogfood matrix.
     expect(workflow).not.toContain('tests/support/codex-dogfood-entry-runner.ts');
     expect(workflow).not.toContain('scripts/validate-live-dogfood-evidence.ts');
     expect(workflow).not.toContain('scripts/validate-dogfood-matrix-evidence.ts');
@@ -359,60 +360,21 @@ describe('Group E release and documentation contracts', () => {
     expect(prepare).toContain('for platform in "${MANIFEST_PLATFORMS[@]}"');
     expect(prepare).not.toContain('PLATFORMS=(linux-x64-glibc');
     expect(prepare).toContain('candidate_manifest_sha256=${CANDIDATE_MANIFEST_SHA256}');
-    expect(prepare).toContain('name: codex-dogfood-candidate-matrix');
-    // release-update-path-smoke downloads this exact artifact for its N-to-T leg.
-    expect(prepare).toContain('name: codex-dogfood-previous-release');
     expect(prepare).toContain('bash scripts/verify-release.sh --local');
     expect(prepare).not.toContain('--previous-descriptor');
 
-    // The machine security proof is read-only, protected-control-derived, and
-    // binds the exact candidate digest.
-    expect(security).toContain('if: ${{ always() }}');
-    expect(security).toContain('permissions:\n      contents: read\n      attestations: read');
-    expect(security).toContain('ref: ${{ github.sha }}');
-    expect(security).toContain('bash scripts/verify-release.sh --local');
-    expect(security).toContain('bash scripts/release-generic-provenance.sh verify-exact-subject');
-    expect(security).toContain('gh attestation verify "$artifact_path"');
-    expect(security).toContain('--predicate-type "https://github.com/${RELEASE_REPOSITORY}/release-tarballs/v1"');
-    expect(security).toContain('--source-digest "$CONTROL_SHA"');
-    expect(security).toContain('--signer-digest "$CONTROL_SHA"');
-    expect(security).toContain('bash scripts/release-native-predicate.sh verify-exact-subject');
-    expect(security).toContain('RUN_ID: ${{ github.run_id }}');
-    expect(security).toContain('RUN_ATTEMPT: ${{ github.run_attempt }}');
-    expect(security).toContain('generic/native artifact digest disagreement');
-    expect(security).toContain('version: ([$entries[].native.version] | unique |');
-    expect(security).toContain('sourceSha: ([$entries[].native.sourceSha] | unique |');
-    const securitySummary = security.split('          jq -cs \\\n')[1] ?? '';
-    expect(securitySummary).not.toContain('--arg sourceSha "$SOURCE_SHA"');
-    expect(security).toContain('--print-provenance > "$verified_provenance"');
-    expect(security).toContain('scripts/release-guard.test.ts');
-    expect(security).toContain(
-      'EXPECTED_MANIFEST_SHA256: ${{ needs.prepare-delivery-evidence.outputs.candidate_manifest_sha256 }}',
-    );
-    expect(security).toContain('bun scripts/candidate-dogfood-matrix.ts');
-    expect(security).not.toContain('contents: write');
-    expect(security).not.toContain('id-token: write');
-
-    // All channels use every surviving gate. An unavailable/skipped gate is
-    // never equivalent to success, and the write-capable publication job stays
-    // shut. Exactly six edges — one fewer than before G6, and only that one.
+    // An unavailable/skipped gate is never equivalent to success, and the
+    // write-capable publication job stays shut. Exactly two edges.
     expect(publish).toContain('always() &&');
-    for (const gate of [
-      'admit',
-      'attest-delivery-evidence',
-      'delivery-evidence-compatibility',
-      'skills-install-smoke',
-      'release-update-path-smoke',
-      'stable-release-security-gate',
-    ]) {
+    for (const gate of ['attest-delivery-evidence', 'delivery-evidence-compatibility']) {
       expect(publish).toContain(`- ${gate}`);
       expect(publish).toContain(`needs.${gate}.result == 'success'`);
     }
-    expect(publish.split('\n').filter((line) => /^\s+- [a-z][a-z0-9-]*$/.test(line))).toHaveLength(6);
+    expect(publish.split('\n').filter((line) => /^\s+- [a-z][a-z0-9-]*$/.test(line))).toHaveLength(2);
     expect(publish).not.toContain("inputs.channel == 'stable'");
   });
 
-  test('stable approval is explicit while dev remains automated', () => {
+  test('stable is a manual dispatch with no approval step while dev remains automated', () => {
     const release = read('.github/workflows/release.yml');
     const version = read('.github/workflows/version.yml');
     const manualInputs = release.split('workflow_dispatch:')[1]?.split('workflow_call:')[0] ?? '';
@@ -420,20 +382,13 @@ describe('Group E release and documentation contracts', () => {
     expect(release).toContain('workflow_call:');
     expect(manualChannel).toContain('- stable');
     expect(manualChannel).not.toContain('- dev');
-    expect(release).toContain('CALLER_WORKFLOW_REF: ${{ github.workflow_ref }}');
-    expect(release).toContain('CALLER_WORKFLOW_SHA: ${{ github.workflow_sha }}');
     expect(release).toContain('group: release-${{ inputs.version }}');
     expect(release).toContain('queue: max');
     expect(release).toContain('cancel-in-progress: false');
-    expect(release).toContain('approve-stable:');
-    expect(release).toContain("if: inputs.channel == 'stable'");
-    expect(release).toContain('name: production');
-    expect(release).toContain('needs: [guard, approve-stable]');
-    expect(release).toContain("(inputs.channel != 'stable' || needs.approve-stable.result == 'success')");
-    expect(release).not.toContain("&& 'production' || ''");
-    expect(release).toContain('DISPATCH_ACTOR: ${{ github.actor }}');
-    expect(release).toContain('TRIGGERING_ACTOR: ${{ github.triggering_actor }}');
-    expect(release).toContain('RUN_ATTEMPT: ${{ github.run_attempt }}');
+    // No approval environment and no identity guard (owner decision 2026-11-05).
+    expect(release).not.toContain('approve-stable');
+    expect(release).not.toContain('environment:');
+    expect(release).not.toContain('needs: [guard');
 
     expect(version).toContain('release-trigger.stable_manual_approval_required');
     expect(version).toContain("steps.context.outputs.branch == 'main'");
@@ -723,19 +678,16 @@ describe('Group E release and documentation contracts', () => {
     expect(verifyStep).toContain('TRIGGER_SHA:');
     expect(verifyStep).toContain('${{ inputs.trigger_sha }}');
 
-    const gateStep = stepEnvFor(publish, 'generic_expected_sha');
-    expect(gateStep).toContain('TRIGGER_SHA:');
+    // The publish-side consumer (the stable-release-security-gate re-verify)
+    // left with that gate on 2026-11-05. release.yml still passes the input,
+    // so release-publish.yml must keep declaring it or the call fails to start.
+    expect(publish).toContain('trigger_sha:');
+    expect(publish).not.toContain('generic_expected_sha');
 
     // The verifier compares the trigger commit, and refuses to run exact
     // verification without a well-formed one.
     expect(verifier).toContain('$run.head_sha == $trigger_sha');
     expect(verifier).not.toContain('$run.head_sha == $source_sha');
-
-    // Stable records source_sha directly; automated channels cannot, so the
-    // generic descriptor is compared per channel.
-    expect(publish).toContain('generic_expected_sha="$SOURCE_SHA"');
-    expect(publish).toContain('generic_expected_sha="$TRIGGER_SHA"');
-    expect(publish).toContain('.sourceSha == $genericSourceSha');
   });
 
   test('release create and promotion paths retain the one-time convergence caveat', () => {

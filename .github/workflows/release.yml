@@ -1,11 +1,10 @@
 name: Release
 
-# Trusted release orchestrator. The workflow itself is always dispatched on
-# refs/heads/main; a release tag is an explicitly validated source identity,
-# never the workflow/control ref. version.yml supplies the exact tag SHA and
-# successful source CI run. Automated dev calls come only from the
-# trusted local version.yml workflow. Stable is always a first-attempt human
-# dispatch; the production environment then requires a different reviewer.
+# Release orchestrator: build -> sign-attest -> publish. Automated dev releases
+# are called by version.yml with the exact tag SHA and source CI run; stable is
+# a manual dispatch. There is no approval step and no caller/provenance guard
+# (owner decision 2026-11-05): signing, the signed delivery evidence and the
+# production-verifier compatibility check are the release's remaining checks.
 
 on:
   workflow_dispatch:
@@ -73,91 +72,13 @@ permissions:
 
 concurrency:
   # Serialize retries/promotions of one immutable version. Cross-version runs
-  # stay independent so a stable approval wait cannot block automated dev
-  # delivery; manifest reconciliation is monotonic and CAS-retried.
+  # stay independent; manifest reconciliation is monotonic and CAS-retried.
   group: release-${{ inputs.version }}
   queue: max
   cancel-in-progress: false
 
 jobs:
-  guard:
-    name: Bind trusted control + source provenance
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions:
-      contents: read
-      actions: read
-    steps:
-      # This checkout is the workflow/control ref (main), not source_sha. It
-      # loads the guard from the same protected control commit as this workflow.
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-      - name: Require trusted main control and CI-approved tag SHA
-        shell: bash
-        env:
-          EVENT: ${{ github.event_name }}
-          CONTROL_REF: ${{ github.ref }}
-          CONTROL_SHA: ${{ github.sha }}
-          CALLER_WORKFLOW_REF: ${{ github.workflow_ref }}
-          CALLER_WORKFLOW_SHA: ${{ github.workflow_sha }}
-          DISPATCH_ACTOR: ${{ github.actor }}
-          TRIGGERING_ACTOR: ${{ github.triggering_actor }}
-          RUN_ATTEMPT: ${{ github.run_attempt }}
-          VERSION: ${{ inputs.version }}
-          CHANNEL: ${{ inputs.channel }}
-          SOURCE_SHA: ${{ inputs.source_sha }}
-          SOURCE_BRANCH: ${{ inputs.source_branch }}
-          SOURCE_CI_RUN_ID: ${{ inputs.source_ci_run_id }}
-          EXPECTED_REPO: ${{ github.repository }}
-          EXPECTED_WORKFLOW: .github/workflows/ci.yml
-          GH_TOKEN: ${{ github.token }}
-        run: bash scripts/release-guard.sh guard-trusted-release
-
-  # Stable approval is deliberately before build/sign, not only before the
-  # final upload. Keep it in a stable-only job so dev automation never
-  # relies on undocumented empty-environment behavior. Rollout requirement:
-  # production's deployment policy allows protected main, the control ref.
-  approve-stable:
-    needs: guard
-    if: inputs.channel == 'stable'
-    name: Approve stable release identity
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    environment:
-      name: production
-    steps:
-      - name: Record approved identity
-        env:
-          VERSION: ${{ inputs.version }}
-          SOURCE_SHA: ${{ inputs.source_sha }}
-        run: echo "Approved stable v${VERSION} from ${SOURCE_SHA}"
-
-  authorize:
-    needs: [guard, approve-stable]
-    if: >-
-      always() &&
-      needs.guard.result == 'success' &&
-      (inputs.channel != 'stable' || needs.approve-stable.result == 'success')
-    name: Authorize release identity
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - name: Record authorized identity
-        env:
-          VERSION: ${{ inputs.version }}
-          CHANNEL: ${{ inputs.channel }}
-          SOURCE_SHA: ${{ inputs.source_sha }}
-        run: echo "Authorized v${VERSION} (${CHANNEL}) from ${SOURCE_SHA}"
-
   build:
-    needs: authorize
-    # always() + explicit result check: the default success() status is
-    # poisoned transitively by the SKIPPED approve-stable job on dev
-    # (observed 2026-07-20: the v5.260720.4 dev release chain silently skipped
-    # build/sign/publish). authorize alone decides admission.
-    if: always() && needs.authorize.result == 'success'
     uses: ./.github/workflows/build-tarballs.yml
     permissions:
       contents: read
