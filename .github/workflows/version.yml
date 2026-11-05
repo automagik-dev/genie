@@ -19,8 +19,7 @@ name: Version
 # On main promotion triggers, derive a fresh immutable release identity
 # without rewriting the source tree. The successful branch CI run and a new
 # tag at that exact commit produce the human-initiation handoff. A maintainer
-# must start the stable Release workflow, then a different maintainer approves
-# the protected production environment.
+# starts the stable Release workflow by hand; there is no approval step.
 #
 # npm distribution is discontinued (2026-05-09 hard cutover, wish
 # genie-distribution-cutover G6). Operators install via install.sh
@@ -311,12 +310,8 @@ jobs:
       # Each promotion gets a new tag/version. Published GitHub Releases are
       # immutable, so reusing the dev tag would make later evidence/metadata
       # publication impossible. Dev is dispatched automatically below.
-      # Stable deliberately is not: if this
-      # GITHUB_TOKEN-authored workflow initiated the production deployment,
-      # GitHub's prevent-self-review control would exclude only the bot, not the
-      # maintainer who authored/promoted the change. A human workflow_dispatch
-      # makes that human the deployment initiator, so production approval must
-      # come from a different configured reviewer.
+      # Stable is not: a maintainer starts it with a manual workflow_dispatch,
+      # and there is no approval step after that.
       - name: Resolve promoted tag identity
         id: promoted_tag
         if: steps.context.outputs.should_bump == 'false' && steps.promotion.outputs.promoted == 'true'
@@ -341,8 +336,7 @@ jobs:
           echo "source_branch=${{ steps.context.outputs.branch }}" >> "$GITHUB_OUTPUT"
           echo "source_ci_run_id=${{ github.event.workflow_run.id }}" >> "$GITHUB_OUTPUT"
           # main is the only branch that reaches the no-bump path. Stable is
-          # never auto-dispatched: a maintainer starts Release by hand and a
-          # different maintainer approves the protected production environment.
+          # never auto-dispatched: a maintainer starts Release by hand.
           echo "channel=stable" >> "$GITHUB_OUTPUT"
           echo "release_ready=false" >> "$GITHUB_OUTPUT"
 
@@ -367,7 +361,7 @@ jobs:
           SOURCE_CI_RUN_ID: ${{ steps.promoted_tag.outputs.source_ci_run_id }}
         run: |
           set -euo pipefail
-          echo "::notice ::release-trigger.stable_manual_approval_required v${VERSION} passed main CI; a maintainer must start Release and a different maintainer must approve production"
+          echo "::notice ::release-trigger.stable_manual_dispatch_required v${VERSION} passed main CI; a maintainer must start Release by hand (no approval step follows)"
           {
             printf '%s\n' '## Stable release awaiting maintainer initiation'
             printf '%s\n' 'Open **Actions → Release → Run workflow** on `main` and provide:'
@@ -376,7 +370,6 @@ jobs:
             printf '%s\n' "- source_sha: \`${SOURCE_SHA}\`"
             printf '%s\n' '- source_branch: `main`'
             printf '%s\n' "- source_ci_run_id: \`${SOURCE_CI_RUN_ID}\`"
-            printf '%s\n' '' 'The initiator cannot approve the protected production environment.'
           } >> "$GITHUB_STEP_SUMMARY"
 
       # npm distribution was discontinued 2026-05-09 (wish

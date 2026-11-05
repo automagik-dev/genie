@@ -390,7 +390,9 @@ describe('Group E release and documentation contracts', () => {
     expect(release).not.toContain('environment:');
     expect(release).not.toContain('needs: [guard');
 
-    expect(version).toContain('release-trigger.stable_manual_approval_required');
+    expect(version).toContain('release-trigger.stable_manual_dispatch_required');
+    expect(version).not.toContain('approve production');
+    expect(version).not.toContain('production environment');
     expect(version).toContain("steps.context.outputs.branch == 'main'");
     expect(version).toContain('uses: ./.github/workflows/release.yml');
     expect(version).toContain("if: needs.auto-version.outputs.release_ready == 'true'");
