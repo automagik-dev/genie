@@ -10,9 +10,10 @@ name: Sign + Attest Tarballs
 # artifacts (Decision 10) are uploaded for Group 3 (release-publish) to
 # consume.
 #
-# Trigger: reusable only inside the trusted main-branch release chain, after
-# the explicit source build succeeds. Stable begins at release.yml; automated
-# dev begins at version.yml. It consumes same-run artifacts.
+# Trigger: reusable, called by release.yml after the source build succeeds.
+# Stable begins at release.yml; automated dev begins at version.yml. It
+# consumes same-run artifacts. There is no caller-admission job (owner
+# decision 2026-11-05).
 #
 # Signing model is cosign KEYLESS — the OIDC identity is bound to this
 # workflow file path + ref (Fulcio SAN URI). There is no long-lived key.
@@ -27,8 +28,8 @@ name: Sign + Attest Tarballs
 # API and looked up by digest via `gh attestation verify`.
 
 on:
-  # Reusable only from the trusted main-branch release orchestrator. Manual
-  # recovery routes through release.yml and cannot bypass source provenance.
+  # Reusable from the release orchestrator (release.yml). Manual recovery
+  # routes through release.yml.
   workflow_call:
     inputs:
       version:
@@ -69,69 +70,12 @@ permissions:
   contents: read
 
 jobs:
-  # The OIDC identity belongs to this called workflow, so the called workflow
-  # itself must verify its caller. Otherwise an untrusted branch could call
-  # sign-attest.yml@main and obtain the same client-trusted signing identity.
-  admit:
-    name: Admit trusted release orchestrator
-    runs-on: ubuntu-latest
-    timeout-minutes: 2
-    permissions: {}
-    steps:
-      - name: Bind caller workflow and control commit
-        shell: bash
-        env:
-          CALLER_EVENT: ${{ github.event_name }}
-          CALLER_REF: ${{ github.ref }}
-          CALLER_SHA: ${{ github.sha }}
-          CALLER_WORKFLOW_REF: ${{ github.workflow_ref }}
-          CALLER_WORKFLOW_SHA: ${{ github.workflow_sha }}
-          EXPECTED_STABLE_CALLER: automagik-dev/genie/.github/workflows/release.yml@refs/heads/main
-          EXPECTED_AUTOMATED_CALLER: automagik-dev/genie/.github/workflows/version.yml@refs/heads/main
-          INPUT_VERSION: ${{ inputs.version }}
-          INPUT_CHANNEL: ${{ inputs.channel }}
-          INPUT_SOURCE_SHA: ${{ inputs.source_sha }}
-          INPUT_SOURCE_BRANCH: ${{ inputs.source_branch }}
-          INPUT_SOURCE_CI_RUN_ID: ${{ inputs.source_ci_run_id }}
-        run: |
-          set -euo pipefail
-          case "$INPUT_CHANNEL" in
-            stable)
-              EXPECTED_EVENT=workflow_dispatch
-              EXPECTED_CALLER="$EXPECTED_STABLE_CALLER"
-              ;;
-            dev)
-              EXPECTED_EVENT=workflow_run
-              EXPECTED_CALLER="$EXPECTED_AUTOMATED_CALLER"
-              ;;
-            *)
-              echo "::error ::release-caller.channel unknown channel '${INPUT_CHANNEL}'"
-              exit 1
-              ;;
-          esac
-          if [[ "$CALLER_EVENT" != "$EXPECTED_EVENT" ||
-                "$CALLER_REF" != refs/heads/main ||
-                "$CALLER_WORKFLOW_REF" != "$EXPECTED_CALLER" ||
-                "$CALLER_WORKFLOW_SHA" != "$CALLER_SHA" ]]; then
-            echo "::error ::release-caller.untrusted sign-attest rejected caller ${CALLER_WORKFLOW_REF:-<empty>} (${CALLER_EVENT:-<empty>})"
-            exit 1
-          fi
-          if [[ ! "$INPUT_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ||
-                ! "$INPUT_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ||
-                ! "$INPUT_SOURCE_CI_RUN_ID" =~ ^[0-9]+$ ]]; then
-            echo "::error ::release-caller.inputs sign-attest received malformed release identity inputs"
-            exit 1
-          fi
-          case "$INPUT_SOURCE_BRANCH" in main|dev) ;; *) exit 1 ;; esac
-          echo "Trusted release caller admitted at ${CALLER_SHA}"
-
   # ---------------------------------------------------------------------------
   # prepare — resolve version, download every same-run tarball,
   # build the multi-subject base64 input the SLSA generator consumes.
   # ---------------------------------------------------------------------------
   prepare:
     name: Prepare hashes for SLSA
-    needs: admit
     runs-on: ubuntu-latest
     timeout-minutes: 10
     outputs:
