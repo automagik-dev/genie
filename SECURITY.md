@@ -89,7 +89,6 @@ Current 5.x GitHub Releases are governed by:
 
 - **Per-platform verification material** — every tarball has a cosign keyless bundle, SLSA provenance, and a GitHub-native attestation bound to the release source and trusted workflow control.
 - **OIDC signing** — release signing uses GitHub Actions OIDC; there is no long-lived signing key.
-- **Environment protection** — stable publication requires the protected production environment approval described below.
 - **Immutable publication** — published asset bytes are never replaced; repository-hosted channel manifests advance only after exact remote verification.
 
 ---

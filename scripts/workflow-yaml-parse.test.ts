@@ -3,15 +3,15 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 
 /**
- * Structural gate for the two release/CI smokes added by wish
- * `skills-everywhere` (Group 5).
+ * Structural gate for the release-publish chain and the CI skills.sh parity job.
  *
- * `publish.needs` is the only thing that makes a smoke a RELEASE GATE rather
- * than decoration, and a job block can be reindented or renamed by an unrelated
- * edit without any other test noticing. This parses both workflows as YAML —
- * never by grep — and asserts the wiring, including (since wish
- * `skills-everywhere-b`, G6) that the retired Codex dogfood matrix is gone and
- * that its removal cost `publish` exactly one edge.
+ * `publish.needs` is the only thing that makes a job a RELEASE GATE rather than
+ * decoration, and a job block can be reindented or renamed by an unrelated edit
+ * without any other test noticing. This parses the workflows as YAML — never by
+ * grep — and asserts the wiring. Since the 2026-11-05 owner decision the chain
+ * carries no caller-admission job, no candidate smoke and no separate security
+ * gate: publish waits on the delivery-evidence endorsements and the production
+ * verifier's compatibility check, and on nothing else.
  *
  * Parser: `Bun.YAML.parse`, so no python/PyYAML and no new dependency. It is a
  * Bun builtin (present on the 1.3.11 CI pin and the 1.3.14 dev machines); the
@@ -87,49 +87,35 @@ describe('Bun.YAML availability', () => {
 });
 
 describe('release-publish.yml gates', () => {
-  test('both smoke jobs are defined', () => {
-    expect(Object.keys(jobs(workflow(RELEASE_PUBLISH)))).toContain('skills-install-smoke');
-    expect(Object.keys(jobs(workflow(RELEASE_PUBLISH)))).toContain('release-update-path-smoke');
-  });
+  const REMOVED = [
+    'admit',
+    'skills-install-smoke',
+    'release-update-path-smoke',
+    'stable-release-security-gate',
+    'codex-native-dogfood',
+    'codex-dogfood-completeness',
+  ];
 
-  test('publish requires both smoke jobs', () => {
-    const needs = needsOf(job(workflow(RELEASE_PUBLISH), 'publish'));
-    expect(needs).toContain('skills-install-smoke');
-    expect(needs).toContain('release-update-path-smoke');
-  });
-
-  test('the publish gate condition demands success from both smoke jobs', () => {
-    const condition = String(job(workflow(RELEASE_PUBLISH), 'publish').if ?? '');
-    expect(condition).toContain("needs.skills-install-smoke.result == 'success'");
-    expect(condition).toContain("needs.release-update-path-smoke.result == 'success'");
-  });
-
-  test('the Codex dogfood matrix is gone and nothing needs it', () => {
+  test('the removed gates are gone and nothing needs them', () => {
     const names = Object.keys(jobs(workflow(RELEASE_PUBLISH)));
-    expect(names).not.toContain('codex-native-dogfood');
-    expect(names).not.toContain('codex-dogfood-completeness');
+    for (const removed of REMOVED) expect(names).not.toContain(removed);
     for (const id of names) {
-      expect(needsOf(job(workflow(RELEASE_PUBLISH), id))).not.toContain('codex-native-dogfood');
-      expect(needsOf(job(workflow(RELEASE_PUBLISH), id))).not.toContain('codex-dogfood-completeness');
+      for (const removed of REMOVED) {
+        expect(needsOf(job(workflow(RELEASE_PUBLISH), id))).not.toContain(removed);
+        expect(String(job(workflow(RELEASE_PUBLISH), id).if ?? '')).not.toContain(`needs.${removed}.`);
+      }
     }
   });
 
   /**
-   * The removal above cost `publish` EXACTLY one edge. Pinning the full set (and
-   * the matching `if:` guard for each survivor) is what makes a future accidental
-   * drop of another gate a test failure rather than a silently weaker release.
+   * Pinning the full set (and the matching `if:` guard for each survivor) is
+   * what makes a future accidental drop of the evidence check a test failure
+   * rather than a silently weaker release.
    */
-  test('publish requires exactly the six surviving gates, each with its if-guard', () => {
+  test('publish requires exactly the two delivery-evidence gates, each with its if-guard', () => {
     const publish = job(workflow(RELEASE_PUBLISH), 'publish');
     const needs = needsOf(publish);
-    expect(needs).toEqual([
-      'admit',
-      'attest-delivery-evidence',
-      'delivery-evidence-compatibility',
-      'skills-install-smoke',
-      'release-update-path-smoke',
-      'stable-release-security-gate',
-    ]);
+    expect(needs).toEqual(['attest-delivery-evidence', 'delivery-evidence-compatibility']);
     const condition = String(publish.if ?? '');
     expect(condition).toContain('always()');
     for (const gate of needs) {
@@ -137,21 +123,33 @@ describe('release-publish.yml gates', () => {
     }
   });
 
+  test('the evidence chain runs prepare -> attest -> compatibility in order', () => {
+    expect(needsOf(job(workflow(RELEASE_PUBLISH), 'prepare-delivery-evidence'))).toEqual([]);
+    expect(needsOf(job(workflow(RELEASE_PUBLISH), 'attest-delivery-evidence'))).toEqual(['prepare-delivery-evidence']);
+    expect(needsOf(job(workflow(RELEASE_PUBLISH), 'delivery-evidence-compatibility'))).toEqual([
+      'attest-delivery-evidence',
+    ]);
+    expect(needsOf(job(workflow(RELEASE_PUBLISH), 'finalize'))).toEqual(['publish']);
+    expect(needsOf(job(workflow(RELEASE_PUBLISH), 'manifests'))).toEqual(['finalize']);
+  });
+
   /**
-   * `scripts/candidate-dogfood-matrix.ts` outlives the dogfood matrix it was
-   * named for: `prepare-delivery-evidence` derives the platform inventory and
-   * the update-path projection from it, and `stable-release-security-gate` —
-   * itself a `publish.needs` edge — re-derives and `cmp`s it. Both consumers are
-   * pinned here so a later "it is only for the dogfood" cleanup fails loudly.
+   * The #2674 replay guard was the second step of the deleted admit job. It is
+   * not a caller gate — it refuses a re-dispatch whose failure would otherwise
+   * land after the release is published and locked — so it moved, verbatim, to
+   * be the first step of prepare-delivery-evidence (release-replay-guard.test.ts
+   * runs its body).
    */
-  test('candidate-dogfood-matrix.ts survives with both of its consuming jobs', () => {
+  test('the replay guard is the first step of prepare-delivery-evidence', () => {
+    const steps = job(workflow(RELEASE_PUBLISH), 'prepare-delivery-evidence').steps;
+    if (!Array.isArray(steps) || !isRecord(steps[0])) throw new Error('prepare-delivery-evidence has no steps');
+    expect(steps[0].name).toBe('Refuse re-dispatch of an already published release');
+  });
+
+  test('prepare-delivery-evidence still derives the platform inventory from candidate-dogfood-matrix.ts', () => {
     expect(runScripts(job(workflow(RELEASE_PUBLISH), 'prepare-delivery-evidence'))).toContain(
       'bun scripts/candidate-dogfood-matrix.ts',
     );
-    expect(runScripts(job(workflow(RELEASE_PUBLISH), 'stable-release-security-gate'))).toContain(
-      'bun scripts/candidate-dogfood-matrix.ts',
-    );
-    expect(needsOf(job(workflow(RELEASE_PUBLISH), 'publish'))).toContain('stable-release-security-gate');
   });
 
   /**
@@ -175,95 +173,6 @@ describe('release-publish.yml gates', () => {
       }
     }
   });
-
-  test('skills-install-smoke waits on the prepared delivery evidence', () => {
-    expect(needsOf(job(workflow(RELEASE_PUBLISH), 'skills-install-smoke'))).toEqual(['prepare-delivery-evidence']);
-  });
-
-  test('release-update-path-smoke waits on the full evidence chain', () => {
-    expect(needsOf(job(workflow(RELEASE_PUBLISH), 'release-update-path-smoke'))).toEqual([
-      'prepare-delivery-evidence',
-      'attest-delivery-evidence',
-      'delivery-evidence-compatibility',
-    ]);
-  });
-
-  test('release-update-path-smoke derives its platforms from the candidate manifest, never a literal list', () => {
-    const smoke = job(workflow(RELEASE_PUBLISH), 'release-update-path-smoke');
-    const strategy = smoke.strategy;
-    if (!isRecord(strategy)) throw new Error('no strategy on release-update-path-smoke');
-    // A hand-written include list would make this smoke's coverage independent
-    // of the manifest promotion actually endorses (scripts/release-docs.test.ts
-    // forbids exactly that for the Codex matrix); this one is a projection of it.
-    expect(strategy.matrix).toBe('${{ fromJSON(needs.prepare-delivery-evidence.outputs.update_path_matrix) }}');
-    expect(smoke['runs-on']).toBe('${{ matrix.runner }}');
-    expect(needsOf(smoke)).toContain('prepare-delivery-evidence');
-
-    const prepare = runScripts(job(workflow(RELEASE_PUBLISH), 'prepare-delivery-evidence'));
-    expect(prepare).toContain('UPDATE_PATH_MATRIX=');
-    expect(prepare).toContain('candidate-dogfood-matrix.json');
-    expect(prepare).toContain('select(.platform == "linux-x64-glibc" or .platform == "linux-x64-musl")');
-    expect(prepare).toContain('update_path_matrix=${UPDATE_PATH_MATRIX}');
-    // The projection is only evidence if an empty or narrowed selection fails.
-    expect(prepare).toContain("jq -er '.include | length'");
-    expect(runScripts(smoke)).toContain('scripts/run-musl-dogfood.sh');
-  });
-
-  test('release-update-path-smoke runs the update-side delivery path and asserts its contract', () => {
-    const smoke = runScripts(job(workflow(RELEASE_PUBLISH), 'release-update-path-smoke'));
-    // The one thing here that no earlier job does on a plain, Codex-free host.
-    expect(smoke).toContain('update --publish-local-delivery');
-    expect(smoke).toContain('GENIE_RELEASE_DOGFOOD=1');
-    expect(smoke).toContain('.code == "delivery-verified"');
-    expect(smoke).toContain('.deliveryComplete == true');
-    expect(smoke).toContain('"$status" -eq 0');
-    // Still the signed-bytes gate it always was.
-    expect(smoke).toContain('bash scripts/verify-release.sh --local');
-    expect(smoke).toContain('bun scripts/verify-delivery-evidence-pack.ts');
-  });
-
-  test('skills-install-smoke keeps the OpenAI secret off every step but the codex exec', () => {
-    const smoke = job(workflow(RELEASE_PUBLISH), 'skills-install-smoke');
-    const jobEnv = smoke.env;
-    if (!isRecord(jobEnv)) throw new Error('skills-install-smoke has no job env');
-    // Only a boolean is job-wide; the secret itself must never be visible to
-    // the third-party `npx -y skills@...` download.
-    expect(jobEnv.HAS_OPENAI_KEY).toBe("${{ secrets.OPENAI_API_KEY != '' }}");
-    expect(Object.keys(jobEnv)).not.toContain('OPENAI_API_KEY');
-
-    const steps = Array.isArray(smoke.steps) ? smoke.steps.filter(isRecord) : [];
-    const withSecret = steps.filter((step) => {
-      const stepEnv = step.env;
-      return isRecord(stepEnv) && String(stepEnv.OPENAI_API_KEY ?? '').includes('secrets.OPENAI_API_KEY');
-    });
-    expect(withSecret.map((step) => String(step.name))).toEqual([
-      'Prove Codex can invoke an installed skill non-interactively',
-    ]);
-    for (const step of steps) {
-      expect(String(step.if ?? '')).not.toContain('env.OPENAI_API_KEY');
-    }
-  });
-
-  test('both pinned skills.sh invocations are attempt-bounded, not fire-once', () => {
-    for (const [file, jobId] of [
-      [RELEASE_PUBLISH, 'skills-install-smoke'],
-      [CI, 'skills-inventory-parity'],
-    ] as const) {
-      const script = runScripts(job(workflow(file), jobId));
-      expect(script).toContain('until npx -y skills@');
-      expect(script).toContain('attempt >= 3');
-      expect(script).toContain('sleep $(( attempt * 15 ))');
-    }
-  });
-
-  test('the installed skill tree is compared whole, not one entry file', () => {
-    const smoke = runScripts(job(workflow(RELEASE_PUBLISH), 'skills-install-smoke'));
-    expect(smoke).toContain('diff -r --no-dereference -- "skills/${name}" "${home}/${name}"');
-    // The physical-file check on SKILL.md stays: `diff -r` alone would accept a
-    // symlink whose target happens to match.
-    expect(smoke).toContain('! -f "$installed" || -L "$installed"');
-    expect(smoke).not.toContain('cmp -s --');
-  });
 });
 
 describe('ci.yml gates', () => {
@@ -279,6 +188,13 @@ describe('ci.yml gates', () => {
     const unit = runScripts(job(workflow(CI), 'unit'));
     expect(unit).not.toContain('skills-inventory-parity');
     expect(unit).not.toContain('npx -y skills@');
+  });
+
+  test('the pinned skills.sh invocation is attempt-bounded, not fire-once', () => {
+    const script = runScripts(job(workflow(CI), 'skills-inventory-parity'));
+    expect(script).toContain('until npx -y skills@');
+    expect(script).toContain('attempt >= 3');
+    expect(script).toContain('sleep $(( attempt * 15 ))');
   });
 
   /**
@@ -313,9 +229,7 @@ describe('pins agree across the workflows and the shipped source', () => {
   test('every workflow invocation uses the pinned SKILLS_CLI_VERSION', () => {
     const pinned = installer.match(/SKILLS_CLI_VERSION = '([^']+)'/)?.[1];
     expect(pinned).toBeDefined();
-    const invocation = `npx -y skills@${pinned as string} add`;
-    expect(releasePublishText).toContain(invocation);
-    expect(ciText).toContain(invocation);
+    expect(ciText).toContain(`npx -y skills@${pinned as string} add`);
     // No unpinned or differently pinned invocation anywhere in either file.
     // The version class deliberately excludes `<`/`>` so the prose reference
     // `skills@<SKILLS_CLI_VERSION>` in a comment is not read as a pin.
@@ -328,26 +242,12 @@ describe('pins agree across the workflows and the shipped source', () => {
   });
 
   /**
-   * Before wish `skills-everywhere-b` G6 there were two of each pin (the Codex
-   * dogfood matrix carried one, the skills/update-path smokes the other), and
-   * this test's job was to prove they agreed. With the matrix deleted the smokes
-   * hold the only copy, so the assertion becomes "still exactly one, and it is
-   * still the same value the musl adapter uses" — a second, divergent pin
-   * reintroduced anywhere still fails here.
+   * The Codex and Alpine pins in release-publish.yml lived only in the two
+   * candidate smokes deleted on 2026-11-05. A pin reintroduced there would be
+   * a second copy nothing keeps in step with the musl adapter, so it fails here.
    */
-  test('the surviving smokes keep a single Codex pin and the musl adapter Alpine digest', () => {
-    const codexPins = [...releasePublishText.matchAll(/@openai\/codex@([\w.]+)/g)].map((match) => match[1]);
-    expect(codexPins.length).toBeGreaterThan(0);
-    expect(new Set(codexPins).size).toBe(1);
-
-    const adapterImage = readFileSync(join(REPO_ROOT, 'scripts', 'run-musl-dogfood.sh'), 'utf8').match(
-      /alpine:[\w.]+@sha256:[0-9a-f]{64}/,
-    )?.[0];
-    expect(adapterImage).toBeDefined();
-    const workflowImages = [...releasePublishText.matchAll(/alpine:[\w.]+@sha256:[0-9a-f]{64}/g)].map(
-      (match) => match[0],
-    );
-    expect(workflowImages).toHaveLength(1);
-    expect(new Set(workflowImages)).toEqual(new Set([adapterImage as string]));
+  test('release-publish.yml carries no Codex or Alpine pin since the smokes left', () => {
+    expect(releasePublishText).not.toMatch(/@openai\/codex@/);
+    expect(releasePublishText).not.toMatch(/alpine:[\w.]+@sha256:/);
   });
 });
