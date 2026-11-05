@@ -243,9 +243,8 @@ jobs:
             #     commit), pushes the tag alone, and sets channel=stable with
             #     release_ready=false so release-automated is skipped on
             #     purpose: stable is never auto-dispatched, because a
-            #     maintainer must start Release by hand and a DIFFERENT
-            #     maintainer must approve the protected production
-            #     environment. Such a tag legitimately has no Release until
+            #     maintainer must start Release by hand. Such a tag
+            #     legitimately has no Release until
             #     that human dispatch, which may be days later or never.
             # So: a tag whose own commit is not that `[auto-version]` child
             # for this exact version was minted on the promotion path, and
