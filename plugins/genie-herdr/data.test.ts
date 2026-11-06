@@ -8,6 +8,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
   realpathSync,
   rmSync,
   symlinkSync,
@@ -547,8 +548,15 @@ describe('T6 degradation', () => {
 describe('refresh (data.js `refresh`, the host injected)', () => {
   const BIN = '/opt/genie/bin/genie-rs';
   const REPO = '/work/repo';
-  type Reply = { code: number; stdout?: string } | Error;
-  /** A fake host. `bin` answers `genie-rs` runs; BIN_SCRIPT finds BIN while `binThere()`. */
+  type Reply = { code: number; stdout?: string; stderr?: string } | Error;
+  /** D.LOGIN_CANDIDATES by name: the person's `$SHELL` (through /bin/sh), then /bin/zsh, then /bin/sh. */
+  const SHELL_LABELS = ['$SHELL', '/bin/zsh', '/bin/sh'];
+  /**
+   * A fake host. `bin` answers `genie-rs` runs; BIN_SCRIPT finds BIN while `binThere()`. `login`
+   * answers each login shell (by default none starts, so the inherited PATH is kept and every run
+   * is unwrapped). A run through `/usr/bin/env PATH=<p>` lands in `wrapped` as typed and in `calls`
+   * as the command it runs.
+   */
   function host({
     bin,
     binThere = () => true,
@@ -556,6 +564,8 @@ describe('refresh (data.js `refresh`, the host injected)', () => {
     workersText = '',
     projects = [REPO],
     now = () => NOW,
+    login = (_shell: string): Reply => Object.assign(new Error('spawn ENOENT'), { code: 'ENOENT' }),
+    meter = (): Reply => ({ code: 3 }),
   }: {
     bin: (args: string[]) => Reply;
     binThere?: () => boolean;
@@ -563,17 +573,33 @@ describe('refresh (data.js `refresh`, the host injected)', () => {
     workersText?: string;
     projects?: string[];
     now?: () => number;
+    login?: (shell: string) => Reply;
+    meter?: () => Reply;
   }) {
     const calls: string[][] = [];
+    const wrapped: string[][] = [];
+    const shells: string[] = [];
     const answer = (r: Reply) =>
       r instanceof Error ? Promise.reject(r) : Promise.resolve({ stdout: '', stderr: '', ...r });
     const io = {
-      exec: (cmd: string, args: string[] = []) => {
+      exec: (cmd: string, args: string[] = []): Promise<unknown> => {
+        if (cmd === '/usr/bin/env') {
+          wrapped.push([cmd, ...args]);
+          return io.exec(args[1], args.slice(2));
+        }
+        const candidate = D.LOGIN_CANDIDATES.findIndex(
+          ([c, a]) => c === cmd && a.length === args.length && a.every((x, i) => x === args[i]),
+        );
+        if (candidate >= 0) {
+          const label = SHELL_LABELS[candidate];
+          shells.push(label);
+          return answer(login(label));
+        }
         calls.push([cmd, ...args]);
         if (cmd === 'sh' && args[1] === D.BIN_SCRIPT) return answer({ code: binThere() ? 0 : 1, stdout: `${BIN}\n` });
         if (cmd === 'sh' && args[1] === D.REALPATH_SCRIPT) return answer({ code: 0, stdout: '' });
         if (cmd === 'tail') return answer({ code: 0, stdout: workersText });
-        if (cmd === 'automagik-herdr') return answer({ code: 3 });
+        if (cmd === 'automagik-herdr') return answer(meter());
         if (cmd === BIN) return answer(bin(args));
         return answer(new Error(`unexpected exec ${cmd}`));
       },
@@ -591,7 +617,7 @@ describe('refresh (data.js `refresh`, the host injected)', () => {
       published: [] as unknown[],
       publish: () => {},
     };
-    return { io, calls };
+    return { io, calls, wrapped, shells };
   }
   const listJson = JSON.stringify([row({ task: 'gh-1', lane: 'Review' }), row({ task: 'gh-2', lane: 'Working' })]);
   const enoent = () => Object.assign(new Error(`spawn ${BIN} ENOENT`), { code: 'ENOENT' });
@@ -767,6 +793,195 @@ describe('refresh (data.js `refresh`, the host injected)', () => {
     await D.refresh(m, io);
     expect(m.sched.backoff[A]).toEqual({ fails: 1, until: 3 * MIN }); // one failure, one minute: not 3 and four
     expect(synced(at)).toEqual([B]);
+  });
+
+  const GH_MISSING =
+    'genie-rs: gh could not be run (No such file or directory (os error 2)): install it and run gh auth login\n';
+
+  test('the login PATH is resolved once and every genie-rs run (BIN_SCRIPT, list, forge-sync) and doc get carries it', async () => {
+    const LOGIN = '/Users/me/.local/bin:/opt/homebrew/bin:/usr/bin:/bin';
+    const m = D.newModel();
+    const { io, calls, wrapped, shells } = host({
+      login: () => ({ code: 0, stdout: `Welcome!\n\n__GENIE_LOGIN_PATH__${LOGIN}` }),
+      bin: (args) => (args[0] === 'list' ? { code: 0, stdout: listJson } : { code: 0 }),
+    });
+    await D.refresh(m, io);
+    await D.refresh(m, io);
+    expect(shells).toEqual(['$SHELL']); // once per model, the first shell that answered
+    expect(m.path).toBe(LOGIN);
+    expect(wrapped).toContainEqual(['/usr/bin/env', `PATH=${LOGIN}`, 'sh', '-c', D.BIN_SCRIPT]);
+    expect(wrapped).toContainEqual(['/usr/bin/env', `PATH=${LOGIN}`, BIN, 'list', '--json', '--project', REPO]);
+    expect(wrapped).toContainEqual(['/usr/bin/env', `PATH=${LOGIN}`, BIN, 'forge-sync', '--project', REPO]);
+    // Every genie-rs and automagik-herdr run went through env; the probe, realpaths and tail did not.
+    const viaEnv = (c: string[]) =>
+      c[0] === BIN || c[0] === 'automagik-herdr' || (c[0] === 'sh' && c[2] === D.BIN_SCRIPT);
+    expect(wrapped.length).toBe(calls.filter(viaEnv).length);
+    expect(calls.filter((c) => !viaEnv(c)).every((c) => !wrapped.some((w) => w[2] === c[0]))).toBe(true);
+    expect(m.lists[REPO].rows).toHaveLength(2);
+  });
+
+  test('usagemeter: doc get runs under the login PATH; a missing automagik-herdr leaves cost and time blank', async () => {
+    const LOGIN = '/Users/me/.local/bin:/usr/bin:/bin';
+    const doc = {
+      space: {
+        projects: {
+          [REPO]: { tasks: [{ task: 'gh-1', usd: 1.25, active_min: 30, elapsed_min: 30, lead_min: 30 }] },
+        },
+      },
+    };
+    const notFound = (): Reply => ({ code: 127, stderr: 'env: automagik-herdr: No such file or directory\n' });
+    for (const [meter, priced] of [
+      [(): Reply => ({ code: 0, stdout: `${JSON.stringify(doc)}\n` }), true],
+      [notFound, false], // env could not find it on the login PATH
+      [(): Reply => Object.assign(new Error('spawn automagik-herdr ENOENT'), { code: 'ENOENT' }), false],
+    ] as const) {
+      const m = D.newModel();
+      const { io, wrapped } = host({
+        login: () => ({ code: 0, stdout: `\n__GENIE_LOGIN_PATH__${LOGIN}` }),
+        meter,
+        bin: (args) => (args[0] === 'list' ? { code: 0, stdout: listJson } : { code: 0 }),
+      });
+      await D.refresh(m, io);
+      expect(wrapped).toContainEqual(['/usr/bin/env', `PATH=${LOGIN}`, 'automagik-herdr', 'doc', 'get', 'herdr-meter']);
+      // The board itself is untouched: the binary, both cards, the forge result.
+      expect(m.bin).toEqual({ found: true, path: BIN });
+      expect(m.results).toEqual({ [REPO]: true });
+      const cards = D.lanesOf(REPO, m.lists[REPO].rows, D.feedRows(m.feed, REPO), NOW).flatMap((l) => l.cards);
+      expect(cards.map((c) => c.id).sort()).toEqual(['gh-1', 'gh-2']);
+      const gh1 = cards.find((c) => c.id === 'gh-1');
+      if (priced) expect(gh1?.cost).not.toBe('–');
+      else {
+        expect(m.feed).toBeNull();
+        for (const c of cards) expect([c.cost, c.time]).toEqual(['–', '–']);
+      }
+    }
+  });
+
+  test('no login shell answers: the inherited PATH is kept and every run is exactly as before', async () => {
+    for (const login of [
+      (): Reply => Object.assign(new Error('spawn /bin/zsh ENOENT'), { code: 'ENOENT' }),
+      (): Reply => new Error('the command took longer than 30 s'),
+      (): Reply => ({ code: 1, stdout: '' }),
+      (): Reply => ({ code: 0, stdout: 'a profile that printed only this\n' }), // no marker
+      (): Reply => ({ code: 0, stdout: '\n__GENIE_LOGIN_PATH__' }), // an empty PATH
+    ]) {
+      const m = D.newModel();
+      const { io, calls, wrapped, shells } = host({
+        login,
+        bin: (args) => (args[0] === 'list' ? { code: 0, stdout: listJson } : { code: 0 }),
+      });
+      await D.refresh(m, io);
+      await D.refresh(m, io);
+      expect(shells).toEqual(['$SHELL', '/bin/zsh', '/bin/sh']); // each asked once, then never again
+      expect(m.path).toBeNull();
+      expect(wrapped).toEqual([]);
+      expect(calls).toContainEqual([BIN, 'forge-sync', '--project', REPO]);
+      expect(m.lists[REPO].rows).toHaveLength(2);
+    }
+  });
+
+  test("refresh's first login exec is /bin/sh running $SHELL, no shell injected from JS", async () => {
+    const m = D.newModel();
+    const execs: string[][] = [];
+    const { io } = host({ bin: () => ({ code: 0, stdout: '[]' }) });
+    const exec = io.exec;
+    io.exec = (cmd: string, args: string[] = []) => {
+      execs.push([cmd, ...args]);
+      return exec(cmd, args);
+    };
+    await D.refresh(m, io);
+    expect(execs[0]).toEqual(['/bin/sh', '-c', 'exec "${SHELL:-/bin/zsh}" -l -c "$1"', 'sh', D.LOGIN_PATH_COMMAND]);
+    expect('shell' in io).toBe(false);
+    const main = readFileSync(join(import.meta.dir, 'main.js'), 'utf8');
+    expect(main).not.toContain('process'); // Herdr's runtime has no process.env
+  });
+
+  test('$SHELL fails, /bin/zsh answers: the fallback order', async () => {
+    const m = D.newModel();
+    const { io, shells } = host({
+      login: (sh) => (sh === '/bin/zsh' ? { code: 0, stdout: '\n__GENIE_LOGIN_PATH__/z/bin' } : { code: 127 }),
+      bin: () => ({ code: 0, stdout: '[]' }),
+    });
+    await D.refresh(m, io);
+    expect(shells).toEqual(['$SHELL', '/bin/zsh']);
+    expect(m.path).toBe('/z/bin');
+  });
+
+  test("a non-POSIX $SHELL answer (nushell's literal $PATH, a space-joined list) is no PATH: the next shell is used", async () => {
+    for (const answer of [
+      '\n__GENIE_LOGIN_PATH__$PATH', // nushell: no interpolation in "$PATH"
+      '\n__GENIE_LOGIN_PATH__/usr/local/bin /usr/bin /bin', // fish 2: a list joined with spaces
+      '\n__GENIE_LOGIN_PATH__/usr/bin:bin:/bin', // a relative entry
+    ]) {
+      const m = D.newModel();
+      const { io, shells, wrapped } = host({
+        login: (sh) =>
+          sh === '$SHELL'
+            ? { code: 0, stdout: answer }
+            : { code: 0, stdout: '\n__GENIE_LOGIN_PATH__/z/bin:/usr/bin:/bin' },
+        bin: () => ({ code: 0, stdout: '[]' }),
+      });
+      await D.refresh(m, io);
+      expect(shells).toEqual(['$SHELL', '/bin/zsh']);
+      expect(m.path).toBe('/z/bin:/usr/bin:/bin');
+      expect(wrapped.every((w) => w[1] === 'PATH=/z/bin:/usr/bin:/bin')).toBe(true);
+    }
+  });
+
+  test('under the login PATH a missing genie-rs (env exit 127, 126) is still the missing-binary line', async () => {
+    for (const code of [127, 126]) {
+      let gone = false;
+      const m = D.newModel();
+      const { io } = host({
+        login: () => ({ code: 0, stdout: '\n__GENIE_LOGIN_PATH__/l/bin' }),
+        bin: (args) =>
+          gone
+            ? { code, stderr: `env: ${BIN}: No such file or directory\n` }
+            : args[0] === 'list'
+              ? { code: 0, stdout: listJson }
+              : { code: 0 },
+        binThere: () => !gone,
+      });
+      await D.refresh(m, io);
+      expect(m.bin).toEqual({ found: true, path: BIN });
+      gone = true;
+      await D.refresh(m, io);
+      expect(m.bin).toEqual({ found: false, path: BIN });
+      expect(m.lists[REPO].rows).toHaveLength(2); // the last good list is kept
+    }
+  });
+
+  test('gh missing on PATH: the note says so, through the backoff, until a sync succeeds', async () => {
+    let minute = 0;
+    let forge: Reply = { code: 1, stderr: GH_MISSING };
+    const m = D.newModel();
+    const { io } = host({
+      now: () => minute * MIN,
+      bin: (args) => (args[0] === 'list' ? { code: 0, stdout: '[]' } : forge),
+    });
+    expect(D.forgeNoteOf(m, REPO)).toBeNull(); // before the first attempt: no note
+    await D.refresh(m, io);
+    expect(m.lists[REPO]).toMatchObject({ rows: [], stale: false });
+    expect(D.forgeNoteOf(m, REPO)).toBe('gh not found on PATH');
+    minute = 1;
+    await D.refresh(m, io); // backed off: no forge-sync this tick, the reason stays
+    expect(m.results).toEqual({});
+    expect(D.forgeNoteOf(m, REPO)).toBe('gh not found on PATH');
+    minute = 2;
+    forge = { code: 0 };
+    await D.refresh(m, io);
+    expect(D.forgeNoteOf(m, REPO)).toBeNull();
+    expect(m.reasons).toEqual({});
+  });
+
+  test('a zero-row project whose sync fails for another reason shows the generic note', async () => {
+    const m = D.newModel();
+    const { io } = host({
+      bin: (args) => (args[0] === 'list' ? { code: 0, stdout: '[]' } : { code: 1, stderr: 'gh: HTTP 502\n' }),
+    });
+    await D.refresh(m, io);
+    expect(m.lists[REPO].rows).toEqual([]);
+    expect(D.forgeNoteOf(m, REPO)).toBe('forge not synced');
   });
 });
 
@@ -967,6 +1182,106 @@ describe('T7 forge budget', () => {
     });
     expect(peak).toBe(8);
     expect(out).toHaveLength(30);
+  });
+});
+
+describe('login PATH (the strings main.js hands to exec, run for real)', () => {
+  test("forgeReason words genie-rs's gh/glab text and nothing else", () => {
+    const e = (stderr: string) => D.forgeReason({ ok: false, code: 1, stdout: '', stderr });
+    expect(
+      e('genie-rs: gh could not be run (No such file or directory (os error 2)): install it and run gh auth login'),
+    ).toBe('gh not found on PATH');
+    expect(
+      e(
+        'genie-rs: glab could not be run (No such file or directory (os error 2)): install it and run glab auth login --hostname g',
+      ),
+    ).toBe('glab not found on PATH');
+    expect(e('genie-rs: gh could not be run (Permission denied (os error 13)): install it and run gh auth login')).toBe(
+      'gh could not be run',
+    );
+    expect(e('genie-rs: gh api failed: HTTP 401')).toBeNull();
+    expect(D.forgeReason(null)).toBeNull();
+  });
+
+  test('parseLoginPath keeps a POSIX PATH (spaces inside an entry, empty entries) and rejects anything else', () => {
+    const p = (text: string) =>
+      D.parseLoginPath({ ok: true, code: 0, stdout: `\n__GENIE_LOGIN_PATH__${text}`, stderr: '' });
+    expect(p('/opt/my tools/bin:/usr/bin:/bin')).toBe('/opt/my tools/bin:/usr/bin:/bin');
+    expect(p('/a::/b:')).toBe('/a::/b:');
+    expect(p('$PATH')).toBeNull();
+    expect(p('/usr/local/bin /usr/bin /bin')).toBeNull();
+    expect(p('/usr/bin:./node_modules/.bin')).toBeNull();
+    expect(p('')).toBeNull();
+  });
+
+  /** Herdr's exec, played by Bun: resolves `{code, stdout, stderr}`, rejects when the program cannot start. */
+  const realExec =
+    (env: Record<string, string>) =>
+    (cmd: string, args: string[] = []) => {
+      try {
+        const r = Bun.spawnSync([cmd, ...args], { env, stdin: 'ignore' });
+        return Promise.resolve({ code: r.exitCode, stdout: r.stdout.toString(), stderr: r.stderr.toString() });
+      } catch (e) {
+        return Promise.reject(e);
+      }
+    };
+  // Spaces, quotes, `$(...)`, backticks, `;`, `&&`, `*` and a glob: argv carries them, no shell parses them.
+  const WEIRD = `/opt/my tools/bin:/x/$(touch PWNED);echo hi:/y/\`id\`:/z/"q"'s && * ?:/usr/bin:/bin`;
+
+  test('a login shell that prints a banner: the PATH after the marker, unchanged, then argv reaches genie-rs unchanged', async () => {
+    const root = tmp();
+    // A login shell whose profile sets an odd PATH and prints a banner: `<shell> -l -c <cmd>`.
+    const fake = join(root, 'fake-shell');
+    writeFileSync(
+      fake,
+      `#!/bin/sh\necho 'Last login: today'\nPATH='${WEIRD.replace(/'/g, `'\\''`)}'\nexport PATH\nexec /bin/sh -c "$3"\n`,
+    );
+    chmodSync(fake, 0o755);
+    // Herdr's exec hands the program its own environment, SHELL included: /bin/sh execs it.
+    const exec = realExec({ HOME: root, PATH: '/usr/bin:/bin:/usr/sbin:/sbin', SHELL: fake });
+    const path = await D.resolveLoginPath({ exec });
+    expect(path).toBe(WEIRD);
+
+    // The very argv refresh builds, run for real: genie-rs (a stub) sees that PATH and its own args.
+    const stub = join(root, 'genie-rs');
+    writeFileSync(stub, '#!/bin/sh\nprintf "%s\\n" "$PATH" "$@"\n');
+    chmodSync(stub, 0o755);
+    const [cmd, args] = D.loginArgv(path, stub, ['forge-sync', '--project', '/a b/$(x)']);
+    expect(cmd).toBe('/usr/bin/env');
+    expect(args[0]).toBe(`PATH=${WEIRD}`);
+    const r = await exec(cmd, args);
+    expect(r.code).toBe(0);
+    expect(r.stdout).toBe(`${WEIRD}\nforge-sync\n--project\n/a b/$(x)\n`);
+    expect(readdirSync(root).sort()).toEqual(['fake-shell', 'genie-rs']); // nothing ran the $(touch)
+  });
+
+  test('a nushell-like $SHELL that prints a literal $PATH falls through to a real login shell', async () => {
+    const root = tmp();
+    const nu = join(root, 'nu');
+    writeFileSync(nu, "#!/bin/sh\nprintf '\\n__GENIE_LOGIN_PATH__$PATH'\n");
+    chmodSync(nu, 0o755);
+    const exec = realExec({ HOME: root, PATH: '/usr/bin:/bin:/usr/sbin:/sbin', SHELL: nu });
+    expect((await exec(...D.LOGIN_CANDIDATES[0])).stdout).toBe('\n__GENIE_LOGIN_PATH__$PATH');
+    const path = await D.resolveLoginPath({ exec });
+    expect(path).not.toBe('$PATH');
+    expect(path).toEqual(expect.stringContaining('/bin'));
+  });
+
+  test('$SHELL that fails falls through to the next login shell; none at all keeps the inherited PATH', async () => {
+    const root = tmp();
+    const failing = join(root, 'failing-shell');
+    writeFileSync(failing, '#!/bin/sh\nexit 1\n');
+    chmodSync(failing, 0o755);
+    const exec = realExec({ HOME: root, PATH: '/usr/bin:/bin:/usr/sbin:/sbin', SHELL: failing });
+    const next = await D.resolveLoginPath({ exec });
+    expect(next).toEqual(expect.stringContaining('/bin')); // /bin/zsh or /bin/sh answered
+    const first = D.LOGIN_CANDIDATES[0];
+    const none = await D.resolveLoginPath({
+      exec: (cmd: string, args: string[]) =>
+        cmd === first[0] && args[0] === first[1][0] ? exec(cmd, args) : Promise.reject(new Error('ENOENT')),
+    });
+    expect(none).toBeNull();
+    expect(D.loginArgv(null, '/b/genie-rs', ['list'])).toEqual(['/b/genie-rs', ['list']]);
   });
 });
 

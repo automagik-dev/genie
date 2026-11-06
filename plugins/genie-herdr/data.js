@@ -71,12 +71,75 @@ const LAUNCH_TEXT = /ENOENT|EACCES|ENOEXEC|EPERM|spawn|not found|no such file|pe
 
 /**
  * A rejection that says the program could not be started (missing, not executable, the wrong
- * format), as opposed to a run that timed out or exited non-zero.
+ * format), as opposed to a run that timed out or exited non-zero. Under the login PATH a
+ * `genie-rs` run goes through `/usr/bin/env`, which always starts: a missing binary is then env's
+ * exit 127 and an unexecutable one its 126, codes `genie-rs` itself never uses (it exits 0, 1, 2).
  */
 export const launchFailed = (outcome) =>
-  outcome?.error != null && (LAUNCH_CODES.has(outcome.errorCode) || LAUNCH_TEXT.test(outcome.error));
+  outcome?.error != null
+    ? LAUNCH_CODES.has(outcome.errorCode) || LAUNCH_TEXT.test(outcome.error)
+    : outcome?.code === 126 || outcome?.code === 127;
 
 export const syncOk = (outcome) => Boolean(outcome?.ok);
+
+// ---------- the login PATH ----------
+
+const PATH_MARK = '__GENIE_LOGIN_PATH__';
+/** What each login shell runs: the marker keeps a profile's own output (a banner, an echo) out of the PATH. */
+export const LOGIN_PATH_COMMAND = `printf '\\n${PATH_MARK}%s' "$PATH"`;
+const ENV = '/usr/bin/env';
+
+/**
+ * The login shells to ask, in order, as `[command, args]`. First the person's own `$SHELL`: Herdr's
+ * runtime has no `process.env`, but the environment its `exec` hands a program does carry `SHELL`,
+ * so `/bin/sh` reads it and execs it (`/bin/zsh` when unset), LOGIN_PATH_COMMAND passed as `$1`,
+ * an argv element no shell parses. Then `/bin/zsh`, then `/bin/sh`. `-l` reads the login profile
+ * files (`.zprofile`, `.bash_profile`, `.profile`), not `.zshrc` / `.bashrc`, on purpose: `-i`
+ * would bring in prompts and plugin managers that can hang until the exec limit.
+ */
+export const LOGIN_CANDIDATES = [
+  ['/bin/sh', ['-c', 'exec "${SHELL:-/bin/zsh}" -l -c "$1"', 'sh', LOGIN_PATH_COMMAND]],
+  ['/bin/zsh', ['-l', '-c', LOGIN_PATH_COMMAND]],
+  ['/bin/sh', ['-l', '-c', LOGIN_PATH_COMMAND]],
+];
+
+/**
+ * A PATH a POSIX shell would build: every non-empty `:` entry absolute, and none holding another
+ * path after whitespace. That rejects what a non-POSIX `$SHELL` prints for LOGIN_PATH_COMMAND (a
+ * literal `$PATH` from nushell, fish 2's space-joined list) and stray profile text alike.
+ */
+const isPosixPath = (path) =>
+  path.split(':').every((entry) => entry === '' || (entry.startsWith('/') && !/\s\//.test(entry)));
+
+/** A login shell's outcome as its PATH: the text after the last marker, or null when there is none or it is no PATH. */
+export function parseLoginPath(outcome) {
+  if (!outcome?.ok) return null;
+  const at = outcome.stdout.lastIndexOf(PATH_MARK);
+  if (at < 0) return null;
+  const path = outcome.stdout.slice(at + PATH_MARK.length).replace(/\n+$/, '');
+  return path && isPosixPath(path) ? path : null;
+}
+
+/**
+ * The person's login PATH, or null to keep the inherited one. Herdr launched from Finder or the
+ * Dock inherits launchd's `/usr/bin:/bin:/usr/sbin:/sbin`, where `gh` and `glab` are not, and its
+ * `exec` takes no environment; the login shell is where the person set their PATH up (hc starts
+ * one on macOS for the same reason). LOGIN_CANDIDATES run in order, each under Herdr's 30 s exec
+ * limit; the first that answers with a PATH wins, and none answering keeps the inherited PATH.
+ */
+export async function resolveLoginPath(io) {
+  for (const [cmd, args] of LOGIN_CANDIDATES) {
+    const path = parseLoginPath(await settle(io.exec(cmd, args)));
+    if (path) return path;
+  }
+  return null;
+}
+
+/**
+ * A `genie-rs` run as `[command, args]`: under the login PATH, `/usr/bin/env PATH=<path> <cmd>
+ * <args...>`, the PATH one argv element that no shell parses; without one, the run as it was.
+ */
+export const loginArgv = (path, cmd, args) => (path ? [ENV, [`PATH=${path}`, cmd, ...args]] : [cmd, args]);
 
 /** Runs `fn` over `items` with at most `limit` calls in flight; results in input order. */
 export async function mapLimit(items, limit, fn) {
@@ -227,6 +290,20 @@ export function planTick(state, { now, projects, focused, neverSynced, results }
 
 /** The "forge not synced" note while a project's last forge-sync failed. */
 export const forgeNote = (state, project) => (state?.backoff?.[project] ? 'forge not synced' : null);
+
+const FORGE_CLI = /\b(gh|glab) could not be run\b/;
+
+/**
+ * Why a forge-sync failed, when its stderr says: genie-rs's `<gh|glab> could not be run (<os
+ * error>): install it and run ...` is `<gh|glab> not found on PATH` for a missing program and
+ * `<gh|glab> could not be run` otherwise. Null when the text names neither.
+ */
+export function forgeReason(outcome) {
+  const err = String(outcome?.stderr ?? '');
+  const m = FORGE_CLI.exec(err);
+  if (!m) return null;
+  return /no such file|os error 2\b|not found/i.test(err) ? `${m[1]} not found on PATH` : `${m[1]} could not be run`;
+}
 
 // ---------- list ----------
 
@@ -511,6 +588,8 @@ export const newModel = () => ({
   feed: null,
   sched: undefined, // planTick state
   results: {}, // the last forge-sync outcome per project, for the next plan
+  reasons: {}, // project -> why its last forge-sync failed (forgeReason), until one succeeds
+  path: undefined, // the login PATH: undefined until resolved, null when the inherited one is kept
   realpaths: new Map(), // label / folder -> realpath, for the tab's life
   workers: new Map(),
 });
@@ -531,27 +610,44 @@ export const waitingOf = (m, terminals) =>
   waitingCount(boardsOf(m), terminals, { realpaths: m.realpaths, workers: m.workers });
 
 /**
+ * The project's forge note: its last forge-sync failed (this refresh's outcome, else the plan's
+ * backoff), worded by `forgeReason` when genie-rs said why, else "forge not synced".
+ */
+export function forgeNoteOf(m, project) {
+  const failed = project in m.results ? !m.results[project] : Boolean(forgeNote(m.sched, project));
+  return failed ? (m.reasons?.[project] ?? 'forge not synced') : null;
+}
+
+/** One `genie-rs`, BIN_SCRIPT or `automagik-herdr` run under the model's login PATH, settled. */
+const runBin = (m, io, cmd, args) => {
+  const [c, a] = loginArgv(m.path, cmd, args);
+  return settle(io.exec(c, a));
+};
+
+/**
  * After a batch of `genie-rs` runs: true (and the model in the missing-binary state, its path kept
  * so the next refresh resolves again) when one of them could not be launched, or when any of them
  * was rejected and BIN_SCRIPT no longer finds a runnable binary. A timeout or a non-zero exit with
  * the binary still in place is an ordinary failure: stale list, forge backoff.
  */
 async function binaryGone(m, io, outcomes) {
-  if (!outcomes.some((o) => o.error != null)) return false;
-  if (!outcomes.some(launchFailed) && parseBin(await settle(io.exec('sh', ['-c', BIN_SCRIPT]))).found) return false;
+  if (!outcomes.some((o) => o.error != null || launchFailed(o))) return false;
+  if (!outcomes.some(launchFailed) && parseBin(await runBin(m, io, 'sh', ['-c', BIN_SCRIPT])).found) return false;
   m.bin = { found: false, path: m.bin.path };
   return true;
 }
 
 /**
- * One refresh of model `m`. `io` is the host: `exec(cmd, args)`, `probe(folders)` (main.js runs
- * PROBE_SCRIPT), `spaces()`, `home()`, `terminals()`, `focusedFolder()`, `workersFile`, `now()`,
- * `notify()` and `publish()`. Order: binary, probe, the workers tail only when needed, realpaths,
- * the plan, `list` for every project, `doc get`, the badge, then the planned forge-syncs (their
- * outcomes go to the next plan). `sync: false` plans no forge-sync; `feed: false` skips `doc get`.
+ * One refresh of model `m`. `io` is the host: `exec(cmd, args)`, `probe(folders)`
+ * (main.js runs PROBE_SCRIPT), `spaces()`, `home()`, `terminals()`, `focusedFolder()`, `workersFile`,
+ * `now()`, `notify()` and `publish()`. Order: the login PATH (once per model), binary, probe, the
+ * workers tail only when needed, realpaths, the plan, `list` for every project, `doc get`, the badge,
+ * then the planned forge-syncs (their outcomes go to the next plan). BIN_SCRIPT, `list`, `doc get`
+ * (usagemeter's cost and time, from `automagik-herdr`) and `forge-sync` run under the login PATH. `sync: false` plans no forge-sync; `feed: false` skips `doc get`.
  */
 export async function refresh(m, io, { sync = true, feed = true } = {}) {
-  if (!m.bin?.found) m.bin = parseBin(await settle(io.exec('sh', ['-c', BIN_SCRIPT])));
+  if (m.path === undefined) m.path = await resolveLoginPath(io);
+  if (!m.bin?.found) m.bin = parseBin(await runBin(m, io, 'sh', ['-c', BIN_SCRIPT]));
   if (!m.bin.found) return io.notify();
   const bin = m.bin.path;
 
@@ -583,20 +679,26 @@ export async function refresh(m, io, { sync = true, feed = true } = {}) {
   }
 
   const listed = [...m.projects];
-  const outs = await mapLimit(listed, MAX_IN_FLIGHT, (p) => settle(io.exec(bin, ['list', '--json', '--project', p])));
+  const outs = await mapLimit(listed, MAX_IN_FLIGHT, (p) => runBin(m, io, bin, ['list', '--json', '--project', p]));
   if (await binaryGone(m, io, outs)) return io.notify();
   listed.forEach((p, i) => {
     m.lists[p] = applyList(m.lists[p], outs[i], io.now());
   });
-  if (feed) m.feed = docFeed(await settle(io.exec('automagik-herdr', ['doc', 'get', 'herdr-meter'])));
+  if (feed) m.feed = docFeed(await runBin(m, io, 'automagik-herdr', ['doc', 'get', 'herdr-meter']));
   io.publish();
   io.notify();
 
   if (!syncs.length) return;
-  const done = await mapLimit(syncs, MAX_IN_FLIGHT, (p) => settle(io.exec(bin, ['forge-sync', '--project', p])));
+  const done = await mapLimit(syncs, MAX_IN_FLIGHT, (p) => runBin(m, io, bin, ['forge-sync', '--project', p]));
   // Every outcome known on its own terms reaches the next plan, before any missing-binary return:
   // only a call that is known not to have launched carries no forge result.
   m.results = Object.fromEntries(syncs.flatMap((p, i) => (launchFailed(done[i]) ? [] : [[p, syncOk(done[i])]])));
+  m.reasons = { ...m.reasons };
+  for (const [p, good] of Object.entries(m.results)) {
+    const why = good ? null : forgeReason(done[syncs.indexOf(p)]);
+    if (why) m.reasons[p] = why;
+    else delete m.reasons[p];
+  }
   if (await binaryGone(m, io, done)) return io.notify();
   io.notify();
 }
