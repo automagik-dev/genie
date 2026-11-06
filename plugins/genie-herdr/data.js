@@ -599,7 +599,7 @@ export function forgeNoteOf(m, project) {
   return failed ? (m.reasons?.[project] ?? 'forge not synced') : null;
 }
 
-/** One `genie-rs` (or BIN_SCRIPT) run under the model's login PATH, settled. */
+/** One `genie-rs`, BIN_SCRIPT or `automagik-herdr` run under the model's login PATH, settled. */
 const runBin = (m, io, cmd, args) => {
   const [c, a] = loginArgv(m.path, cmd, args);
   return settle(io.exec(c, a));
@@ -623,8 +623,8 @@ async function binaryGone(m, io, outcomes) {
  * (main.js runs PROBE_SCRIPT), `spaces()`, `home()`, `terminals()`, `focusedFolder()`, `workersFile`,
  * `now()`, `notify()` and `publish()`. Order: the login PATH (once per model), binary, probe, the
  * workers tail only when needed, realpaths, the plan, `list` for every project, `doc get`, the badge,
- * then the planned forge-syncs (their outcomes go to the next plan). BIN_SCRIPT, `list` and
- * `forge-sync` run under the login PATH. `sync: false` plans no forge-sync; `feed: false` skips `doc get`.
+ * then the planned forge-syncs (their outcomes go to the next plan). BIN_SCRIPT, `list`, `doc get`
+ * (usagemeter's cost and time, from `automagik-herdr`) and `forge-sync` run under the login PATH. `sync: false` plans no forge-sync; `feed: false` skips `doc get`.
  */
 export async function refresh(m, io, { sync = true, feed = true } = {}) {
   if (m.path === undefined) m.path = await resolveLoginPath(io);
@@ -665,7 +665,7 @@ export async function refresh(m, io, { sync = true, feed = true } = {}) {
   listed.forEach((p, i) => {
     m.lists[p] = applyList(m.lists[p], outs[i], io.now());
   });
-  if (feed) m.feed = docFeed(await settle(io.exec('automagik-herdr', ['doc', 'get', 'herdr-meter'])));
+  if (feed) m.feed = docFeed(await runBin(m, io, 'automagik-herdr', ['doc', 'get', 'herdr-meter']));
   io.publish();
   io.notify();
 

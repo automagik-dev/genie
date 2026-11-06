@@ -564,6 +564,7 @@ describe('refresh (data.js `refresh`, the host injected)', () => {
     now = () => NOW,
     shell = null as string | null,
     login = (_shell: string): Reply => Object.assign(new Error('spawn ENOENT'), { code: 'ENOENT' }),
+    meter = (): Reply => ({ code: 3 }),
   }: {
     bin: (args: string[]) => Reply;
     binThere?: () => boolean;
@@ -573,6 +574,7 @@ describe('refresh (data.js `refresh`, the host injected)', () => {
     now?: () => number;
     shell?: string | null;
     login?: (shell: string) => Reply;
+    meter?: () => Reply;
   }) {
     const calls: string[][] = [];
     const wrapped: string[][] = [];
@@ -594,7 +596,7 @@ describe('refresh (data.js `refresh`, the host injected)', () => {
         if (cmd === 'sh' && args[1] === D.BIN_SCRIPT) return answer({ code: binThere() ? 0 : 1, stdout: `${BIN}\n` });
         if (cmd === 'sh' && args[1] === D.REALPATH_SCRIPT) return answer({ code: 0, stdout: '' });
         if (cmd === 'tail') return answer({ code: 0, stdout: workersText });
-        if (cmd === 'automagik-herdr') return answer({ code: 3 });
+        if (cmd === 'automagik-herdr') return answer(meter());
         if (cmd === BIN) return answer(bin(args));
         return answer(new Error(`unexpected exec ${cmd}`));
       },
@@ -793,7 +795,7 @@ describe('refresh (data.js `refresh`, the host injected)', () => {
   const GH_MISSING =
     'genie-rs: gh could not be run (No such file or directory (os error 2)): install it and run gh auth login\n';
 
-  test('the login PATH is resolved once and every genie-rs run (BIN_SCRIPT, list, forge-sync) carries it', async () => {
+  test('the login PATH is resolved once and every genie-rs run (BIN_SCRIPT, list, forge-sync) and doc get carries it', async () => {
     const LOGIN = '/Users/me/.local/bin:/opt/homebrew/bin:/usr/bin:/bin';
     const m = D.newModel();
     const { io, calls, wrapped, shells } = host({
@@ -808,9 +810,49 @@ describe('refresh (data.js `refresh`, the host injected)', () => {
     expect(wrapped).toContainEqual(['/usr/bin/env', `PATH=${LOGIN}`, 'sh', '-c', D.BIN_SCRIPT]);
     expect(wrapped).toContainEqual(['/usr/bin/env', `PATH=${LOGIN}`, BIN, 'list', '--json', '--project', REPO]);
     expect(wrapped).toContainEqual(['/usr/bin/env', `PATH=${LOGIN}`, BIN, 'forge-sync', '--project', REPO]);
-    // Every genie-rs run went through env; the probe, realpaths, tail and doc get did not.
-    expect(wrapped.length).toBe(calls.filter((c) => c[0] === BIN || (c[0] === 'sh' && c[2] === D.BIN_SCRIPT)).length);
+    // Every genie-rs and automagik-herdr run went through env; the probe, realpaths and tail did not.
+    const viaEnv = (c: string[]) =>
+      c[0] === BIN || c[0] === 'automagik-herdr' || (c[0] === 'sh' && c[2] === D.BIN_SCRIPT);
+    expect(wrapped.length).toBe(calls.filter(viaEnv).length);
+    expect(calls.filter((c) => !viaEnv(c)).every((c) => !wrapped.some((w) => w[2] === c[0]))).toBe(true);
     expect(m.lists[REPO].rows).toHaveLength(2);
+  });
+
+  test('usagemeter: doc get runs under the login PATH; a missing automagik-herdr leaves cost and time blank', async () => {
+    const LOGIN = '/Users/me/.local/bin:/usr/bin:/bin';
+    const doc = {
+      space: {
+        projects: {
+          [REPO]: { tasks: [{ task: 'gh-1', usd: 1.25, active_min: 30, elapsed_min: 30, lead_min: 30 }] },
+        },
+      },
+    };
+    const notFound = (): Reply => ({ code: 127, stderr: 'env: automagik-herdr: No such file or directory\n' });
+    for (const [meter, priced] of [
+      [(): Reply => ({ code: 0, stdout: `${JSON.stringify(doc)}\n` }), true],
+      [notFound, false], // env could not find it on the login PATH
+      [(): Reply => Object.assign(new Error('spawn automagik-herdr ENOENT'), { code: 'ENOENT' }), false],
+    ] as const) {
+      const m = D.newModel();
+      const { io, wrapped } = host({
+        login: () => ({ code: 0, stdout: `\n__GENIE_LOGIN_PATH__${LOGIN}` }),
+        meter,
+        bin: (args) => (args[0] === 'list' ? { code: 0, stdout: listJson } : { code: 0 }),
+      });
+      await D.refresh(m, io);
+      expect(wrapped).toContainEqual(['/usr/bin/env', `PATH=${LOGIN}`, 'automagik-herdr', 'doc', 'get', 'herdr-meter']);
+      // The board itself is untouched: the binary, both cards, the forge result.
+      expect(m.bin).toEqual({ found: true, path: BIN });
+      expect(m.results).toEqual({ [REPO]: true });
+      const cards = D.lanesOf(REPO, m.lists[REPO].rows, D.feedRows(m.feed, REPO), NOW).flatMap((l) => l.cards);
+      expect(cards.map((c) => c.id).sort()).toEqual(['gh-1', 'gh-2']);
+      const gh1 = cards.find((c) => c.id === 'gh-1');
+      if (priced) expect(gh1?.cost).not.toBe('–');
+      else {
+        expect(m.feed).toBeNull();
+        for (const c of cards) expect([c.cost, c.time]).toEqual(['–', '–']);
+      }
+    }
   });
 
   test('no login shell answers: the inherited PATH is kept and every run is exactly as before', async () => {
