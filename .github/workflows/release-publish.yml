@@ -55,11 +55,6 @@ on:
         description: 'Authorizing source CI run ID'
         required: true
         type: string
-      trigger_sha:
-        description: 'Head SHA of the admitting CI run (automated channels only; source_sha is the built commit)'
-        required: false
-        type: string
-        default: ''
       draft:
         description: 'Create as draft (require manual promotion)?'
         required: false
@@ -89,11 +84,6 @@ jobs:
       attestations: read
     outputs:
       matrix: ${{ steps.build.outputs.matrix }}
-      update_path_matrix: ${{ steps.build.outputs.update_path_matrix }}
-      candidate_manifest_name: ${{ steps.build.outputs.candidate_manifest_name }}
-      candidate_manifest_sha256: ${{ steps.build.outputs.candidate_manifest_sha256 }}
-      previous_version: ${{ steps.build.outputs.previous_version }}
-      previous_manifest_sha256: ${{ steps.build.outputs.previous_manifest_sha256 }}
     steps:
       - name: Refuse re-dispatch of an already published release
         shell: bash
@@ -222,79 +212,27 @@ jobs:
             --manifest "$SELECTED_MANIFEST" \
             --artifact-dir dist \
             --output candidate-dogfood-matrix.json
-          # The two Linux legs of the SAME manifest-derived inventory. Its one
-          # consumer, release-update-path-smoke, was removed on 2026-11-05;
-          # this projection and its output are left for a follow-up cleanup. It is a projection of
-          # candidate-dogfood-matrix.json, never a hand-written platform list:
-          # a platform the manifest did not admit cannot appear here, and a
-          # renamed or dropped platform fails this job instead of silently
-          # narrowing the smoke.
-          UPDATE_PATH_MATRIX="$(jq -c '{
-            include: [.include[] | select(.platform == "linux-x64-glibc" or .platform == "linux-x64-musl")
-                      | {platform, runner, execution}]
-          }' candidate-dogfood-matrix.json)"
-          [[ "$(jq -er '.include | length' <<<"$UPDATE_PATH_MATRIX")" == 2 ]] || {
-            echo "::error::update-path.matrix the candidate manifest admitted no linux-x64-glibc/linux-x64-musl pair"
-            exit 1
-          }
-          CANDIDATE_MANIFEST_NAME="$(basename "$SELECTED_MANIFEST")"
-          CANDIDATE_MANIFEST_SHA256="$(jq -er '
-            [.include[].manifestSha256] | unique |
-            if length == 1 then .[0] else error("candidate manifest digest disagreement") end
-          ' candidate-dogfood-matrix.json)"
           [[ "$(jq -er '.include[0].version' candidate-dogfood-matrix.json)" == "$VERSION" ]]
           [[ "$(jq -er '.include[0].channel' candidate-dogfood-matrix.json)" == "$CHANNEL" ]]
 
           mapfile -t MANIFEST_PLATFORMS < <(jq -er '.include[].platform' candidate-dogfood-matrix.json)
 
-          # The cross-version parent is the exact stable manifest committed at
-          # the admitted control SHA. Download its immutable release triplets
-          # once, verify them without execution, and pass those same bytes to
-          # every native matrix entry. Historical releases are never
-          # retro-attested or assigned fabricated delivery descriptors.
+          # The candidate must be newer than the stable release committed at
+          # the control SHA. This reads one local file, so it cannot flake, and
+          # it is the only check that stops publish from creating a non-draft
+          # release below the current stable: reconcile-channel-manifests.sh
+          # refuses a downgrade of the manifests, not of the GitHub release.
           [[ -f .well-known/latest.json && ! -L .well-known/latest.json && -s .well-known/latest.json ]]
           PREVIOUS_VERSION="$(jq -er '.version | strings | select(test("^[0-9]+\\.[0-9]+\\.[0-9]+$"))' \
             .well-known/latest.json)"
           [[ "$PREVIOUS_VERSION" != "$VERSION" ]] || {
-            echo "::error::dogfood requires a prior stable N distinct from candidate T"
+            echo "::error::release.version_not_newer candidate ${VERSION} equals the current stable"
             exit 1
           }
           [[ "$(printf '%s\n%s\n' "$PREVIOUS_VERSION" "$VERSION" | sort -V | head -n 1)" == "$PREVIOUS_VERSION" ]] || {
-            echo "::error::dogfood previous stable N must be older than candidate T"
+            echo "::error::release.version_not_newer candidate ${VERSION} is older than the current stable ${PREVIOUS_VERSION}"
             exit 1
           }
-          mkdir previous-release
-          cp -- .well-known/latest.json previous-release/manifest.json
-          for platform in "${MANIFEST_PLATFORMS[@]}"; do
-            previous_tarball="genie-${PREVIOUS_VERSION}-${platform}.tar.gz"
-            for previous_name in \
-              "$previous_tarball" \
-              "${previous_tarball}.bundle" \
-              "${previous_tarball}.intoto.jsonl"; do
-              gh release download "v${PREVIOUS_VERSION}" \
-                --repo "$RELEASE_REPOSITORY" \
-                --pattern "$previous_name" \
-                --dir previous-release
-              [[ -f "previous-release/${previous_name}" &&
-                 ! -L "previous-release/${previous_name}" &&
-                 -s "previous-release/${previous_name}" ]] || {
-                echo "::error::prior stable input is missing or unsafe: ${previous_name}"
-                exit 1
-              }
-            done
-            bash scripts/verify-release.sh --local "previous-release/${previous_tarball}"
-          done
-          bun scripts/candidate-dogfood-matrix.ts \
-            --manifest previous-release/manifest.json \
-            --artifact-dir previous-release \
-            --output previous-dogfood-matrix.json
-          jq -e --slurpfile candidate candidate-dogfood-matrix.json '
-            [.include[].platform] == [$candidate[0].include[].platform]
-          ' previous-dogfood-matrix.json >/dev/null
-          PREVIOUS_MANIFEST_SHA256="$(jq -er '
-            [.include[].manifestSha256] | unique |
-            if length == 1 then .[0] else error("previous manifest digest disagreement") end
-          ' previous-dogfood-matrix.json)"
 
           MATRIX='[]'
           for platform in "${MANIFEST_PLATFORMS[@]}"; do
@@ -330,28 +268,7 @@ jobs:
           done
           {
             echo "matrix={\"include\":${MATRIX}}"
-            echo "update_path_matrix=${UPDATE_PATH_MATRIX}"
-            echo "candidate_manifest_name=${CANDIDATE_MANIFEST_NAME}"
-            echo "candidate_manifest_sha256=${CANDIDATE_MANIFEST_SHA256}"
-            echo "previous_version=${PREVIOUS_VERSION}"
-            echo "previous_manifest_sha256=${PREVIOUS_MANIFEST_SHA256}"
           } >> "$GITHUB_OUTPUT"
-
-      - name: Upload manifest-derived standalone dogfood matrix
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: codex-dogfood-candidate-matrix
-          path: candidate-dogfood-matrix.json
-          if-no-files-found: error
-          retention-days: 30
-
-      - name: Upload exact verified previous-stable inputs
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: codex-dogfood-previous-release
-          path: previous-release
-          if-no-files-found: error
-          retention-days: 30
 
       - name: Upload exact candidate manifest bytes
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

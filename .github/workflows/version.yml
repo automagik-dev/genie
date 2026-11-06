@@ -110,8 +110,8 @@ jobs:
           esac
           # v6 version scheme: 6.YYMMDD.N (daily counter preserved from v5,
           # which preserved it from v4; only the leading major moved). Must stay
-          # in sync with the local generator in scripts/version.ts, the
-          # v6.<date>.* tag glob below and VERSION_RE in scripts/release-guard.sh.
+          # in sync with the local generator in scripts/version.ts and the
+          # v6.<date>.* tag glob below (scripts/release-docs.test.ts pins all six).
           echo "prefix=6" >> "$GITHUB_OUTPUT"
           echo "Resolved: branch=${BRANCH}"
 

@@ -359,9 +359,31 @@ describe('Group E release and documentation contracts', () => {
     expect(prepare).toContain('mapfile -t MANIFEST_PLATFORMS');
     expect(prepare).toContain('for platform in "${MANIFEST_PLATFORMS[@]}"');
     expect(prepare).not.toContain('PLATFORMS=(linux-x64-glibc');
-    expect(prepare).toContain('candidate_manifest_sha256=${CANDIDATE_MANIFEST_SHA256}');
-    expect(prepare).toContain('bash scripts/verify-release.sh --local');
     expect(prepare).not.toContain('--previous-descriptor');
+
+    // The previous-stable download, its verify and the projections that fed the
+    // removed smokes and security gate are gone (2026-11-05 follow-up). What
+    // stays is the local check that the candidate is newer than the committed
+    // stable: publish has no other guard against a release below it.
+    for (const removed of [
+      'update_path_matrix',
+      'UPDATE_PATH_MATRIX',
+      'candidate_manifest_name',
+      'candidate_manifest_sha256',
+      'previous_version',
+      'previous_manifest_sha256',
+      'previous-release',
+      'previous-dogfood-matrix.json',
+      'verify-release.sh --local',
+      'codex-dogfood-candidate-matrix',
+      'codex-dogfood-previous-release',
+    ]) {
+      expect(workflow).not.toContain(removed);
+    }
+    expect(prepare).not.toContain('gh release download');
+    expect(prepare).toContain('PREVIOUS_VERSION="$(jq -er');
+    expect(prepare).toContain('release.version_not_newer candidate ${VERSION} equals the current stable');
+    expect(prepare).toContain('release.version_not_newer candidate ${VERSION} is older than the current stable');
 
     // An unavailable/skipped gate is never equivalent to success, and the
     // write-capable publication job stays shut. Exactly two edges.
@@ -430,12 +452,12 @@ describe('Group E release and documentation contracts', () => {
   });
 
   test('promotion and tag equivalence exclude only generated channel manifests', () => {
-    for (const path of ['.github/workflows/version.yml', 'scripts/release-guard.sh']) {
-      const source = read(path);
-      expect(source).not.toContain("':(exclude).well-known'");
-      for (const manifest of ['latest.json', 'dev.json']) {
-        expect(source).toContain(`':(exclude).well-known/${manifest}'`);
-      }
+    // version.yml is the one place the equivalence runs since release-guard.sh
+    // was deleted with the trusted-release guard (2026-11-05).
+    const source = read('.github/workflows/version.yml');
+    expect(source).not.toContain("':(exclude).well-known'");
+    for (const manifest of ['latest.json', 'dev.json']) {
+      expect(source).toContain(`':(exclude).well-known/${manifest}'`);
     }
   });
 
@@ -633,10 +655,16 @@ describe('Group E release and documentation contracts', () => {
     expect(verifyStep).toContain('${{ inputs.trigger_sha }}');
 
     // The publish-side consumer (the stable-release-security-gate re-verify)
-    // left with that gate on 2026-11-05. release.yml still passes the input,
-    // so release-publish.yml must keep declaring it or the call fails to start.
-    expect(publish).toContain('trigger_sha:');
+    // left with that gate on 2026-11-05, so release-publish.yml no longer
+    // declares the input and release.yml passes it to sign-attest only.
+    expect(publish).not.toContain('trigger_sha');
+    expect(publish).not.toContain('TRIGGER_SHA');
     expect(publish).not.toContain('generic_expected_sha');
+    const signAttestCall = release.split('\n  sign-attest:')[1]?.split('\n  publish:')[0] ?? '';
+    const publishCall = release.split('\n  publish:')[1] ?? '';
+    expect(signAttestCall).toContain('trigger_sha: ${{ inputs.trigger_sha }}');
+    expect(publishCall).toContain('uses: ./.github/workflows/release-publish.yml');
+    expect(publishCall).not.toContain('trigger_sha');
 
     // The verifier compares the trigger commit, and refuses to run exact
     // verification without a well-formed one.
@@ -1281,5 +1309,59 @@ describe('Group E release and documentation contracts', () => {
     for (const name of readdirSync(join(ROOT, '.github/workflows')).filter((entry) => entry.endsWith('.yml'))) {
       expect(read(`.github/workflows/${name}`), name).not.toContain('homolog');
     }
+  });
+});
+
+// --- release-major drift guard --------------------------------------------
+// The leading major is hardcoded in six places across two files that are
+// edited by different hands at different times: the local generator
+// (scripts/version.ts) and version.yml's own inline generator. Nothing at
+// runtime compares them — version.yml loads from main and the local generator
+// is `npm run version` only — so a half-applied bump mints tags the other side
+// disagrees with. The invariant is asserted statically: every site carries the
+// SAME major, and that major is 6. Moved here from release-guard.test.ts when
+// release-guard.sh was deleted.
+
+interface MajorSite {
+  readonly site: string;
+  readonly major: string;
+}
+
+/** Extract the major each hardcoding site carries; a missing site is a failure, not a skip. */
+function collectReleaseMajorSites(sources: { versionTs: string; versionYml: string }): MajorSite[] {
+  const pick = (site: string, source: string, pattern: RegExp): MajorSite => {
+    const match = pattern.exec(source);
+    if (!match?.[1]) throw new Error(`release-major site not found (renamed or removed): ${site} — ${pattern}`);
+    return { site, major: match[1] };
+  };
+  return [
+    pick('version.ts tag glob', sources.versionTs, /git tag --list "v(\d+)\.\$\{datePrefix\}\.\*"/),
+    pick('version.ts generator', sources.versionTs, /return `(\d+)\.\$\{datePrefix\}\.\$\{n\}`/),
+    pick('version.yml prefix', sources.versionYml, /echo "prefix=(\d+)" >> "\$GITHUB_OUTPUT"/),
+    pick('version.yml promotion tag glob', sources.versionYml, /git tag --list "v(\d+)\.\$\{TODAY\}\.\*"/),
+    pick('version.yml promotion sed', sources.versionYml, /sed -nE "s\/\^v(\d+)\\\\\./),
+    pick('version.yml promotion VERSION', sources.versionYml, /VERSION="(\d+)\.\$\{TODAY\}\./),
+  ];
+}
+
+describe('release major (drift guard across the two authorities)', () => {
+  const sources = () => ({
+    versionTs: read('scripts/version.ts'),
+    versionYml: read('.github/workflows/version.yml'),
+  });
+
+  test('every hardcoding site carries the same major, and it is 6', () => {
+    const sites = collectReleaseMajorSites(sources());
+    expect(sites).toHaveLength(6);
+    const majors = [...new Set(sites.map((entry) => entry.major))];
+    // The failure message names the offenders, so a half-applied bump reads as
+    // a list of sites rather than "expected 1, got 2".
+    expect(majors, sites.map((entry) => `${entry.site}=${entry.major}`).join(', ')).toHaveLength(1);
+    expect(majors[0]).toBe('6');
+  });
+
+  test('a renamed or deleted site fails loudly instead of passing vacuously', () => {
+    const gutted = { ...sources(), versionYml: 'echo "prefix=x"\n' };
+    expect(() => collectReleaseMajorSites(gutted)).toThrow(/release-major site not found/);
   });
 });
