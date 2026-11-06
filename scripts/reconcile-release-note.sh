@@ -75,8 +75,8 @@ resolve_release() {
 resolve_release
 
 # A stable release is monotonic. Replaying the same immutable version through a
-# prerelease channel must never bypass production approval to demote the release
-# or clobber its assets while latest.json still names it.
+# prerelease channel must never demote the release or clobber its assets while
+# latest.json still names it.
 if [[ "${release_exists}" == "true" && "${CHANNEL}" != "stable" ]]; then
   if [[ "${is_prerelease}" != "true" && "${is_draft}" != "true" ]]; then
     echo "refusing to demote existing stable release ${TAG} through channel ${CHANNEL}" >&2

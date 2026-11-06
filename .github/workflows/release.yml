@@ -118,7 +118,6 @@ jobs:
       source_sha: ${{ inputs.source_sha }}
       source_branch: ${{ inputs.source_branch }}
       source_ci_run_id: ${{ inputs.source_ci_run_id }}
-      trigger_sha: ${{ inputs.trigger_sha }}
       draft: false
     # Without inherit, the called workflow's secrets context is empty and the
     # manifests job sees RELEASE_MANIFESTS_APP_ID/_PRIVATE_KEY as unset even
