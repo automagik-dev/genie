@@ -31,7 +31,7 @@ import {
   fmtMin,
   fmtUsd,
   focusedProjectOf,
-  forgeNote,
+  forgeNoteOf,
   lanesOf,
   listAge,
   localFolders,
@@ -166,6 +166,7 @@ export default class Tasks extends View {
       this.m,
       {
         exec,
+        shell: globalThis.process?.env?.SHELL ?? null,
         probe: (folders) => exec('sh', ['-c', PROBE_SCRIPT, 'sh', ...folders]),
         spaces,
         home,
@@ -181,8 +182,7 @@ export default class Tasks extends View {
   }
 
   forgeNote(p) {
-    if (p in this.m.results) return this.m.results[p] ? null : 'forge not synced';
-    return forgeNote(this.m.sched, p);
+    return forgeNoteOf(this.m, p);
   }
 
   // ---------- state ----------
