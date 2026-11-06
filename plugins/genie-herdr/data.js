@@ -89,28 +89,47 @@ const PATH_MARK = '__GENIE_LOGIN_PATH__';
 export const LOGIN_PATH_COMMAND = `printf '\\n${PATH_MARK}%s' "$PATH"`;
 const ENV = '/usr/bin/env';
 
-/** The login shells to ask, in order and once each: `$SHELL`, then /bin/zsh, then /bin/sh. */
-export const loginShells = (shell) => [...new Set([shell, '/bin/zsh', '/bin/sh'].filter((s) => s?.startsWith('/')))];
+/**
+ * The login shells to ask, in order, as `[command, args]`. First the person's own `$SHELL`: Herdr's
+ * runtime has no `process.env`, but the environment its `exec` hands a program does carry `SHELL`,
+ * so `/bin/sh` reads it and execs it (`/bin/zsh` when unset), LOGIN_PATH_COMMAND passed as `$1`,
+ * an argv element no shell parses. Then `/bin/zsh`, then `/bin/sh`. `-l` reads the login profile
+ * files (`.zprofile`, `.bash_profile`, `.profile`), not `.zshrc` / `.bashrc`, on purpose: `-i`
+ * would bring in prompts and plugin managers that can hang until the exec limit.
+ */
+export const LOGIN_CANDIDATES = [
+  ['/bin/sh', ['-c', 'exec "${SHELL:-/bin/zsh}" -l -c "$1"', 'sh', LOGIN_PATH_COMMAND]],
+  ['/bin/zsh', ['-l', '-c', LOGIN_PATH_COMMAND]],
+  ['/bin/sh', ['-l', '-c', LOGIN_PATH_COMMAND]],
+];
 
-/** A login shell's outcome as its PATH: the text after the last marker, or null when there is none. */
+/**
+ * A PATH a POSIX shell would build: every non-empty `:` entry absolute, and none holding another
+ * path after whitespace. That rejects what a non-POSIX `$SHELL` prints for LOGIN_PATH_COMMAND (a
+ * literal `$PATH` from nushell, fish 2's space-joined list) and stray profile text alike.
+ */
+const isPosixPath = (path) =>
+  path.split(':').every((entry) => entry === '' || (entry.startsWith('/') && !/\s\//.test(entry)));
+
+/** A login shell's outcome as its PATH: the text after the last marker, or null when there is none or it is no PATH. */
 export function parseLoginPath(outcome) {
   if (!outcome?.ok) return null;
   const at = outcome.stdout.lastIndexOf(PATH_MARK);
   if (at < 0) return null;
   const path = outcome.stdout.slice(at + PATH_MARK.length).replace(/\n+$/, '');
-  return path || null;
+  return path && isPosixPath(path) ? path : null;
 }
 
 /**
  * The person's login PATH, or null to keep the inherited one. Herdr launched from Finder or the
  * Dock inherits launchd's `/usr/bin:/bin:/usr/sbin:/sbin`, where `gh` and `glab` are not, and its
  * `exec` takes no environment; the login shell is where the person set their PATH up (hc starts
- * one on macOS for the same reason). Each shell runs as `<shell> -l -c LOGIN_PATH_COMMAND`, under
- * Herdr's 30 s exec limit; the first that answers wins, and none answering keeps the inherited PATH.
+ * one on macOS for the same reason). LOGIN_CANDIDATES run in order, each under Herdr's 30 s exec
+ * limit; the first that answers with a PATH wins, and none answering keeps the inherited PATH.
  */
 export async function resolveLoginPath(io) {
-  for (const shell of loginShells(io.shell)) {
-    const path = parseLoginPath(await settle(io.exec(shell, ['-l', '-c', LOGIN_PATH_COMMAND])));
+  for (const [cmd, args] of LOGIN_CANDIDATES) {
+    const path = parseLoginPath(await settle(io.exec(cmd, args)));
     if (path) return path;
   }
   return null;
@@ -619,7 +638,7 @@ async function binaryGone(m, io, outcomes) {
 }
 
 /**
- * One refresh of model `m`. `io` is the host: `exec(cmd, args)`, `shell` (`$SHELL`), `probe(folders)`
+ * One refresh of model `m`. `io` is the host: `exec(cmd, args)`, `probe(folders)`
  * (main.js runs PROBE_SCRIPT), `spaces()`, `home()`, `terminals()`, `focusedFolder()`, `workersFile`,
  * `now()`, `notify()` and `publish()`. Order: the login PATH (once per model), binary, probe, the
  * workers tail only when needed, realpaths, the plan, `list` for every project, `doc get`, the badge,

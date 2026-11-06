@@ -549,6 +549,8 @@ describe('refresh (data.js `refresh`, the host injected)', () => {
   const BIN = '/opt/genie/bin/genie-rs';
   const REPO = '/work/repo';
   type Reply = { code: number; stdout?: string; stderr?: string } | Error;
+  /** D.LOGIN_CANDIDATES by name: the person's `$SHELL` (through /bin/sh), then /bin/zsh, then /bin/sh. */
+  const SHELL_LABELS = ['$SHELL', '/bin/zsh', '/bin/sh'];
   /**
    * A fake host. `bin` answers `genie-rs` runs; BIN_SCRIPT finds BIN while `binThere()`. `login`
    * answers each login shell (by default none starts, so the inherited PATH is kept and every run
@@ -562,7 +564,6 @@ describe('refresh (data.js `refresh`, the host injected)', () => {
     workersText = '',
     projects = [REPO],
     now = () => NOW,
-    shell = null as string | null,
     login = (_shell: string): Reply => Object.assign(new Error('spawn ENOENT'), { code: 'ENOENT' }),
     meter = (): Reply => ({ code: 3 }),
   }: {
@@ -572,7 +573,6 @@ describe('refresh (data.js `refresh`, the host injected)', () => {
     workersText?: string;
     projects?: string[];
     now?: () => number;
-    shell?: string | null;
     login?: (shell: string) => Reply;
     meter?: () => Reply;
   }) {
@@ -582,15 +582,18 @@ describe('refresh (data.js `refresh`, the host injected)', () => {
     const answer = (r: Reply) =>
       r instanceof Error ? Promise.reject(r) : Promise.resolve({ stdout: '', stderr: '', ...r });
     const io = {
-      shell,
       exec: (cmd: string, args: string[] = []): Promise<unknown> => {
         if (cmd === '/usr/bin/env') {
           wrapped.push([cmd, ...args]);
           return io.exec(args[1], args.slice(2));
         }
-        if (args[0] === '-l' && args[1] === '-c' && args[2] === D.LOGIN_PATH_COMMAND) {
-          shells.push(cmd);
-          return answer(login(cmd));
+        const candidate = D.LOGIN_CANDIDATES.findIndex(
+          ([c, a]) => c === cmd && a.length === args.length && a.every((x, i) => x === args[i]),
+        );
+        if (candidate >= 0) {
+          const label = SHELL_LABELS[candidate];
+          shells.push(label);
+          return answer(login(label));
         }
         calls.push([cmd, ...args]);
         if (cmd === 'sh' && args[1] === D.BIN_SCRIPT) return answer({ code: binThere() ? 0 : 1, stdout: `${BIN}\n` });
@@ -799,13 +802,12 @@ describe('refresh (data.js `refresh`, the host injected)', () => {
     const LOGIN = '/Users/me/.local/bin:/opt/homebrew/bin:/usr/bin:/bin';
     const m = D.newModel();
     const { io, calls, wrapped, shells } = host({
-      shell: '/bin/fish',
       login: () => ({ code: 0, stdout: `Welcome!\n\n__GENIE_LOGIN_PATH__${LOGIN}` }),
       bin: (args) => (args[0] === 'list' ? { code: 0, stdout: listJson } : { code: 0 }),
     });
     await D.refresh(m, io);
     await D.refresh(m, io);
-    expect(shells).toEqual(['/bin/fish']); // once per model, the first shell that answered
+    expect(shells).toEqual(['$SHELL']); // once per model, the first shell that answered
     expect(m.path).toBe(LOGIN);
     expect(wrapped).toContainEqual(['/usr/bin/env', `PATH=${LOGIN}`, 'sh', '-c', D.BIN_SCRIPT]);
     expect(wrapped).toContainEqual(['/usr/bin/env', `PATH=${LOGIN}`, BIN, 'list', '--json', '--project', REPO]);
@@ -865,13 +867,12 @@ describe('refresh (data.js `refresh`, the host injected)', () => {
     ]) {
       const m = D.newModel();
       const { io, calls, wrapped, shells } = host({
-        shell: '/bin/bash',
         login,
         bin: (args) => (args[0] === 'list' ? { code: 0, stdout: listJson } : { code: 0 }),
       });
       await D.refresh(m, io);
       await D.refresh(m, io);
-      expect(shells).toEqual(['/bin/bash', '/bin/zsh', '/bin/sh']); // each asked once, then never again
+      expect(shells).toEqual(['$SHELL', '/bin/zsh', '/bin/sh']); // each asked once, then never again
       expect(m.path).toBeNull();
       expect(wrapped).toEqual([]);
       expect(calls).toContainEqual([BIN, 'forge-sync', '--project', REPO]);
@@ -879,16 +880,52 @@ describe('refresh (data.js `refresh`, the host injected)', () => {
     }
   });
 
+  test("refresh's first login exec is /bin/sh running $SHELL, no shell injected from JS", async () => {
+    const m = D.newModel();
+    const execs: string[][] = [];
+    const { io } = host({ bin: () => ({ code: 0, stdout: '[]' }) });
+    const exec = io.exec;
+    io.exec = (cmd: string, args: string[] = []) => {
+      execs.push([cmd, ...args]);
+      return exec(cmd, args);
+    };
+    await D.refresh(m, io);
+    expect(execs[0]).toEqual(['/bin/sh', '-c', 'exec "${SHELL:-/bin/zsh}" -l -c "$1"', 'sh', D.LOGIN_PATH_COMMAND]);
+    expect('shell' in io).toBe(false);
+    const main = readFileSync(join(import.meta.dir, 'main.js'), 'utf8');
+    expect(main).not.toContain('process'); // Herdr's runtime has no process.env
+  });
+
   test('$SHELL fails, /bin/zsh answers: the fallback order', async () => {
     const m = D.newModel();
     const { io, shells } = host({
-      shell: '/usr/local/bin/broken',
       login: (sh) => (sh === '/bin/zsh' ? { code: 0, stdout: '\n__GENIE_LOGIN_PATH__/z/bin' } : { code: 127 }),
       bin: () => ({ code: 0, stdout: '[]' }),
     });
     await D.refresh(m, io);
-    expect(shells).toEqual(['/usr/local/bin/broken', '/bin/zsh']);
+    expect(shells).toEqual(['$SHELL', '/bin/zsh']);
     expect(m.path).toBe('/z/bin');
+  });
+
+  test("a non-POSIX $SHELL answer (nushell's literal $PATH, a space-joined list) is no PATH: the next shell is used", async () => {
+    for (const answer of [
+      '\n__GENIE_LOGIN_PATH__$PATH', // nushell: no interpolation in "$PATH"
+      '\n__GENIE_LOGIN_PATH__/usr/local/bin /usr/bin /bin', // fish 2: a list joined with spaces
+      '\n__GENIE_LOGIN_PATH__/usr/bin:bin:/bin', // a relative entry
+    ]) {
+      const m = D.newModel();
+      const { io, shells, wrapped } = host({
+        login: (sh) =>
+          sh === '$SHELL'
+            ? { code: 0, stdout: answer }
+            : { code: 0, stdout: '\n__GENIE_LOGIN_PATH__/z/bin:/usr/bin:/bin' },
+        bin: () => ({ code: 0, stdout: '[]' }),
+      });
+      await D.refresh(m, io);
+      expect(shells).toEqual(['$SHELL', '/bin/zsh']);
+      expect(m.path).toBe('/z/bin:/usr/bin:/bin');
+      expect(wrapped.every((w) => w[1] === 'PATH=/z/bin:/usr/bin:/bin')).toBe(true);
+    }
   });
 
   test('under the login PATH a missing genie-rs (env exit 127, 126) is still the missing-binary line', async () => {
@@ -1166,12 +1203,15 @@ describe('login PATH (the strings main.js hands to exec, run for real)', () => {
     expect(D.forgeReason(null)).toBeNull();
   });
 
-  test('loginShells: $SHELL first, then /bin/zsh, then /bin/sh, each once; a relative or empty $SHELL is skipped', () => {
-    expect(D.loginShells('/opt/homebrew/bin/fish')).toEqual(['/opt/homebrew/bin/fish', '/bin/zsh', '/bin/sh']);
-    expect(D.loginShells('/bin/zsh')).toEqual(['/bin/zsh', '/bin/sh']);
-    expect(D.loginShells(null)).toEqual(['/bin/zsh', '/bin/sh']);
-    expect(D.loginShells('')).toEqual(['/bin/zsh', '/bin/sh']);
-    expect(D.loginShells('zsh')).toEqual(['/bin/zsh', '/bin/sh']);
+  test('parseLoginPath keeps a POSIX PATH (spaces inside an entry, empty entries) and rejects anything else', () => {
+    const p = (text: string) =>
+      D.parseLoginPath({ ok: true, code: 0, stdout: `\n__GENIE_LOGIN_PATH__${text}`, stderr: '' });
+    expect(p('/opt/my tools/bin:/usr/bin:/bin')).toBe('/opt/my tools/bin:/usr/bin:/bin');
+    expect(p('/a::/b:')).toBe('/a::/b:');
+    expect(p('$PATH')).toBeNull();
+    expect(p('/usr/local/bin /usr/bin /bin')).toBeNull();
+    expect(p('/usr/bin:./node_modules/.bin')).toBeNull();
+    expect(p('')).toBeNull();
   });
 
   /** Herdr's exec, played by Bun: resolves `{code, stdout, stderr}`, rejects when the program cannot start. */
@@ -1197,8 +1237,9 @@ describe('login PATH (the strings main.js hands to exec, run for real)', () => {
       `#!/bin/sh\necho 'Last login: today'\nPATH='${WEIRD.replace(/'/g, `'\\''`)}'\nexport PATH\nexec /bin/sh -c "$3"\n`,
     );
     chmodSync(fake, 0o755);
-    const exec = realExec({ HOME: root, PATH: '/usr/bin:/bin:/usr/sbin:/sbin' });
-    const path = await D.resolveLoginPath({ shell: fake, exec });
+    // Herdr's exec hands the program its own environment, SHELL included: /bin/sh execs it.
+    const exec = realExec({ HOME: root, PATH: '/usr/bin:/bin:/usr/sbin:/sbin', SHELL: fake });
+    const path = await D.resolveLoginPath({ exec });
     expect(path).toBe(WEIRD);
 
     // The very argv refresh builds, run for real: genie-rs (a stub) sees that PATH and its own args.
@@ -1214,17 +1255,30 @@ describe('login PATH (the strings main.js hands to exec, run for real)', () => {
     expect(readdirSync(root).sort()).toEqual(['fake-shell', 'genie-rs']); // nothing ran the $(touch)
   });
 
+  test('a nushell-like $SHELL that prints a literal $PATH falls through to a real login shell', async () => {
+    const root = tmp();
+    const nu = join(root, 'nu');
+    writeFileSync(nu, "#!/bin/sh\nprintf '\\n__GENIE_LOGIN_PATH__$PATH'\n");
+    chmodSync(nu, 0o755);
+    const exec = realExec({ HOME: root, PATH: '/usr/bin:/bin:/usr/sbin:/sbin', SHELL: nu });
+    expect((await exec(...D.LOGIN_CANDIDATES[0])).stdout).toBe('\n__GENIE_LOGIN_PATH__$PATH');
+    const path = await D.resolveLoginPath({ exec });
+    expect(path).not.toBe('$PATH');
+    expect(path).toEqual(expect.stringContaining('/bin'));
+  });
+
   test('$SHELL that fails falls through to the next login shell; none at all keeps the inherited PATH', async () => {
     const root = tmp();
     const failing = join(root, 'failing-shell');
     writeFileSync(failing, '#!/bin/sh\nexit 1\n');
     chmodSync(failing, 0o755);
-    const exec = realExec({ HOME: root, PATH: '/usr/bin:/bin:/usr/sbin:/sbin' });
-    const next = await D.resolveLoginPath({ shell: failing, exec });
+    const exec = realExec({ HOME: root, PATH: '/usr/bin:/bin:/usr/sbin:/sbin', SHELL: failing });
+    const next = await D.resolveLoginPath({ exec });
     expect(next).toEqual(expect.stringContaining('/bin')); // /bin/zsh or /bin/sh answered
+    const first = D.LOGIN_CANDIDATES[0];
     const none = await D.resolveLoginPath({
-      shell: failing,
-      exec: (cmd: string, args: string[]) => (cmd === failing ? exec(cmd, args) : Promise.reject(new Error('ENOENT'))),
+      exec: (cmd: string, args: string[]) =>
+        cmd === first[0] && args[0] === first[1][0] ? exec(cmd, args) : Promise.reject(new Error('ENOENT')),
     });
     expect(none).toBeNull();
     expect(D.loginArgv(null, '/b/genie-rs', ['list'])).toEqual(['/b/genie-rs', ['list']]);

@@ -166,7 +166,6 @@ export default class Tasks extends View {
       this.m,
       {
         exec,
-        shell: globalThis.process?.env?.SHELL ?? null,
         probe: (folders) => exec('sh', ['-c', PROBE_SCRIPT, 'sh', ...folders]),
         spaces,
         home,
