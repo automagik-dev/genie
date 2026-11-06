@@ -11,9 +11,9 @@
  *
  * Moved verbatim out of the retired Codex delivery-evidence module (whose content-addressed
  * on-disk pack store belonged to the retired Codex activation protocol) because
- * two surviving release gates consume exactly this verification half:
+ * two surviving consumers use exactly this verification half:
  * `scripts/verify-delivery-evidence-pack.ts` (the `delivery-evidence-compatibility`
- * and `release-update-path-smoke` jobs) and `genie update --publish-local-delivery`.
+ * release job) and `genie update --publish-local-delivery`.
  */
 
 import { createHash } from 'node:crypto';
