@@ -111,8 +111,8 @@ function stageRewrittenFilesInCi(rootDir: string, paths: string[]): void {
 /**
  * The authoritative version-file set, in stamping order. Three files since wish
  * `skills-everywhere-b` retired the Codex/Claude/Kimi/Hermes/pi manifests; the
- * same list is enumerated by `scripts/release-payload-version.ts`,
- * `scripts/release-guard.sh` and `.github/workflows/version.yml`, which is why
+ * same list is enumerated by `scripts/release-payload-version.ts`
+ * and `.github/workflows/version.yml`, which is why
  * `--check` exists: it is the only way to read this set without bumping.
  */
 export const VERSION_FILES = ['package.json', 'plugins/genie/orca-plugin.json', 'plugins/genie/package.json'] as const;
