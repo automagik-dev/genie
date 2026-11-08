@@ -256,12 +256,11 @@ describe('pins agree across the workflows and the shipped source', () => {
 /**
  * The Bun pin set (#3194, council 2026-11-03). Genie must stay seamless on both
  * supported Bun lines, so the two unit legs run each one as a REQUIRED matrix
- * entry; every other job, and in particular everything that builds a shipped
- * artifact, stays on the 1.3 line until the 1.4 pin move lands on its own.
+ * entry; every other job, including release and tarball builds, uses Bun 1.4.4.
  */
 describe('Bun pin set', () => {
   const SUPPORTED_BUN_LINES = ['1.3.11', '1.4.4'];
-  const ARTIFACT_PIN = '1.3.11';
+  const ARTIFACT_PIN = '1.4.4';
 
   function setupBunVersions(definition: YamlRecord): unknown[] {
     const steps = definition.steps;
