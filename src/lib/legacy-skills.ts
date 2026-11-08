@@ -18,11 +18,10 @@
  * embedded in `legacy-skills-catalog.ts` as its digest (`legacy-skill-digest.ts`); a directory
  * outside the current inventory whose `SKILL.md` carries one of them AND whose
  * name is a retired genie skill name or a `genie-` prefixed one is genie's own,
- * and is retired backup-first like any other retired skill. Either half alone
- * is only reported: `brain` is a live third-party product on the dogfood host
- * today and genie once shipped a `brain` skill too (name alone), and a user's
- * fork of a genie skill under a custom name keeps genie's description
- * (description alone). A fork of a CURRENT skill is never even a candidate,
+ * and is retired backup-first like any other retired skill. A name alone is
+ * no claim: another product can own a name genie once used, so it is silent.
+ * A user's fork under a custom name that keeps a retired genie description is
+ * only reported, never moved. A fork of a CURRENT skill is never even a candidate,
  * because current descriptions are deliberately absent from the catalog.
  */
 import { lstatSync, readFileSync, readdirSync } from 'node:fs';
@@ -38,8 +37,7 @@ import { SKILLS_CLI_AGENTS, agentSkillsHome } from './skills-agents.js';
 /**
  * `proven`: a retired genie description under a genie name — retired backup-first.
  * `marker`: a `.genie-*` transaction dir a deleted runtime left — genie's by name.
- * `unproven`: a retired genie NAME or a retired genie DESCRIPTION, not both —
- * reported, never moved.
+ * `unproven`: a retired genie description without a genie name — reported, never moved.
  */
 export type LegacySkillLeftoverKind = 'proven' | 'marker' | 'unproven';
 
@@ -118,7 +116,7 @@ export function classifyLegacySkillEntry(
   const genieName = isGenieSkillName(entry);
   const genieDescription = DESCRIPTIONS.has(legacySkillDigest(description));
   if (genieName && genieDescription) return { agentDir, entry, kind: 'proven' };
-  if (genieName || genieDescription) return { agentDir, entry, kind: 'unproven' };
+  if (genieDescription) return { agentDir, entry, kind: 'unproven' };
   return null;
 }
 

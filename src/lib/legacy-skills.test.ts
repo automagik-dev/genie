@@ -103,7 +103,12 @@ describe('readSkillDescription', () => {
 });
 
 describe('classifyLegacySkillEntry', () => {
-  test('a retired description under a genie name is proven; either half alone is only reported', () => {
+  test.each(['brain', 'brain-init', 'dream'])('%s with another product description is not a leftover', (name) => {
+    seedSkill(name, `---\nname: ${name}\ndescription: Brain-owned skill for knowledge and memory\n---`);
+    expect(classifyLegacySkillEntry(agentDir, name, [])).toBeNull();
+  });
+
+  test('a retired description under a genie name is proven; a description-only fork is only reported', () => {
     seedSkill('pm', `---\nname: pm\ndescription: "${SHIPPED_PM_DESCRIPTION}"\n---`);
     // The 2026-07 `genie-review` residue: never a `skills/genie-review` dir in
     // history, but the `genie-` prefix is genie's and its description is a
@@ -120,7 +125,7 @@ describe('classifyLegacySkillEntry', () => {
       entry: 'genie-review',
       kind: 'proven',
     });
-    expect(classifyLegacySkillEntry(agentDir, 'brain', [])).toEqual({ agentDir, entry: 'brain', kind: 'unproven' });
+    expect(classifyLegacySkillEntry(agentDir, 'brain', [])).toBeNull();
     expect(classifyLegacySkillEntry(agentDir, 'my-pm', [])).toEqual({ agentDir, entry: 'my-pm', kind: 'unproven' });
   });
 
@@ -166,13 +171,13 @@ describe('findLegacySkillLeftovers', () => {
     mkdirSync(other, { recursive: true });
     seedSkill('pm', `---\nname: pm\ndescription: "${SHIPPED_PM_DESCRIPTION}"\n---`);
     mkdirSync(join(agentDir, '.genie-codex-fallback-retirement'));
-    mkdirSync(join(other, 'wizard'));
-    writeFileSync(join(other, 'wizard', 'SKILL.md'), '---\nname: wizard\ndescription: not genie’s text\n---\n');
+    mkdirSync(join(other, 'my-pm'));
+    writeFileSync(join(other, 'my-pm', 'SKILL.md'), `---\nname: my-pm\ndescription: ${SHIPPED_PM_DESCRIPTION}\n---\n`);
 
     expect(findLegacySkillLeftovers([agentDir, other, agentDir, join(home, 'absent')], [])).toEqual([
       { agentDir, entry: '.genie-codex-fallback-retirement', kind: 'marker' },
       { agentDir, entry: 'pm', kind: 'proven' },
-      { agentDir: other, entry: 'wizard', kind: 'unproven' },
+      { agentDir: other, entry: 'my-pm', kind: 'unproven' },
     ]);
   });
 });
