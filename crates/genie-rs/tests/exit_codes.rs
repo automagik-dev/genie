@@ -340,12 +340,17 @@ fn t1_list_and_status_carry_the_lifecycle_timestamps_worktree_and_project() {
         "worktree",
         "project",
         "age_min",
+        "task_open_min",
+        "task_lead_min",
         "pr_open_min",
         "pr_lead_min",
     ];
     expected.sort_unstable();
     assert_eq!(keys, expected, "every old key kept, lifecycle and time fields added");
     let task = |id: &str| list.as_array().unwrap().iter().find(|t| t["task"] == id).unwrap().clone();
+    let restarted = task("gh-2");
+    assert_eq!(restarted["task_open_min"].as_i64(), restarted["age_min"].as_i64().map(|m| m - 120));
+    assert!(restarted["pr_open_min"].is_null());
     let life =
         |t: &Value| ["created_at", "opened_at", "merged_at", "closed_at", "worktree", "project"].map(|k| t[k].clone());
     let (gh1, gh2, gh3) = (task("gh-1"), task("gh-2"), task("gh-3"));
@@ -495,21 +500,30 @@ fn board_time_fields_are_shared_by_list_and_status_without_changing_export_v1() 
         let status_out = fx.run(&["status", task["task"].as_str().unwrap(), "--json"]);
         assert!(status_out.stderr.is_empty());
         let status = json_out(&status_out);
-        for key in ["age_min", "pr_open_min", "pr_lead_min"] {
+        for key in ["age_min", "task_open_min", "task_lead_min", "pr_open_min", "pr_lead_min"] {
             assert!(task.get(key).is_some(), "{key} is present even when null");
             assert_eq!(task[key], status[key]);
         }
     }
     assert!(list[0]["age_min"].as_i64().unwrap() > 0);
+    assert_eq!(list[0]["task_lead_min"], 40);
+    assert!(list[0]["task_open_min"].is_null());
     assert_eq!(list[0]["pr_lead_min"], 30);
     assert!(list[0]["pr_open_min"].is_null());
+    assert!(list[1]["task_lead_min"].is_null());
+    assert!(list[2]["task_open_min"].is_null());
     assert!(list[1]["pr_lead_min"].is_null());
     assert!(list[2]["pr_open_min"].as_i64().unwrap() > 0);
     assert_eq!(fs::read(fx.home.join("tasks.jsonl")).unwrap(), before);
     for line in String::from_utf8(before).unwrap().lines() {
         let event: Value = serde_json::from_str(line).unwrap();
         assert_eq!(event["v"], 1);
-        assert!(event.get("age_min").is_none() && event.get("pr_lead_min").is_none());
+        assert!(
+            event.get("age_min").is_none()
+                && event.get("pr_lead_min").is_none()
+                && event.get("task_open_min").is_none()
+                && event.get("task_lead_min").is_none()
+        );
     }
 }
 

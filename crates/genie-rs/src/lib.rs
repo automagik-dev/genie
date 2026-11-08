@@ -175,6 +175,8 @@ fn task_json(listed: &Listed) -> Value {
         "worktree": life.worktree,
         "project": t.project,
         "age_min": listed.age_min,
+        "task_open_min": listed.task_open_min,
+        "task_lead_min": listed.task_lead_min,
         "pr_open_min": listed.pr_open_min,
         "pr_lead_min": listed.pr_lead_min,
     })

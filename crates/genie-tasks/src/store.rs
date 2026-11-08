@@ -262,6 +262,10 @@ pub struct Listed {
     pub lifecycle: Lifecycle,
     /// Now minus the first recorded creation, across all restarts.
     pub age_min: Option<i64>,
+    /// Now minus this epoch's creation, only while created or opened.
+    pub task_open_min: Option<i64>,
+    /// This epoch's merge/close minus its creation, only in a terminal state.
+    pub task_lead_min: Option<i64>,
     /// Now minus this epoch's opening, only while its PR is open.
     pub pr_open_min: Option<i64>,
     /// This epoch's merge/close minus its opening, only in a terminal state.
@@ -419,7 +423,7 @@ fn open_conn(db_path: &Path, access: Access) -> Result<Connection, Error> {
     };
     match version {
         Some(SCHEMA_VERSION) if access == Access::Write => {
-            // Additive index for existing schema-2 databases; no row format or history changes.
+            // Additive index for existing schema-2 databases; measured need is recorded in schema.sql.
             conn.execute_batch(
                 "CREATE INDEX IF NOT EXISTS v7_task_events_by_branch_url ON v7_task_events (project, branch, url)",
             )?;
@@ -569,7 +573,7 @@ fn timestamp(s: &str) -> Option<Timestamp<'_>> {
 }
 
 /// Missing, invalid or reversed endpoints stay unknown; valid durations floor to whole minutes.
-fn minutes_between(start: Option<&str>, end: Option<&str>) -> Option<i64> {
+pub(crate) fn minutes_between(start: Option<&str>, end: Option<&str>) -> Option<i64> {
     let (start, end) = (timestamp(start?)?, timestamp(end?)?);
     // Borrow one whole second when the fractional difference is negative, before minute division.
     // Comparing digits preserves even sub-nanosecond reversals without float rounding or truncation.
@@ -634,18 +638,23 @@ impl Store {
             (SELECT MAX(b.seq) FROM v7_task_events b WHERE b.project = t.project \
             AND b.task_key = t.task_key AND b.event IN ('created', 'closed', 'merged') \
             AND b.seq < t.last_seq), 0) ORDER BY e.seq DESC LIMIT 1)";
+        let created = "(SELECT NULLIF(e.at, '') FROM v7_task_events e WHERE e.project = t.project \
+            AND e.task_key = t.task_key AND e.event = 'created' AND e.seq > COALESCE(\
+            (SELECT MAX(b.seq) FROM v7_task_events b WHERE b.project = t.project \
+            AND b.task_key = t.task_key AND b.event IN ('closed', 'merged') \
+            AND b.seq < t.last_seq), 0) ORDER BY e.seq DESC LIMIT 1)";
         let sql = format!(
             "WITH times AS (SELECT t.project, t.task_key, t.task, t.state, t.title, t.lead, t.forge, \
              t.url, t.branch, t.last_seq, t.updated_at, {} AS created_at, {} AS worktree, \
              {} AS opened_at, {} AS merged_at, {} AS closed_at, {} AS first_created, \
-             {opened} AS epoch_opened, \
+             {opened} AS epoch_opened, {created} AS epoch_created, \
              (SELECT NULLIF(e.at, '') FROM v7_task_events e WHERE e.project = t.project \
              AND e.task_key = t.task_key AND e.seq = t.last_seq \
              AND e.event IN ('merged', 'closed')) AS terminal_at \
              FROM v7_tasks t WHERE t.project = ?1) \
              SELECT project, task_key, task, state, title, lead, forge, url, branch, last_seq, \
              updated_at, created_at, worktree, opened_at, merged_at, closed_at, \
-             first_created, epoch_opened, terminal_at FROM times ORDER BY task_key",
+             first_created, epoch_opened, terminal_at, epoch_created FROM times ORDER BY task_key",
             lifecycle_sql("at", "created", true),
             lifecycle_sql("worktree", "created", true),
             lifecycle_sql("at", "opened", false),
@@ -684,6 +693,17 @@ impl Store {
             let first_created: Option<String> = r.get(16)?;
             let epoch_opened: Option<String> = r.get(17)?;
             let terminal_at: Option<String> = r.get(18)?;
+            let epoch_created: Option<String> = r.get(19)?;
+            let task_open_min = if matches!(row.state, TaskState::Created | TaskState::Opened) {
+                minutes_between(epoch_created.as_deref(), Some(&now))
+            } else {
+                None
+            };
+            let task_lead_min = if matches!(row.state, TaskState::Merged | TaskState::Closed) {
+                minutes_between(epoch_created.as_deref(), terminal_at.as_deref())
+            } else {
+                None
+            };
             let age_min = minutes_between(first_created.as_deref(), Some(&now));
             let pr_open_min = if row.state == TaskState::Opened {
                 minutes_between(epoch_opened.as_deref(), Some(&now))
@@ -695,7 +715,7 @@ impl Store {
             } else {
                 None
             };
-            Ok(Listed { row, lifecycle, age_min, pr_open_min, pr_lead_min })
+            Ok(Listed { row, lifecycle, age_min, task_open_min, task_lead_min, pr_open_min, pr_lead_min })
         })?;
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }

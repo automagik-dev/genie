@@ -308,7 +308,7 @@ export function forgeReason(outcome) {
 // ---------- list ----------
 
 const ROW_FIELDS =
-  'task task_key state lane title lead forge url branch updated_at created_at opened_at merged_at closed_at worktree project age_min pr_open_min pr_lead_min'.split(
+  'task task_key state lane title lead forge url branch updated_at created_at opened_at merged_at closed_at worktree project age_min task_open_min task_lead_min pr_open_min pr_lead_min'.split(
     ' ',
   );
 
@@ -369,18 +369,18 @@ export function feedRowFor(rows, task, url) {
   return url ? (rows.find((r) => r?.task == null && r?.url === url) ?? null) : null;
 }
 
-/** This project's merged PR lead times from list, including measured zero, sorted. */
-export const historyOf = (rows) =>
+/** This project's comparable merged lead times from list, including measured zero, sorted. */
+export const historyOf = (rows, field = 'pr_lead_min') =>
   (rows ?? [])
     .filter((r) => r?.state === 'merged')
-    .map((r) => r?.pr_lead_min)
+    .map((r) => r?.[field])
     .filter((m) => typeof m === 'number' && Number.isFinite(m) && m >= 0)
     .sort((a, b) => a - b);
 
 const median = (xs) => (xs.length % 2 ? xs[(xs.length - 1) / 2] : (xs[xs.length / 2 - 1] + xs[xs.length / 2]) / 2);
 
 /**
- * An open task's time left, in minutes: the median of the past merged `pr_lead_min` values above the
+ * An open task's time left, in minutes: the median of its comparable merged lead times above the
  * elapsed time, minus it (`basis` of them); past the slowest, `over`. null without both.
  */
 export function estimateOf(elapsed, history) {
@@ -428,7 +428,8 @@ const rowKey = (r) => r.task_key ?? r.task ?? r.url ?? r.branch ?? r.title ?? ''
 export function cardOf(project, r, rows, history) {
   const f = feedRowFor(rows, r.task, r.url);
   const open = OPEN.has(r.lane);
-  const elapsed = open ? (r.pr_open_min ?? null) : null;
+  const working = r.lane === 'Working';
+  const elapsed = open ? ((working ? r.task_open_min : r.pr_open_min) ?? null) : null;
   const est = open ? estimateOf(elapsed, history) : null;
   const leadMin = r.pr_lead_min ?? null;
   return {
@@ -465,8 +466,11 @@ const byUpdated = (a, b) => (parseTime(b.updated_at) ?? 0) - (parseTime(a.update
 
 /** Working, Review, Merged and Closed, newest `updated_at` first, CARD_CAP cards each with the total. */
 export function lanesOf(project, rows, feed) {
-  const history = historyOf(rows);
-  const cards = (rows ?? []).map((r) => cardOf(project, normalizeRow(r), feed, history));
+  const taskHistory = historyOf(rows, 'task_lead_min');
+  const prHistory = historyOf(rows);
+  const cards = (rows ?? []).map((r) =>
+    cardOf(project, normalizeRow(r), feed, r.lane === 'Working' ? taskHistory : prHistory),
+  );
   return LANES.map((key) => {
     const all = cards.filter((c) => c.lane === key).sort(byUpdated);
     return { key, label: key, cards: all.slice(0, CARD_CAP), total: all.length };
