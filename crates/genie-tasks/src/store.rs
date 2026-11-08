@@ -255,11 +255,17 @@ pub struct Lifecycle {
     pub closed_at: Option<String>,
 }
 
-/// One `v7_tasks` row with its lifecycle.
+/// One `v7_tasks` row with its lifecycle and derived whole-minute durations.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Listed {
     pub row: TaskRow,
     pub lifecycle: Lifecycle,
+    /// Now minus the first recorded creation, across all restarts.
+    pub age_min: Option<i64>,
+    /// Now minus this epoch's opening, only while its PR is open.
+    pub pr_open_min: Option<i64>,
+    /// This epoch's merge/close minus its opening, only in a terminal state.
+    pub pr_lead_min: Option<i64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -473,6 +479,14 @@ fn lifecycle_sql(column: &str, event: &str, latest: bool) -> String {
     )
 }
 
+/// Missing, invalid or reversed endpoints stay unknown; valid durations floor to whole minutes.
+fn minutes_sql(start: &str, end: &str) -> String {
+    format!(
+        "CASE WHEN unixepoch({end}, 'subsec') >= unixepoch({start}, 'subsec') \
+         THEN CAST((unixepoch({end}, 'subsec') - unixepoch({start}, 'subsec')) / 60 AS INTEGER) END"
+    )
+}
+
 /// Every event of `project` in `conn`, in replay order. A database without the table has none.
 pub(crate) fn read_events(conn: &Connection, project: &str) -> Result<Vec<StoredEvent>, Error> {
     let sql = format!("SELECT {EVENT_COLUMNS} FROM v7_task_events WHERE project = ?1 ORDER BY seq");
@@ -517,21 +531,45 @@ impl Store {
     /// This project's `v7_tasks` rows with their lifecycle, in one aggregate query and no schema
     /// change; a database without the tables has none.
     pub fn listed(&self) -> Result<Vec<Listed>, Error> {
+        // Sequence order defines epochs, not wall-clock order (timestamps can be reversed).
+        // Use the latest opened after the preceding close/restart. For a terminal task the
+        // current terminal row closes that epoch, so exclude it from the boundary search.
+        // A restart without a new opened row must never borrow the previous PR's duration.
+        let opened = "(SELECT NULLIF(e.at, '') FROM v7_task_events e WHERE e.project = t.project \
+            AND e.task_key = t.task_key AND e.event = 'opened' AND e.seq > COALESCE(\
+            (SELECT MAX(b.seq) FROM v7_task_events b WHERE b.project = t.project \
+            AND b.task_key = t.task_key AND b.event IN ('created', 'closed', 'merged') \
+            AND b.seq < t.last_seq), 0) ORDER BY e.seq DESC LIMIT 1)";
+        let age = minutes_sql("first_created", "?2");
+        let open = minutes_sql("epoch_opened", "?2");
+        let lead = minutes_sql("epoch_opened", "terminal_at");
         let sql = format!(
-            "SELECT t.project, t.task_key, t.task, t.state, t.title, t.lead, t.forge, t.url, t.branch, t.last_seq, \
-             t.updated_at, {}, {}, {}, {}, {} FROM v7_tasks t WHERE t.project = ?1 ORDER BY t.task_key",
+            "WITH times AS (SELECT t.project, t.task_key, t.task, t.state, t.title, t.lead, t.forge, \
+             t.url, t.branch, t.last_seq, t.updated_at, {} AS created_at, {} AS worktree, \
+             {} AS opened_at, {} AS merged_at, {} AS closed_at, {} AS first_created, \
+             {opened} AS epoch_opened, \
+             (SELECT NULLIF(e.at, '') FROM v7_task_events e WHERE e.project = t.project \
+             AND e.task_key = t.task_key AND e.seq = t.last_seq \
+             AND e.event IN ('merged', 'closed')) AS terminal_at \
+             FROM v7_tasks t WHERE t.project = ?1) \
+             SELECT project, task_key, task, state, title, lead, forge, url, branch, last_seq, \
+             updated_at, created_at, worktree, opened_at, merged_at, closed_at, {age}, \
+             CASE WHEN state = 'opened' THEN {open} END, \
+             CASE WHEN state IN ('merged', 'closed') THEN {lead} END FROM times ORDER BY task_key",
             lifecycle_sql("at", "created", true),
             lifecycle_sql("worktree", "created", true),
             lifecycle_sql("at", "opened", false),
             lifecycle_sql("at", "merged", false),
             lifecycle_sql("at", "closed", false),
+            lifecycle_sql("at", "created", false),
         );
         let mut stmt = match self.conn.prepare(&sql) {
             Ok(stmt) => stmt,
             Err(e) if no_such_table(&e) => return Ok(Vec::new()),
             Err(e) => return Err(e.into()),
         };
-        let rows = stmt.query_map([&self.location.project], |r| {
+        let now = self.clock.now();
+        let rows = stmt.query_map([&self.location.project, &now], |r| {
             let state: String = r.get(3)?;
             let row = TaskRow {
                 project: r.get(0)?,
@@ -553,7 +591,7 @@ impl Store {
                 merged_at: r.get(14)?,
                 closed_at: r.get(15)?,
             };
-            Ok(Listed { row, lifecycle })
+            Ok(Listed { row, lifecycle, age_min: r.get(16)?, pr_open_min: r.get(17)?, pr_lead_min: r.get(18)? })
         })?;
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
