@@ -22,14 +22,46 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN }}
         run: |
-          # Fail loudly up front instead of hourly-cryptically at create time:
-          # observed 2026-07-05, the secret was PRESENT but returned HTTP 401
-          # Bad credentials (expired/revoked PAT). Cheap read-only probe; the
-          # PAT itself is only needed for PR creation (see the create step).
-          if [ -z "$GH_TOKEN" ] || ! gh api user >/dev/null 2>&1; then
+          if [ -z "$GH_TOKEN" ]; then
             echo "::error::RELEASE_PLEASE_TOKEN missing or invalid (HTTP 401) — mint a PAT with contents:read + pull-requests:write and add it to repo secrets"
             exit 1
           fi
+          # Cheap read-only probe. Keep only status and quota headers; discard
+          # the response body and gh diagnostics so neither can reach the log.
+          IFS='|' read -r status remaining reset retry_after < <(
+            gh api --include user 2>/dev/null | awk '
+              BEGIN { headers = 1; status = "unknown" }
+              { sub(/\r$/, "") }
+              /^$/ { headers = 0 }
+              headers && /^HTTP\// && $2 ~ /^[0-9][0-9][0-9]$/ { status = $2 }
+              headers {
+                name = tolower($1)
+                if (name == "x-ratelimit-remaining:") remaining = $2
+                if (name == "x-ratelimit-reset:") reset = $2
+                if (name == "retry-after:") retry_after = $2
+              }
+              END { printf "%s|%s|%s|%s\n", status, remaining, reset, retry_after }
+            '
+          )
+          case "$status" in
+            2??) exit 0 ;;
+            401)
+              echo "::error::RELEASE_PLEASE_TOKEN missing or invalid (HTTP 401) — mint a PAT with contents:read + pull-requests:write and add it to repo secrets"
+              exit 1
+              ;;
+            403|429)
+              if [ "$remaining" = 0 ] || [ -n "$retry_after" ]; then
+                reset_time=''
+                if [[ "$reset" =~ ^[0-9]+$ ]]; then
+                  reset_time=$(date -u -d "@$reset" '+%Y-%m-%d %H:%M:%S UTC' 2>/dev/null || true)
+                fi
+                echo "::error::release-please-token.rate_limited the token is valid but its account's API quota is exhausted${reset_time:+; rerun after $reset_time}"
+                exit 1
+              fi
+              ;;
+          esac
+          echo "::error::release-please-token.probe_failed HTTP $status"
+          exit 1
 
       - name: Check for existing Rolling PR
         id: check
