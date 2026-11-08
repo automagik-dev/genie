@@ -386,3 +386,58 @@ fn a_restart_discards_old_pr_endpoints_but_keeps_the_tasks_first_age() {
     let l = store.listed().unwrap().into_iter().find(|l| l.row.task == "gn-4").unwrap();
     assert_eq!((l.age_min, l.pr_open_min, l.pr_lead_min), (Some(120), None, Some(50)));
 }
+
+#[test]
+fn board_durations_validate_endpoints_and_preserve_submillisecond_precision() {
+    use genie_tasks::{FixedClock, TaskEvent as E};
+    let cases = [
+        ("2026-11-08T11:00:00.0004Z", "2026-11-08T11:01:00.0000Z", Some(0)),
+        ("2026-11-08T11:00:00.0004Z", "2026-11-08T11:00:00.0000Z", None),
+        ("2026-11-08T11:00:00.0004Z", "2026-11-08T11:01:00.0004Z", Some(1)),
+        ("2026-11-08T11:00:00.9999Z", "2026-11-08T11:01:00.9998Z", Some(0)),
+        ("2026-11-08T11:00:00.0000000000001Z", "2026-11-08T11:01:00Z", Some(0)),
+        ("2026-11-08T11:00:00.1Z", "2026-11-08T11:01:00.100000Z", Some(1)),
+        ("2026-11-08T11:00:00.0004Z", "2026-11-08T13:01:00.0000+02:00", Some(0)),
+        ("2026-02-30T11:00:00Z", "2026-03-02T12:00:00Z", None),
+        ("2461352", "2026-11-08T12:00:00Z", None),
+        ("now", "2026-11-08T12:00:00Z", None),
+        ("2026-11-08T12:00:00Z", "now", None),
+        ("2026-11-08T12:00:00Z", "2461352", None),
+        ("2026-03-02T12:00:00Z", "2026-02-30T11:00:00Z", None),
+        ("2026-02-29T11:00:00Z", "2026-03-01T12:00:00Z", None),
+        ("2100-02-29T11:00:00Z", "2100-03-01T12:00:00Z", None),
+        ("2000-02-29T11:00:00Z", "2000-02-29T12:00:00Z", Some(60)),
+        ("2024-02-29T23:59:59.1Z", "2024-03-01T00:00:59.1000Z", Some(1)),
+        ("2026-04-31T11:00:00Z", "2026-05-01T12:00:00Z", None),
+        ("2026-11-08T24:00:00Z", "2026-11-09T01:00:00Z", None),
+        ("2026-11-08T11:00:00+24:00", "2026-11-08T12:00:00Z", None),
+        ("2026-11-08T11:00:00+00:60", "2026-11-08T12:00:00Z", None),
+        ("2026-11-08T11:00:00.+02:00", "2026-11-08T12:00:00Z", None),
+        ("2026-11-08 11:00:00Z", "2026-11-08T12:00:00Z", None),
+    ];
+    for (start, end, expected) in cases {
+        let tmp = Tmp::new("precise-board-time");
+        let repo = ts_repo(&tmp);
+        let store = open_store_at(&repo, &tmp.0.join("home")).unwrap().with_clock(Box::new(FixedClock(end.into())));
+        for (task, event, at) in [
+            ("gn-1", E::Created, start),
+            ("gn-2", E::Opened, start),
+            ("gn-3", E::Opened, start),
+            ("gn-3", E::Merged, end),
+            ("gn-4", E::Opened, start),
+            ("gn-4", E::Closed, end),
+        ] {
+            let mut row = opened(task, &format!("https://github.com/o/r/pull/{task}"));
+            row.event = event;
+            row.at = Some(at.into());
+            record(&store, store.project(), &row).unwrap();
+        }
+        let durations: Vec<_> =
+            store.listed().unwrap().iter().map(|l| (l.age_min, l.pr_open_min, l.pr_lead_min)).collect();
+        assert_eq!(
+            durations,
+            [(expected, None, None), (None, expected, None), (None, None, expected), (None, None, expected)],
+            "{start} -> {end}"
+        );
+    }
+}

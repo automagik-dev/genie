@@ -479,12 +479,85 @@ fn lifecycle_sql(column: &str, event: &str, latest: bool) -> String {
     )
 }
 
+struct Timestamp<'a> {
+    seconds: i64,
+    /// Decimal digits with trailing zeroes removed: lexicographic order is fractional order.
+    fraction: &'a str,
+}
+
+fn decimal(s: &str) -> Option<i64> {
+    if s.bytes().all(|b| b.is_ascii_digit()) { s.parse().ok() } else { None }
+}
+
+fn offset_seconds(s: &str) -> Option<i64> {
+    if matches!(s, "Z" | "z") {
+        return Some(0);
+    }
+    let b = s.as_bytes();
+    if b.len() != 6 || !matches!(b[0], b'+' | b'-') || b[3] != b':' {
+        return None;
+    }
+    let (hours, minutes) = (decimal(s.get(1..3)?)?, decimal(s.get(4..6)?)?);
+    if hours > 23 || minutes > 59 {
+        return None;
+    }
+    let seconds = hours * 3_600 + minutes * 60;
+    Some(if b[0] == b'-' { -seconds } else { seconds })
+}
+
+/// Calendar-valid RFC 3339, without leap seconds (as with the previous SQLite reader).
+/// Keep arbitrary fractional precision; SQLite rounds to milliseconds and accepts date expressions.
+fn timestamp(s: &str) -> Option<Timestamp<'_>> {
+    let b = s.as_bytes();
+    if b.len() < 20 || b[4] != b'-' || b[7] != b'-' || !matches!(b[10], b'T' | b't') || b[13] != b':' || b[16] != b':' {
+        return None;
+    }
+    let num = |from, to| decimal(s.get(from..to)?);
+    let (year, month, day) = (num(0, 4)?, num(5, 7)?, num(8, 10)?);
+    let (hour, minute, second) = (num(11, 13)?, num(14, 16)?, num(17, 19)?);
+    let leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
+    let days_in_month = match month {
+        2 => {
+            if leap {
+                29
+            } else {
+                28
+            }
+        }
+        4 | 6 | 9 | 11 => 30,
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        _ => return None,
+    };
+    if !(1..=days_in_month).contains(&day) || hour > 23 || minute > 59 || second > 59 {
+        return None;
+    }
+    let (fraction, zone) = if let Some(rest) = s.get(19..)?.strip_prefix('.') {
+        let digits = rest.bytes().take_while(u8::is_ascii_digit).count();
+        if digits == 0 {
+            return None;
+        }
+        (rest[..digits].trim_end_matches('0'), &rest[digits..])
+    } else {
+        ("", &s[19..])
+    };
+    let offset = offset_seconds(zone)?;
+    // Howard Hinnant's days-from-civil, inverting state::rfc3339.
+    let year = if month <= 2 { year - 1 } else { year };
+    let era = year.div_euclid(400);
+    let yoe = year - era * 400;
+    let doy = (153 * ((month + 9) % 12) + 2) / 5 + day - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    let days = era * 146_097 + doe - 719_468;
+    Some(Timestamp { seconds: days * 86_400 + hour * 3_600 + minute * 60 + second - offset, fraction })
+}
+
 /// Missing, invalid or reversed endpoints stay unknown; valid durations floor to whole minutes.
-fn minutes_sql(start: &str, end: &str) -> String {
-    format!(
-        "CASE WHEN unixepoch({end}, 'subsec') >= unixepoch({start}, 'subsec') \
-         THEN CAST((unixepoch({end}, 'subsec') - unixepoch({start}, 'subsec')) / 60 AS INTEGER) END"
-    )
+fn minutes_between(start: Option<&str>, end: Option<&str>) -> Option<i64> {
+    let (start, end) = (timestamp(start?)?, timestamp(end?)?);
+    // Borrow one whole second when the fractional difference is negative, before minute division.
+    // Comparing digits preserves even sub-nanosecond reversals without float rounding or truncation.
+    let seconds = end.seconds - start.seconds - i64::from(end.fraction < start.fraction);
+    (seconds >= 0).then_some(seconds / 60)
 }
 
 /// Every event of `project` in `conn`, in replay order. A database without the table has none.
@@ -540,9 +613,6 @@ impl Store {
             (SELECT MAX(b.seq) FROM v7_task_events b WHERE b.project = t.project \
             AND b.task_key = t.task_key AND b.event IN ('created', 'closed', 'merged') \
             AND b.seq < t.last_seq), 0) ORDER BY e.seq DESC LIMIT 1)";
-        let age = minutes_sql("first_created", "?2");
-        let open = minutes_sql("epoch_opened", "?2");
-        let lead = minutes_sql("epoch_opened", "terminal_at");
         let sql = format!(
             "WITH times AS (SELECT t.project, t.task_key, t.task, t.state, t.title, t.lead, t.forge, \
              t.url, t.branch, t.last_seq, t.updated_at, {} AS created_at, {} AS worktree, \
@@ -553,9 +623,8 @@ impl Store {
              AND e.event IN ('merged', 'closed')) AS terminal_at \
              FROM v7_tasks t WHERE t.project = ?1) \
              SELECT project, task_key, task, state, title, lead, forge, url, branch, last_seq, \
-             updated_at, created_at, worktree, opened_at, merged_at, closed_at, {age}, \
-             CASE WHEN state = 'opened' THEN {open} END, \
-             CASE WHEN state IN ('merged', 'closed') THEN {lead} END FROM times ORDER BY task_key",
+             updated_at, created_at, worktree, opened_at, merged_at, closed_at, \
+             first_created, epoch_opened, terminal_at FROM times ORDER BY task_key",
             lifecycle_sql("at", "created", true),
             lifecycle_sql("worktree", "created", true),
             lifecycle_sql("at", "opened", false),
@@ -569,7 +638,7 @@ impl Store {
             Err(e) => return Err(e.into()),
         };
         let now = self.clock.now();
-        let rows = stmt.query_map([&self.location.project, &now], |r| {
+        let rows = stmt.query_map([&self.location.project], |r| {
             let state: String = r.get(3)?;
             let row = TaskRow {
                 project: r.get(0)?,
@@ -591,7 +660,21 @@ impl Store {
                 merged_at: r.get(14)?,
                 closed_at: r.get(15)?,
             };
-            Ok(Listed { row, lifecycle, age_min: r.get(16)?, pr_open_min: r.get(17)?, pr_lead_min: r.get(18)? })
+            let first_created: Option<String> = r.get(16)?;
+            let epoch_opened: Option<String> = r.get(17)?;
+            let terminal_at: Option<String> = r.get(18)?;
+            let age_min = minutes_between(first_created.as_deref(), Some(&now));
+            let pr_open_min = if row.state == TaskState::Opened {
+                minutes_between(epoch_opened.as_deref(), Some(&now))
+            } else {
+                None
+            };
+            let pr_lead_min = if matches!(row.state, TaskState::Merged | TaskState::Closed) {
+                minutes_between(epoch_opened.as_deref(), terminal_at.as_deref())
+            } else {
+                None
+            };
+            Ok(Listed { row, lifecycle, age_min, pr_open_min, pr_lead_min })
         })?;
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
