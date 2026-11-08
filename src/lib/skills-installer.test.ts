@@ -3567,8 +3567,14 @@ describe('pre-record genie leftovers (issue #2927)', () => {
     mkdirSync(join(marker, 'txn-1', 'quarantine'), { recursive: true });
     writeFileSync(join(marker, 'txn-1', 'journal.json'), '{"version":1}\n');
     const nameOnly = join(claude, 'brain');
-    mkdirSync(nameOnly, { recursive: true });
-    writeFileSync(join(nameOnly, 'SKILL.md'), '---\nname: brain\ndescription: Route Brain knowledge elsewhere\n---\n');
+    for (const name of ['brain', 'brain-init', 'dream']) {
+      const dir = join(claude, name);
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, 'SKILL.md'), `---\nname: ${name}\ndescription: Route Brain knowledge elsewhere\n---\n`);
+    }
+    const fork = join(claude, 'my-pm');
+    mkdirSync(fork, { recursive: true });
+    writeFileSync(join(fork, 'SKILL.md'), `---\nname: my-pm\ndescription: "${PM_DESCRIPTION}"\n---\n`);
     return { proven, marker, nameOnly };
   }
 
@@ -3581,7 +3587,7 @@ describe('pre-record genie leftovers (issue #2927)', () => {
     };
   }
 
-  test('with NO install record, proven dirs and marker dirs are archived backup-first and a name-only match is only reported', () => {
+  test('with NO install record, proven dirs are archived, name-only matches are silent and a fork is reported', () => {
     const source = fixtureSkillsTree(['review']);
     const { proven, marker, nameOnly } = seedLeftovers();
     const markerDigest = computeSkillDirDigest(marker);
@@ -3598,6 +3604,13 @@ describe('pre-record genie leftovers (issue #2927)', () => {
     expect(existsSync(marker)).toBe(false);
     // The third-party product that merely shares a retired genie NAME is untouched.
     expect(existsSync(join(nameOnly, 'SKILL.md'))).toBe(true);
+    for (const name of ['brain', 'brain-init', 'dream']) {
+      const path = join(home, '.claude', 'skills', name);
+      expect(readFileSync(join(path, 'SKILL.md'), 'utf8')).toBe(
+        `---\nname: ${name}\ndescription: Route Brain knowledge elsewhere\n---\n`,
+      );
+      expect(result.warnings?.some((line) => line.includes(path))).toBe(false);
+    }
 
     const roots = readdirSync(join(genieHome, 'state-backups')).filter((name) => name.startsWith('skills-retirement-'));
     expect(roots).toHaveLength(1);
@@ -3610,11 +3623,73 @@ describe('pre-record genie leftovers (issue #2927)', () => {
       'skills: retired pre-record genie skill dir .genie-codex-fallback-retirement from 1 agent dir(s)',
       'skills: retired pre-record genie skill dir genie-review from 1 agent dir(s)',
       `skills: retirement backups under ${backupRoot}`,
-      `skills: ${nameOnly} carries a retired genie skill name or description but not both, so genie does not claim it; nothing was moved — review it yourself if it is not a product you use`,
+      `skills: ${join(home, '.claude', 'skills', 'my-pm')} carries a retired genie skill name or description but not both, so genie does not claim it; nothing was moved — review it yourself if it is not a product you use`,
       'skills: legacy leftovers: 2 archived, 0 preserved, 1 unproven (a retired genie name or description, not both) of 3 dir(s) predating the install record',
     ]);
     // A marker dir has a leading dot, which the record schema rejects: it is never recorded.
     expect(readSkillsInstallRecord(genieHome)?.preserved ?? []).toEqual([]);
+  });
+
+  test('Brain-owned names alone produce no legacy warning or unproven summary on repeated updates', () => {
+    const source = fixtureSkillsTree(['review']);
+    for (const name of ['brain', 'brain-init', 'dream']) {
+      const dir = join(home, '.claude', 'skills', name);
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, 'SKILL.md'), `---\nname: ${name}\ndescription: Brain-owned skill\n---\n`);
+    }
+    for (let run = 0; run < 2; run++) {
+      const result = runSkillsInstall({
+        version: VERSION_UNDER_TEST,
+        genieHome,
+        home,
+        which: alwaysFound,
+        spawn: spawnDelivering(source),
+      });
+      expect(result.ok).toBe(true);
+      expect((result.warnings ?? []).filter((line) => /legacy|unproven|retired genie skill name/.test(line))).toEqual(
+        [],
+      );
+      for (const name of ['brain', 'brain-init', 'dream']) {
+        expect(readFileSync(join(home, '.claude', 'skills', name, 'SKILL.md'), 'utf8')).toBe(
+          `---\nname: ${name}\ndescription: Brain-owned skill\n---\n`,
+        );
+      }
+    }
+  });
+
+  test.each([
+    [
+      'brain',
+      'Knowledge graph engine — search, analyze, and manage AI agent brains with confidence scoring, autoschema, and multimodal support.',
+    ],
+    [
+      'dream',
+      'Batch-execute SHIP-ready wishes overnight — pick wishes, orchestrate workers, review PRs, wake up to results.',
+    ],
+  ])('a genie-era %s is still archived with its contents intact', (name, description) => {
+    const source = fixtureSkillsTree(['review']);
+    const dir = join(home, '.claude', 'skills', name);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'SKILL.md'), `---\nname: ${name}\ndescription: "${description}"\n---\n# old\n`);
+    writeFileSync(join(dir, 'notes.txt'), 'local notes to preserve\n');
+    const digest = computeSkillDirDigest(dir);
+    const result = runSkillsInstall({
+      version: VERSION_UNDER_TEST,
+      genieHome,
+      home,
+      which: alwaysFound,
+      spawn: spawnDelivering(source),
+    });
+    expect(result.ok).toBe(true);
+    expect(existsSync(dir)).toBe(false);
+    expect(result.warnings).toContain(`skills: retired pre-record genie skill dir ${name} from 1 agent dir(s)`);
+    const roots = readdirSync(join(genieHome, 'state-backups')).filter((entry) =>
+      entry.startsWith('skills-retirement-'),
+    );
+    expect(roots).toHaveLength(1);
+    expect(computeSkillDirDigest(join(genieHome, 'state-backups', roots[0] as string, '.claude', 'skills', name))).toBe(
+      digest,
+    );
   });
 
   test('with a record, the pass covers recorded homes too and is silent once the leftovers are gone', () => {

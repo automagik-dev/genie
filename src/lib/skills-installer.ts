@@ -1895,9 +1895,9 @@ function reportRetirement(tally: RetirementTally, backupRoot: string | undefined
  * `nothing to retire`. Ownership is proven by the description catalog (see
  * `legacy-skills.ts`), never by name alone: a proven dir or a genie marker dir
  * is archived under the same backup root as any retired skill, with the digest
- * proven at plan time standing in for the record's; an unproven match (a
- * retired genie name or a retired genie description, not both) is reported for
- * a human and never moved. Proven dirs genie could not move join `preserved`
+ * proven at plan time standing in for the record's; a retired genie description
+ * without a genie name is reported for a human and never moved. Name-only
+ * matches are silent. Proven dirs genie could not move join `preserved`
  * (their names satisfy the record schema), so the next update retries them; a
  * marker dir (leading dot) never enters the record, because one schema-invalid
  * entry would make the whole record read as absent.

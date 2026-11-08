@@ -2266,19 +2266,21 @@ describe('doctor: pre-record genie leftovers', () => {
     );
     mkdirSync(join(agents, '.genie-codex-fallback-retirement', 'txn-1'), { recursive: true });
     const claude = join(isolatedHome, '.claude', 'skills');
-    mkdirSync(join(claude, 'brain'), { recursive: true });
-    writeFileSync(
-      join(claude, 'brain', 'SKILL.md'),
-      '---\nname: brain\ndescription: a live third-party product\n---\n',
-    );
+    for (const name of ['brain', 'brain-init', 'dream']) {
+      mkdirSync(join(claude, name), { recursive: true });
+      writeFileSync(
+        join(claude, name, 'SKILL.md'),
+        `---\nname: ${name}\ndescription: a live third-party product\n---\n`,
+      );
+    }
+    mkdirSync(join(claude, 'my-pm'), { recursive: true });
+    writeFileSync(join(claude, 'my-pm', 'SKILL.md'), `---\nname: my-pm\ndescription: "${PM_DESCRIPTION}"\n---\n`);
 
     const check = byName(skillsChannelResults(), 'skills: legacy leftovers');
     expect(check.status).toBe('warn');
-    // The third row is a live third-party `brain`: it shares a name genie once shipped and nothing
-    // else, so the line counts it apart and says genie claims none of those — calling every row a
-    // genie skill dir told the operator their own product was genie's.
+    // Name-only matches never enter the count; the description-only fork still reports.
     expect(check.detail).toBe(
-      `3 dir(s) predate the install record — 2 genie's own, 1 unproven (a retired genie name or description, not both; genie claims none of these): ${join(agents, '.genie-codex-fallback-retirement')} (marker); ${join(agents, 'genie-review')} (proven); ${join(claude, 'brain')} (unproven)`,
+      `3 dir(s) predate the install record — 2 genie's own, 1 unproven (a retired genie name or description, not both; genie claims none of these): ${join(agents, '.genie-codex-fallback-retirement')} (marker); ${join(agents, 'genie-review')} (proven); ${join(claude, 'my-pm')} (unproven)`,
     );
     expect(check.suggestion).toContain('genie update');
     // Nothing on disk moved: doctor observes, update retires.
