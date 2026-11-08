@@ -222,9 +222,15 @@ jobs:
           # it is the only check that stops publish from creating a non-draft
           # release below the current stable: reconcile-channel-manifests.sh
           # refuses a downgrade of the manifests, not of the GitHub release.
-          [[ -f .well-known/latest.json && ! -L .well-known/latest.json && -s .well-known/latest.json ]]
+          [[ -f .well-known/latest.json && ! -L .well-known/latest.json && -s .well-known/latest.json ]] || {
+            echo "::error::release.previous_stable_missing committed stable manifest must be a non-empty regular file, not a symlink"
+            exit 1
+          }
           PREVIOUS_VERSION="$(jq -er '.version | strings | select(test("^[0-9]+\\.[0-9]+\\.[0-9]+$"))' \
-            .well-known/latest.json)"
+            .well-known/latest.json)" || {
+            echo "::error::release.previous_stable_unreadable committed stable manifest must contain a readable semver version"
+            exit 1
+          }
           [[ "$PREVIOUS_VERSION" != "$VERSION" ]] || {
             echo "::error::release.version_not_newer candidate ${VERSION} equals the current stable"
             exit 1
