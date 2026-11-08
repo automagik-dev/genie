@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
-import { readFileSync, readdirSync } from 'node:fs';
+import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 /**
@@ -84,6 +85,93 @@ function workflow(path: string): YamlRecord {
 describe('Bun.YAML availability', () => {
   test('the builtin parser this suite depends on exists', () => {
     expect(typeof Bun.YAML?.parse).toBe('function');
+  });
+});
+
+describe('rolling-pr.yml token guard', () => {
+  const invalid =
+    '::error::RELEASE_PLEASE_TOKEN missing or invalid (HTTP 401) — mint a PAT with contents:read + pull-requests:write and add it to repo secrets';
+  const limited =
+    "::error::release-please-token.rate_limited the token is valid but its account's API quota is exhausted";
+  const failed = '::error::release-please-token.probe_failed HTTP ';
+
+  function runGuard(status: string, headers = '', token = 'fixture-secret') {
+    const steps = job(workflow(join(WORKFLOWS, 'rolling-pr.yml')), 'maintain').steps;
+    if (!Array.isArray(steps)) throw new Error('maintain job has no steps');
+    const guard = steps.filter(isRecord).find((step) => step.name === 'Guard — RELEASE_PLEASE_TOKEN must be valid');
+    if (typeof guard?.run !== 'string') throw new Error('token guard has no script');
+    const root = mkdtempSync(join(tmpdir(), 'genie-token-guard-'));
+    try {
+      writeFileSync(
+        join(root, 'response'),
+        `${status}\r\n${headers}\r\nfixture-response-body\nHTTP/2.0 401 Unauthorized\nRetry-After: 60\n`,
+      );
+      writeFileSync(
+        join(root, 'gh'),
+        '#!/bin/sh\nprintf "%s\\n" "$*" >> "$GENIE_HOME/calls"\ncat "$GENIE_HOME/response"\necho "fixture-secret fixture-response-body" >&2\nexit "$GH_STUB_EXIT"\n',
+        { mode: 0o755 },
+      );
+      // The runner uses GNU date; translate that invocation for macOS tests.
+      writeFileSync(join(root, 'date'), '#!/bin/sh\n/bin/date "$@" 2>/dev/null || /bin/date -u -r "${3#@}" "$4"\n', {
+        mode: 0o755,
+      });
+      const run = Bun.spawnSync(['bash', '-e', '-o', 'pipefail', '-c', guard.run], {
+        env: {
+          PATH: `${root}:${process.env.PATH ?? ''}`,
+          GH_TOKEN: token,
+          GH_STUB_EXIT: status.includes('200 OK') ? '0' : '1',
+          GENIE_HOME: root,
+        },
+        stdout: 'pipe',
+        stderr: 'pipe',
+      });
+      expect(run.stderr.toString()).toBe('');
+      const output = run.stdout.toString();
+      expect(output).not.toContain('fixture-secret');
+      expect(output).not.toContain('fixture-response-body');
+      if (token) expect(readFileSync(join(root, 'calls'), 'utf8')).toBe('api --include user\n');
+      else expect(readdirSync(root)).not.toContain('calls');
+      return { code: run.exitCode, output: output.trimEnd() };
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  }
+
+  test('an empty secret fails before probing', () => {
+    expect(runGuard('', '', '')).toEqual({ code: 1, output: invalid });
+  });
+
+  test('HTTP 200 succeeds without logging the response', () => {
+    expect(runGuard('HTTP/2.0 200 OK', 'X-Ratelimit-Remaining: 0\r\n')).toEqual({ code: 0, output: '' });
+  });
+
+  test('HTTP 401 keeps the existing invalid-token message even with quota headers', () => {
+    expect(runGuard('HTTP/2.0 401 Unauthorized', 'X-Ratelimit-Remaining: 0\r\n')).toEqual({
+      code: 1,
+      output: invalid,
+    });
+  });
+
+  test.each([403, 429])('HTTP %i with exhausted quota formats the reset in UTC', (status) => {
+    expect(runGuard(`HTTP/2.0 ${status} Error`, 'X-RateLimit-Remaining: 0\r\nX-RateLimit-Reset: 0\r\n')).toEqual({
+      code: 1,
+      output: `${limited}; rerun after 1970-01-01 00:00:00 UTC`,
+    });
+  });
+
+  test.each([403, 429])('HTTP %i with Retry-After omits an absent reset time', (status) => {
+    expect(runGuard(`HTTP/1.1 ${status} Error`, 'rEtRy-AfTeR: 60\r\n')).toEqual({ code: 1, output: limited });
+  });
+
+  test.each([403, 429, 500])('HTTP %i without rate-limit evidence is a probe failure', (status) => {
+    expect(runGuard(`HTTP/2.0 ${status} Error`, 'x-ratelimit-remaining: 1\r\n')).toEqual({
+      code: 1,
+      output: `${failed}${status}`,
+    });
+  });
+
+  test('a transport failure without headers reports an unknown HTTP status', () => {
+    expect(runGuard('')).toEqual({ code: 1, output: `${failed}unknown` });
   });
 });
 
