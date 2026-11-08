@@ -418,6 +418,12 @@ fn open_conn(db_path: &Path, access: Access) -> Result<Connection, Error> {
         Err(e) => return Err(e.into()),
     };
     match version {
+        Some(SCHEMA_VERSION) if access == Access::Write => {
+            // Additive index for existing schema-2 databases; no row format or history changes.
+            conn.execute_batch(
+                "CREATE INDEX IF NOT EXISTS v7_task_events_by_branch_url ON v7_task_events (project, branch, url)",
+            )?;
+        }
         Some(SCHEMA_VERSION) => {}
         Some(1) if access == Access::Read => {}
         Some(1) => {

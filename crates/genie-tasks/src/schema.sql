@@ -27,6 +27,8 @@ CREATE TABLE IF NOT EXISTS v7_task_events (
   dedupe_key TEXT NOT NULL UNIQUE
 );
 CREATE INDEX IF NOT EXISTS v7_task_events_by_task ON v7_task_events (project, task_key, seq);
+-- Historical branch ambiguity uses two covering-index seeks, even after a task restarts.
+CREATE INDEX IF NOT EXISTS v7_task_events_by_branch_url ON v7_task_events (project, branch, url);
 
 -- The current state of each task, derived from v7_task_events in the same transaction.
 -- task_key is the task id, or pr:<forge>:<url> for a PR/MR whose branch carries none.

@@ -255,7 +255,8 @@ fn status(args: &[String], out: &mut dyn Write) -> Result<(), Failure> {
         body["events"] = events.iter().map(event_json).collect();
         writeln!(out, "{body}")?;
     } else {
-        writeln!(out, "{}  {}  {}  {}", task.task_key, task.state.as_str(), lane(task.state.lane()), task.title)?;
+        let id = if task.task.is_empty() { &task.task_key } else { &task.task };
+        writeln!(out, "{}  {}  {}  {}", id, task.state.as_str(), lane(task.state.lane()), task.title)?;
         for e in &events {
             writeln!(out, "  {}  {}  {}", e.at, e.event.as_str(), e.commit)?;
         }
@@ -272,7 +273,8 @@ fn list(args: &[String], out: &mut dyn Write) -> Result<(), Failure> {
         writeln!(out, "{}", Value::Array(tasks.iter().map(task_json).collect()))?;
     } else {
         for t in tasks.iter().map(|l| &l.row) {
-            writeln!(out, "{}  {}  {}  {}", t.task_key, t.state.as_str(), lane(t.state.lane()), t.title)?;
+            let id = if t.task.is_empty() { &t.task_key } else { &t.task };
+            writeln!(out, "{}  {}  {}  {}", id, t.state.as_str(), lane(t.state.lane()), t.title)?;
         }
     }
     Ok(())

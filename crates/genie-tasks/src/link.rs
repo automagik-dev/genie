@@ -62,26 +62,33 @@ pub(crate) fn bindings(conn: &Connection, project: &str) -> Result<Bindings, Err
 }
 
 type Bindings = BTreeMap<(String, String), String>;
-type Branches = BTreeMap<String, BTreeSet<String>>;
 
-fn attribution<'a>(links: &'a Bindings, branches: &Branches, url: &str, branch: &str) -> Option<&'a str> {
+fn attribution<'a>(links: &'a Bindings, ambiguous: &BTreeSet<String>, url: &str, branch: &str) -> Option<&'a str> {
     let pr = links.get(&(url.to_string(), String::new()));
     let b = links.get(&(String::new(), branch.to_string()));
     match (pr, b) {
         (Some(p), Some(b)) if p != b => Some(""), // contradictory targets never guess
         (Some(p), _) => Some(p),
-        (_, Some(_)) if branches.get(branch).is_some_and(|urls| urls.len() > 1) => Some(""),
+        (_, Some(_)) if ambiguous.contains(branch) => Some(""),
         (_, Some(b)) => Some(b),
         _ => None,
     }
 }
 
-fn branches(rows: &[Listed]) -> Branches {
-    let mut result = Branches::new();
-    for t in rows.iter().map(|l| &l.row).filter(|t| !t.url.is_empty()) {
-        result.entry(t.branch.clone()).or_default().insert(t.url.clone());
+/// Two index seeks: find the first nonempty historical URL, then any greater URL.
+/// Unlike DISTINCT over all events, duplicates of the first URL are skipped by the range bound.
+fn branch_is_ambiguous(store: &Store, branch: &str) -> Result<bool, Error> {
+    match store.conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM v7_task_events WHERE project = ?1 AND branch = ?2 \
+         AND url > (SELECT min(url) FROM v7_task_events \
+         WHERE project = ?1 AND branch = ?2 AND url > ''))",
+        params![store.project(), branch],
+        |r| r.get(0),
+    ) {
+        Ok(ambiguous) => Ok(ambiguous),
+        Err(rusqlite::Error::SqliteFailure(_, Some(message))) if message.contains("no such table") => Ok(false),
+        Err(e) => Err(e.into()),
     }
-    result
 }
 
 pub(crate) fn project(store: &Store, mut rows: Vec<Listed>) -> Result<Vec<Listed>, Error> {
@@ -89,10 +96,15 @@ pub(crate) fn project(store: &Store, mut rows: Vec<Listed>) -> Result<Vec<Listed
     if links.is_empty() {
         return Ok(rows);
     }
-    let branches = branches(&rows);
+    let mut ambiguous = BTreeSet::new();
+    for (url, branch) in links.keys() {
+        if url.is_empty() && branch_is_ambiguous(store, branch)? {
+            ambiguous.insert(branch.clone());
+        }
+    }
     for listed in &mut rows {
         let t = &mut listed.row;
-        if let Some(id) = attribution(&links, &branches, &t.url, &t.branch) {
+        if let Some(id) = attribution(&links, &ambiguous, &t.url, &t.branch) {
             t.task = id.to_string();
         }
     }
@@ -164,9 +176,7 @@ fn validate_request(store: &Store, id: &str, target: &Target, unlink: bool) -> R
     let rows = store.raw_listed()?;
     let matching: Vec<_> =
         rows.iter().filter(|l| if url.is_empty() { l.row.branch == branch } else { l.row.url == url }).collect();
-    if url.is_empty()
-        && matching.iter().filter(|l| !l.row.url.is_empty()).map(|l| &l.row.url).collect::<BTreeSet<_>>().len() > 1
-    {
+    if url.is_empty() && branch_is_ambiguous(store, branch)? {
         return Err(refuse("branch is reused by multiple PRs; link a specific --pr URL"));
     }
     for row in matching {
@@ -330,7 +340,8 @@ pub(crate) fn export_lines(conn: &Connection, project: &str, events: Vec<StoredE
         ordered.insert(e.seq, Event::Link(e));
     }
     let mut links = Bindings::new();
-    let mut branches = Branches::new();
+    let mut first_urls = BTreeMap::new();
+    let mut ambiguous = BTreeSet::new();
     let mut lines = Vec::new();
     for event in ordered.into_values() {
         match event {
@@ -345,9 +356,12 @@ pub(crate) fn export_lines(conn: &Connection, project: &str, events: Vec<StoredE
             }
             Event::Life(e) => {
                 if !e.url.is_empty() {
-                    branches.entry(e.branch.clone()).or_default().insert(e.url.clone());
+                    let first = first_urls.entry(e.branch.clone()).or_insert_with(|| e.url.clone());
+                    if first != &e.url {
+                        ambiguous.insert(e.branch.clone());
+                    }
                 }
-                lines.push(export::attributed_line(&e, attribution(&links, &branches, &e.url, &e.branch)));
+                lines.push(export::attributed_line(&e, attribution(&links, &ambiguous, &e.url, &e.branch)));
             }
         }
     }
@@ -359,12 +373,9 @@ pub(crate) fn lifecycle_line(store: &Store, e: &StoredEvent) -> Result<String, E
     if links.is_empty() {
         return Ok(export::line(e));
     }
-    let mut branches = Branches::new();
-    let mut stmt =
-        store.conn.prepare("SELECT DISTINCT url FROM v7_tasks WHERE project = ?1 AND branch = ?2 AND url != ''")?;
-    let urls = stmt
-        .query_map(params![store.project(), e.branch], |r| r.get::<_, String>(0))?
-        .collect::<rusqlite::Result<BTreeSet<_>>>()?;
-    branches.insert(e.branch.clone(), urls);
-    Ok(export::attributed_line(e, attribution(&links, &branches, &e.url, &e.branch)))
+    let mut ambiguous = BTreeSet::new();
+    if links.contains_key(&(String::new(), e.branch.clone())) && branch_is_ambiguous(store, &e.branch)? {
+        ambiguous.insert(e.branch.clone());
+    }
+    Ok(export::attributed_line(e, attribution(&links, &ambiguous, &e.url, &e.branch)))
 }

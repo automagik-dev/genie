@@ -118,11 +118,14 @@ export fails returns 1 and names `export --rebuild` as its repair.
 
 Link/unlink events are append-only in `v7_link_events`; `v7_links` changes in the same transaction.
 They overlay the original task attribution, without changing lifecycle keys, timestamps or state.
-The PR retains its original `task_key`; its displayed `task` carries the linked id.
+The PR retains its original `task_key`; its displayed `task` carries the linked id. Text list/status
+show that effective id, falling back to the stable key only when untracked.
 Unlink restores the original attribution. A started task's card joins its linked PR, retaining the
 creation/worktree/lead metadata. Forge sync continues to use the original lifecycle key, so a later
 sync cannot drop a link. An ambiguous branch used by multiple recorded PR URLs refuses a new branch
-link; if reuse appears after linking, branch attribution becomes unknown. Use explicit PR links to
+link; if reuse appears after linking, branch attribution becomes unknown, including across a tracked
+task restart. Live reads, append and validation inspect historical URLs with covering-index seeks,
+so a current task row replacing its previous PR cannot erase that ambiguity. Use explicit PR links to
 resolve it. Contradictory PR and branch links also produce unknown attribution, never a guess.
 
 **tasks.jsonl v1 additive contract:** `event` now also accepts `link` and `unlink`. These use the

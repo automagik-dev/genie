@@ -538,6 +538,15 @@ fn linking_replays_without_rewriting_history_and_survives_sync_and_rebuild() {
     assert_eq!(code(&out), 0, "{}", stderr(&out));
     assert!(stderr(&out).is_empty());
     assert_eq!(serde_json::from_slice::<Value>(&out.stdout).unwrap()["changed"], true);
+    for args in [vec!["list"], vec!["status", "gn-1"]] {
+        let text = fx.run(&args);
+        assert_eq!(code(&text), 0, "{}", stderr(&text));
+        assert!(
+            String::from_utf8_lossy(&text.stdout).lines().any(|line| line.starts_with("gn-1  ")),
+            "{args:?} hides the linked ID: {}",
+            String::from_utf8_lossy(&text.stdout)
+        );
+    }
     let rows = fx.rows();
     let again = fx.run(&["link", "gn-1", "--pr", url, "--json"]);
     assert_eq!(code(&again), 0, "{}", stderr(&again));
@@ -584,11 +593,24 @@ fn linking_replays_without_rewriting_history_and_survives_sync_and_rebuild() {
     assert_eq!(fs::read(fx.home.join("tasks.jsonl")).unwrap(), original);
     assert_eq!(code(&fx.run(&["unlink", "gn-1", "--pr", url])), 0);
     assert!(list().iter().find(|t| t["url"] == url).unwrap()["task"].is_null());
+    let untracked_key = format!("pr:github:{url}");
+    for args in [vec!["list"], vec!["status", untracked_key.as_str()]] {
+        let text = fx.run(&args);
+        assert_eq!(code(&text), 0, "{}", stderr(&text));
+        assert!(
+            String::from_utf8_lossy(&text.stdout).lines().any(|line| line.starts_with(&format!("{untracked_key}  ")))
+        );
+    }
     let rows = fx.rows();
     assert_eq!(code(&fx.run(&["unlink", "gn-1", "--pr", url])), 0);
     assert_eq!(fx.rows(), rows);
     assert_eq!(code(&fx.run(&["link", "gl-92", "--pr", url])), 0);
     assert_eq!(list().iter().find(|t| t["url"] == url).unwrap()["task"], "gl-92");
+    for args in [vec!["list"], vec!["status", "gl-92"]] {
+        let text = fx.run(&args);
+        assert_eq!(code(&text), 0, "{}", stderr(&text));
+        assert!(String::from_utf8_lossy(&text.stdout).lines().any(|line| line.starts_with("gl-92  ")));
+    }
     assert_eq!(code(&fx.run(&["unlink", "gl-92", "--pr", url])), 0);
     assert_eq!(code(&fx.run(&["link", "gn-1", "--pr", url])), 0, "a relink appends a new event");
     let before = fs::read(fx.home.join("tasks.jsonl")).unwrap();
@@ -751,4 +773,49 @@ fn link_refusals_and_absent_unlinks_do_not_install_or_migrate_rust_schema() {
             .unwrap();
         assert_eq!(links, 0, "no schema install or migration on refusal/no-op");
     }
+}
+
+#[test]
+fn tracked_restart_keeps_historical_branch_ambiguity_in_live_and_rebuilt_rows() {
+    let fx = fixture("link-tracked-restart", true);
+    let branch = "fix/gh-41-reused";
+    let second_url = "https://github.com/o/r/pull/102";
+    assert_eq!(code(&fx.run(&["link", "gh-9", "--branch", branch])), 0);
+    fx.serve(&[pr(101, branch, "closed", "2026-11-01T12:00:00Z")]);
+    assert_eq!(code(&fx.run(&["forge-sync", "--full"])), 0);
+    let store = open_store_at(&fx.repo, &fx.home).unwrap();
+    // The valid transition start records after close, on the same task and branch.
+    let mut restart = EventRow::new(TaskEvent::Created);
+    restart.task = "gh-41".into();
+    restart.branch = branch.into();
+    restart.worktree = "/isolated/restarted-gh-41".into();
+    record(&store, store.project(), &restart).unwrap();
+    fx.serve(&[pr(102, branch, "open", "2026-11-01T15:00:00Z")]);
+    let sync = fx.run(&["forge-sync", "--full"]);
+    assert_eq!(code(&sync), 0, "{}", stderr(&sync));
+    let list = fx.run(&["list", "--json"]);
+    assert_eq!(code(&list), 0, "{}", stderr(&list));
+    let tasks: Vec<Value> = serde_json::from_slice(&list.stdout).unwrap();
+    assert_eq!(tasks.len(), 1, "restart replaces the tracked task's current PR row");
+    assert_eq!(tasks[0]["url"], second_url);
+    assert!(tasks[0]["task"].is_null(), "the historical PR makes this branch ambiguous: {}", tasks[0]);
+    let before = fs::read(fx.home.join("tasks.jsonl")).unwrap();
+    let rows: Vec<Value> =
+        String::from_utf8(before.clone()).unwrap().lines().map(|l| serde_json::from_str(l).unwrap()).collect();
+    let opened = rows.iter().find(|e| e["event"] == "opened" && e["url"] == second_url).unwrap();
+    assert!(opened["task"].is_null(), "live export must also preserve ambiguity");
+    let rebuild = fx.run(&["export", "--rebuild", "--project", fx.repo.to_str().unwrap()]);
+    assert_eq!(code(&rebuild), 0, "{}", stderr(&rebuild));
+    assert_eq!(fs::read(fx.home.join("tasks.jsonl")).unwrap(), before);
+    assert_eq!(code(&fx.run(&["unlink", "gh-9", "--branch", branch])), 0);
+    let count = fx.rows();
+    let ambiguous = fx.run(&["link", "gh-8", "--branch", branch]);
+    assert_eq!(code(&ambiguous), 2, "{}", stderr(&ambiguous));
+    assert!(stderr(&ambiguous).contains("multiple PRs"));
+    assert!(ambiguous.stdout.is_empty());
+    assert_eq!(fx.rows(), count, "historical ambiguity refusal appends nothing");
+    assert_eq!(code(&fx.run(&["link", "gh-9", "--pr", second_url])), 0);
+    let resolved = fx.run(&["status", "gh-9", "--json"]);
+    assert_eq!(code(&resolved), 0, "{}", stderr(&resolved));
+    assert_eq!(serde_json::from_slice::<Value>(&resolved.stdout).unwrap()["task"], "gh-9");
 }
