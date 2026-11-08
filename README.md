@@ -198,4 +198,4 @@ npm --prefix mikro test
 
 ## Links
 
-[Docs](https://docs.automagik.dev/genie): [Skills](https://docs.automagik.dev/genie/skills), [Workflows](https://docs.automagik.dev/genie/workflows), [CLI reference](https://docs.automagik.dev/genie/cli-reference), [Security and releases](https://docs.automagik.dev/genie/security) · [UPGRADING.md](UPGRADING.md) · [Releases](https://github.com/automagik-dev/genie/releases) · [automagik-dev](https://github.com/automagik-dev), the org behind Genie · [Discord](https://discord.gg/xcW8c7fF3R) · [MIT License](LICENSE)
+[Docs](https://docs.automagik.dev/genie): [Skills](https://docs.automagik.dev/genie/skills), [Workflows](https://docs.automagik.dev/genie/workflows), [CLI reference](https://docs.automagik.dev/genie/cli-reference), [Security and releases](https://docs.automagik.dev/genie/security) · [UPGRADING.md](UPGRADING.md) · [Releases](https://github.com/automagik-dev/genie/releases) · [automagik-dev](https://github.com/automagik-dev), the org behind Genie · [Discord](https://discord.gg/xcW8c7fF3R) · [Apache-2.0 License](LICENSE)

@@ -202,6 +202,20 @@ export function isSafeWorkflowFileName(name: string): boolean {
   return WORKFLOW_FILE_NAME_PATTERN.test(name);
 }
 
+/**
+ * A Herdr mod file is recorded by its POSIX path RELATIVE to the recorded mod
+ * dir (`main.js`, `.gitignore`, `assets/x.svg`), joined onto that dir by the
+ * installer — so the guard is per segment: non-empty, never `.` or `..`, and
+ * only the portable file-name characters. No leading `/`, no `\`, no `//`.
+ */
+const HERDR_MOD_FILE_SEGMENT = /^[A-Za-z0-9._-]+$/;
+
+/** The single traversal guard for recorded Herdr mod file paths. */
+export function isSafeHerdrModFilePath(path: string): boolean {
+  const segments = path.split('/');
+  return segments.every((segment) => HERDR_MOD_FILE_SEGMENT.test(segment) && segment !== '.' && segment !== '..');
+}
+
 /** Absolute and free of `.`/`..` segments, so it can never climb out of itself. */
 function isTraversalFreeAbsolutePath(value: string): boolean {
   if (!isAbsolute(value)) return false;
@@ -411,11 +425,34 @@ const skillsInstallRecordSchema = z.object({
       ),
     })
     .optional(),
+  /**
+   * The Herdr mod this host carries in Herdr's mods folder, written by the
+   * Herdr mod channel (`herdr-mod-installer.ts`) after the workflows channel.
+   *
+   * Optional, and carried forward verbatim by the skills channel's rewrite, for
+   * exactly the reasons `workflows` is (wish `genie-v7-board` decision 22).
+   */
+  herdrMod: z
+    .object({
+      /** The absolute mod directory, e.g. `~/.config/herdr-app/mods/genie-herdr`. */
+      dir: z.string().refine(isTraversalFreeAbsolutePath, 'herdrMod dir must be a traversal-free absolute path'),
+      /** Release tag whose mod this is. */
+      ref: z.string().min(1),
+      /** Relative POSIX path → sha256 of the bytes genie installed. */
+      files: z.record(
+        z.string().refine(isSafeHerdrModFilePath, 'herdrMod file must be a traversal-free relative path'),
+        z.string().regex(/^[0-9a-f]{64}$/, 'digest must be a lowercase sha256 hex string'),
+      ),
+    })
+    .optional(),
   installedAt: z.string().min(1),
 });
 
 /** The recorded user-scope workflow catalog; see the schema's `workflows` field. */
 export type SkillsWorkflowsInstall = NonNullable<z.infer<typeof skillsInstallRecordSchema>['workflows']>;
+
+/** The recorded Herdr mod; see the schema's `herdrMod` field. */
+export type SkillsHerdrModInstall = NonNullable<z.infer<typeof skillsInstallRecordSchema>['herdrMod']>;
 
 export type SkillsInstallRecord = z.infer<typeof skillsInstallRecordSchema>;
 
@@ -2391,6 +2428,22 @@ function dropPrunedHomesFromRecord(
 }
 
 /**
+ * The fields later channels own, CARRIED FORWARD verbatim and never rewritten
+ * here: the workflows channel's `workflows` and the Herdr mod channel's
+ * `herdrMod` (wish `genie-v7-board` decision 22) are written after this one
+ * runs. Dropping either would orphan every file it installed — `genie
+ * uninstall` removes only what the record names.
+ */
+function laterChannelFields(
+  previous: SkillsInstallRecord | null | undefined,
+): Pick<SkillsInstallRecord, 'workflows' | 'herdrMod'> {
+  return {
+    ...(previous?.workflows === undefined ? {} : { workflows: previous.workflows }),
+    ...(previous?.herdrMod === undefined ? {} : { herdrMod: previous.herdrMod }),
+  };
+}
+
+/**
  * The record's two collision fields: what THIS run replaced, and every kept
  * backup root — the previous record's plus this run's, never fewer and never
  * the same root twice.
@@ -2623,10 +2676,7 @@ export function runSkillsInstall(options: SkillsInstallOptions): SkillsInstallOu
       // so it created no product home — the durable fact that stops the next
       // run's prune from handing back the operator's own `~/.claude`.
       agentSelection: 'explicit',
-      // CARRIED FORWARD, never rewritten here: the workflows channel owns this
-      // field and runs AFTER this one. Dropping it would orphan every installed
-      // workflow file — `genie uninstall` removes only what the record names.
-      ...(previous?.workflows === undefined ? {} : { workflows: previous.workflows }),
+      ...laterChannelFields(previous),
       installedAt: now().toISOString(),
     };
     writeSkillsInstallRecord(options.genieHome, record);

@@ -58,14 +58,26 @@ function endedWishesOf(roster, botId) {
     ...wish,
     status: tasks[wish.sessionId]?.status ?? "ended",
     summary: tasks[wish.sessionId]?.summary
-  })).filter((wish) => wish.status !== "working").slice(0, ENDED_SHOWN);
+  })).filter((wish) => wish.state === void 0 ? wish.status !== "working" : wish.state !== "working").slice(0, ENDED_SHOWN);
 }
+var STATE_WORDS = {
+  "local-only": { short: "Local branch", full: "Local branch, not published" },
+  "no-change": { short: "No change", full: "No change: no branch moved" },
+  stopped: { short: "Stopped", full: "Stopped" },
+  lost: { short: "Lost", full: "Lost: the team no longer has its record" }
+};
+var markOf = (outcome) => outcome.state === "done" ? "✓" : outcome.state === "local-only" || outcome.state === "no-change" ? "•" : "✕";
 function outcomeOf(wish) {
-  if (wish.status === "failed") {
+  const state = wish.state ?? wish.status;
+  if (state === "failed") {
     const reason = String(wish.summary ?? "").split("\n")[0].trim();
     return { state: "failed", short: "Failed", full: reason ? `Failed: ${reason}` : "Failed" };
   }
-  if (wish.status === "stopped") return { state: "stopped", short: "Stopped", full: "Stopped" };
+  if (wish.state !== void 0) {
+    const words = STATE_WORDS[wish.state] ?? { short: "Ended", full: "Ended" };
+    return { state: wish.state, ...words };
+  }
+  if (state === "stopped") return { state: "stopped", short: "Stopped", full: "Stopped" };
   return { state: "done", short: "Done", full: "Done" };
 }
 
@@ -91,7 +103,7 @@ function GenieWishes({ bot, roster, actions }) {
           title: `${wish.title} · ${outcome.full} · ${wish.branch}`,
           onClick: () => actions.openSession(wish.sessionId)
         },
-        (0, import_react.createElement)("span", { className: "bt-thread-age", "aria-hidden": true }, outcome.state === "done" ? "✓" : "✕"),
+        (0, import_react.createElement)("span", { className: "bt-thread-age", "aria-hidden": true }, markOf(outcome)),
         (0, import_react.createElement)("span", { className: "bt-thread-title" }, wish.title),
         (0, import_react.createElement)("span", { className: "bt-thread-age" }, outcome.short)
       );

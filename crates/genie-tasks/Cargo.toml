@@ -1,0 +1,15 @@
+[package]
+name = "genie-tasks"
+description = "Genie's v7 task record: the event-sourced state machine, its v7_ tables in genie.db, and the tasks.jsonl export"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+rusqlite.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true

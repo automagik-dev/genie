@@ -2,16 +2,23 @@
 // folders: what the Bot team provides (createBot, startTask, the view hook) is recorded,
 // and what git does is checked on disk.
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, test } from 'node:test';
-import { createRuntime } from '../index.js';
 import { GENIE_SUGGESTIONS, registerSuggestions } from '../src/client/suggestions.js';
-import { endedWishesOf, outcomeOf } from '../src/client/wishes.js';
-import { GENIE_COLORS, GENIE_KIND, freeGenieColor, genieNameFor, slugOf, wishBrief } from '../src/host/genie.js';
+import { endedWishesOf, markOf, outcomeOf } from '../src/client/wishes.js';
+import {
+  GENIE_COLORS,
+  GENIE_INSTRUCTIONS,
+  GENIE_KIND,
+  freeGenieColor,
+  genieNameFor,
+  slugOf,
+  wishBrief,
+} from '../src/host/genie.js';
 import { MISSING_GIT, MISSING_TOOLS_MAC, gitProblem } from '../src/host/git.js';
+import { compose, gitIn, grant, guarded, hostContract, fakeTeam as makeTeam, savedWishes, until } from './team.js';
 
 let dir;
 beforeEach(() => {
@@ -23,75 +30,8 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-const gitIn = (cwd, ...args) => execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
-
-// What the plugin uses of the Bot team's runtime, recording what it is asked to do.
-function fakeTeam({ bots = {}, readOnly, noModel = false } = {}) {
-  const model = noModel ? undefined : { provider: 'p', model: 'm' };
-  const team = join(dir, 'team');
-  mkdirSync(team, { recursive: true });
-  const record = { created: [], tasks: [], views: [], endpoints: new Map(), saves: 0 };
-  const state = { bots: { ...bots } };
-  const rt = {
-    home: join(dir, 'home'),
-    state,
-    record,
-    load: async () => {},
-    readOnly: () => readOnly,
-    save: async () => {
-      record.saves += 1;
-    },
-    ensureWorkspace: async () => team,
-    teamFolder: () => team,
-    defaultModel: async () => model,
-    findBot: (name) => Object.values(state.bots).find((bot) => bot.name === name),
-    createBot: async (options) => {
-      record.created.push(options);
-      const bot = { id: `bot-${record.created.length}`, ...options };
-      state.bots[bot.id] = bot;
-      return bot;
-    },
-    startTask: async (task) => {
-      record.tasks.push(task);
-      return `session-${record.tasks.length}`;
-    },
-    selfOf: (agentId) => agentId,
-    botOf: (id) => state.bots[id],
-    hooks: {
-      view: (fn) => {
-        record.views.push(fn);
-        return () => {};
-      },
-      endpoint: (name, fn) => {
-        record.endpoints.set(name, fn);
-        return () => {};
-      },
-    },
-    warn: () => {},
-  };
-  mkdirSync(rt.home, { recursive: true });
-  return rt;
-}
-
-function compose(team) {
-  const tools = new Map();
-  const listeners = [];
-  const ctx = {
-    effect: (run) => run(),
-    on: (name, listener) => listeners.push([name, listener]),
-    tools: { register: (tool) => tools.set(tool.name, tool) },
-  };
-  const rt = createRuntime(ctx, team);
-  // A Session's turn ends, as DSH reports it to every plugin.
-  const turnEnd = (sessionId, reason = { kind: 'completed' }) => {
-    for (const [name, listener] of listeners) {
-      if (name === 'session/event') listener({ id: sessionId }, { type: 'turn/end', data: { reason } });
-    }
-  };
-  return { rt, tools, turnEnd };
-}
-
-const grant = (tools, botId, args) => tools.get('grant_wish').execute(args, { agent: { id: botId } });
+// What the plugin uses of the Bot team's runtime (test/team.js), recording what it is asked to do.
+const fakeTeam = (options) => makeTeam(dir, options);
 
 test('a new team gets one Genie Bot, in its own project folder, with the default model', async () => {
   const team = fakeTeam();
@@ -178,10 +118,12 @@ test('a wish in Genie’s own folder starts a repository on dev, its own clone o
   gitIn(folder, 'commit', '-q', '-m', 'Add README');
   assert.equal(gitIn(repo, 'branch', '--list', 'wish/*'), '');
   turnEnd('session-1');
-  for (let i = 0; i < 50 && gitIn(repo, 'branch', '--list', 'wish/*') === ''; i++)
-    await new Promise((r) => setTimeout(r, 20));
+  // The turn end is settled in the background: wait on what is saved, not on the branch, so
+  // the record is read once its save has landed.
+  const ended = await until(() => savedWishes(team).find((wish) => wish.state !== 'working'), 'the wish to settle');
+  assert.equal(ended.state, 'local-only');
+  assert.equal(ended.delivered, undefined, 'a local branch is never called delivered');
   assert.equal(gitIn(repo, 'log', '-1', '--format=%s', 'wish/add-a-readme'), 'Add README');
-  assert.equal(JSON.parse(readFileSync(join(team.home, 'genie.json'), 'utf8')).wishes[0].delivered, true);
   // The project's own checkout is left as it was.
   assert.equal(gitIn(repo, 'rev-parse', '--abbrev-ref', 'HEAD'), 'dev');
   assert.equal(existsSync(join(repo, 'README.md')), false);
@@ -207,6 +149,9 @@ test('the same title twice gets its own branch', async () => {
   await grant(tools, genie.id, { title: 'Fix it', wish: 'one' });
   const second = await grant(tools, genie.id, { title: 'Fix it', wish: 'two' });
   assert.match(second, /wish\/fix-it-2/);
+  // A copy's folder left on disk with no branch and no record is skipped too, never reused.
+  mkdirSync(join(dir, 'wishes', 'genie', 'left-behind'), { recursive: true });
+  assert.match(await grant(tools, genie.id, { title: 'Left behind', wish: 'three' }), /wish\/left-behind-2/);
 });
 
 // Issue #3182: a follow-up authorized to repair and publish the branches an earlier wish made
@@ -221,6 +166,9 @@ test('a follow-up wish scoped to an earlier branch repairs and publishes it, and
   gitIn(repo, 'add', '.');
   gitIn(repo, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-m', 'first');
   gitIn(repo, 'remote', 'add', 'origin', origin);
+  // A wish starts from its base as the remote has it, so the remote carries it and names it.
+  gitIn(repo, 'push', '-q', 'origin', 'main');
+  gitIn(repo, 'remote', 'set-head', 'origin', 'main');
   // Two branches an earlier wish left behind; only the first is given to the follow-up.
   gitIn(repo, 'branch', 'wish/keep-a');
   gitIn(repo, 'branch', 'wish/keep-b');
@@ -340,7 +288,14 @@ test('slugs are branch-safe and the brief tells the thread where and how to fini
   assert.equal(slugOf('???'), 'wish');
   const brief = wishBrief({ title: 'T', wish: 'W', folder: '/w', branch: 'wish/t', base: 'abcdef1234567890' });
   assert.match(brief, /Work only in \/w: your own copy of the project, on branch wish\/t \(made from abcdef123456\)/);
-  assert.match(brief, /Do not push, merge, or touch any other branch/);
+  // A plain wish is told why it does not push (its copy has no push route), and to say so
+  // when the wish asked it to: no bare "Do not push, merge".
+  assert.doesNotMatch(brief, /Do not push, merge/);
+  assert.match(brief, /This copy has no push route/);
+  assert.match(
+    brief,
+    /if the wish asked you to push or open a pull request, say in your final report that you could not/,
+  );
   assert.match(brief, /final report/);
 
   // A wish scoped to branches an earlier wish made may act on exactly those, and on nothing
@@ -492,4 +447,109 @@ test('a new Genie is called Genie while that name is free, else after its reposi
   assert.equal(genieNameFor('/x/api', taken), 'Genie api');
   names.add('Genie api');
   assert.equal(genieNameFor('/y/api', taken), 'Genie api 2');
+});
+
+// T8: the fake team is the README's host contract, and nothing past it.
+test('the test team is the README host contract: a member the table does not list throws', async () => {
+  const members = hostContract();
+  assert.ok(members.includes('rt.resumesDone') && members.includes('rt.state.tasks') && members.includes('ctx.on'));
+  const team = fakeTeam();
+  const { rt } = compose(team);
+  await rt.genieReady;
+  assert.throws(() => rt.deliver, /rt\.deliver is not in the README host contract/);
+  assert.throws(() => rt.state.rooms, /rt\.state\.rooms is not in the README host contract/);
+  assert.throws(() => rt.hooks.live, /rt\.hooks\.live is not in the README host contract/);
+  assert.throws(() => guarded({}, 'ctx').logger, /ctx\.logger is not in the README host contract/);
+  // Every member the table lists is one the plugin's host code really uses.
+  const host = join(import.meta.dirname, '..', 'src', 'host');
+  const source = [join(import.meta.dirname, '..', 'index.js'), ...readdirSync(host).map((name) => join(host, name))]
+    .map((path) => readFileSync(path, 'utf8'))
+    .join('\n')
+    .replaceAll('?.', '.');
+  for (const member of members) assert.ok(source.includes(member), `${member} is listed but not used`);
+});
+
+// T9: a genie.json from before records v2 keeps every wish, and its rows read as they did.
+test('a v1 genie.json loads with every wish kept, and its rows render as before', async () => {
+  const team = fakeTeam({ bots: { g: { id: 'g', name: 'Genie', kind: GENIE_KIND } } });
+  const v1 = [
+    {
+      slug: 'a',
+      title: 'A',
+      branch: 'wish/a',
+      branches: [],
+      folder: '/x/a',
+      repo: '/x',
+      base: 'f'.repeat(40),
+      sessionId: 's1',
+      botId: 'g',
+      at: 3,
+      delivered: true,
+    },
+    {
+      slug: 'b',
+      title: 'B',
+      branch: 'wish/b',
+      folder: '/x/b',
+      repo: '/x',
+      base: 'e'.repeat(40),
+      sessionId: 's2',
+      botId: 'g',
+      at: 2,
+      delivered: false,
+      deliveryError: 'wish/b: no',
+    },
+    {
+      slug: 'c',
+      title: 'C',
+      branch: 'wish/c',
+      folder: '/x/c',
+      repo: '/x',
+      base: 'd'.repeat(40),
+      sessionId: 's3',
+      botId: 'g',
+      at: 1,
+    },
+  ];
+  writeFileSync(join(team.home, 'genie.json'), `${JSON.stringify({ genieCreated: true, wishes: v1 }, null, 2)}\n`);
+  const { rt } = compose(team);
+  await rt.genieReady;
+  assert.deepEqual(rt.genieWishes(), v1);
+  const view = team.record.views[0]();
+  assert.deepEqual(
+    view.genie.wishes.map((wish) => Object.keys(wish).sort()),
+    v1.map(() => ['at', 'botId', 'branch', 'sessionId', 'slug', 'title']),
+    'a v1 row carries no state, so it reads from the task status as before',
+  );
+  const roster = { tasks: { s1: { status: 'done' }, s2: { status: 'stopped' } }, genie: view.genie };
+  assert.deepEqual(
+    endedWishesOf(roster, 'g').map((wish) => [wish.title, outcomeOf(wish).short, markOf(outcomeOf(wish))]),
+    [
+      ['A', 'Done', '✓'],
+      ['B', 'Stopped', '✕'],
+      ['C', 'Done', '✓'],
+    ],
+  );
+});
+
+test('no v2 state renders as Done, and the instructions never call an unpublished branch mergeable', () => {
+  for (const state of ['local-only', 'no-change', 'stopped', 'failed', 'lost']) {
+    const outcome = outcomeOf({ state, status: 'done' });
+    assert.notEqual(outcome.short, 'Done', state);
+    assert.notEqual(outcome.state, 'done', state);
+    assert.notEqual(markOf(outcome), '✓', state);
+  }
+  assert.deepEqual(
+    ['local-only', 'no-change', 'stopped', 'failed', 'lost'].map((state) => outcomeOf({ state }).short),
+    ['Local branch', 'No change', 'Stopped', 'Failed', 'Lost'],
+  );
+  assert.equal(outcomeOf({ state: 'local-only' }).full, 'Local branch, not published');
+  // A v2 wish still working is not an ended row, whatever the team's status says.
+  const roster = {
+    tasks: { s1: { status: 'done' } },
+    genie: { wishes: [{ sessionId: 's1', botId: 'g', state: 'working' }] },
+  };
+  assert.deepEqual(endedWishesOf(roster, 'g'), []);
+  assert.doesNotMatch(GENIE_INSTRUCTIONS, /merge it when they are happy/);
+  assert.match(GENIE_INSTRUCTIONS, /local branch, not published/);
 });

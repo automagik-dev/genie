@@ -1,0 +1,18 @@
+{
+  "place": "none",
+  "title": "Tasks",
+  "focusable": true,
+  "overlay": { "kind": "popup", "width": 1, "height": 1, "frame": "none" },
+  "automagik": {
+    "footer": [
+      {
+        "id": "tasks",
+        "label": "Tasks",
+        "icon": "mods/genie-herdr/tasks.svg",
+        "command": "mod.open",
+        "args": { "name": "genie-herdr" },
+        "badge": "genie.tasks.waiting"
+      }
+    ]
+  }
+}

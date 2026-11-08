@@ -1,0 +1,3 @@
+# The repository line width (biome.json lineWidth 120), so Rust and TS read alike.
+max_width = 120
+use_small_heuristics = "Max"

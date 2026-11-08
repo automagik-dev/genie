@@ -5,7 +5,8 @@
 # Local equivalent of one matrix leg of .github/workflows/build-tarballs.yml.
 # Produces dist/genie-<version>-<platform>.tar.gz containing:
 #   genie (bun --compile static executable),
-#   plugins/, skills/, templates/, VERSION
+#   plugins/ (with plugins/genie-rs/bin/genie-rs, the Rust front door, 0755),
+#   skills/, templates/, LICENSE (Apache-2.0), VERSION
 #
 # Size budget: each tarball ≤80 MB compressed; the script fails if exceeded.
 # Platforms: linux-x64-glibc, linux-x64-musl, linux-arm64, darwin-arm64.
@@ -33,6 +34,17 @@ bun_target_for() {
   esac
 }
 
+# genie-rs is built natively on each runner. x86_64 musl is static, so it ships in
+# both linux-x64 tarballs (genie-v7-tasks Global constraints).
+rust_target_for() {
+  case "$1" in
+    linux-x64-glibc|linux-x64-musl) echo "x86_64-unknown-linux-musl" ;;
+    linux-arm64)                    echo "aarch64-unknown-linux-musl" ;;
+    darwin-arm64)                   echo "aarch64-apple-darwin" ;;
+    *) return 1 ;;
+  esac
+}
+
 usage() { echo "Usage: $0 --platform <p> [--version <v>]; platforms: ${PLATFORMS[*]}"; }
 
 PLATFORM=""
@@ -48,6 +60,7 @@ done
 
 [[ -n "$PLATFORM" ]] || { echo "error: --platform is required" >&2; usage; exit 2; }
 TARGET="$(bun_target_for "$PLATFORM")" || { echo "error: unsupported platform: $PLATFORM" >&2; exit 2; }
+RUST_TARGET="$(rust_target_for "$PLATFORM")"
 [[ -n "$VERSION" ]] || VERSION=$(node -p "require('${REPO_ROOT}/package.json').version")
 [[ "$VERSION" =~ ^[0-9A-Za-z][0-9A-Za-z.+-]{0,127}$ ]] \
   || { echo "error: invalid release version: ${VERSION}" >&2; exit 2; }
@@ -66,6 +79,19 @@ bun build --compile \
   "${ENTRY_POINT}" \
   --outfile "${STAGE}/genie"
 
+# genie-rs with the committed Cargo.lock. The C half of rusqlite's bundled SQLite
+# compiles with musl-gcc (apt: musl-tools) for a musl target. Build paths are
+# remapped so the binary names no checkout or home directory.
+echo "==> [${PLATFORM}] cargo build --release --locked -p genie-rs --target ${RUST_TARGET}"
+if [[ "${RUST_TARGET}" == *-musl ]]; then
+  command -v musl-gcc >/dev/null 2>&1 \
+    || { echo "error: musl-gcc not found: install musl-tools (apt-get install musl-tools) to build ${RUST_TARGET}" >&2; exit 1; }
+  export "CC_${RUST_TARGET//-/_}=musl-gcc"
+fi
+CARGO_ENCODED_RUSTFLAGS="--remap-path-prefix=${CARGO_HOME:-${HOME}/.cargo}=/cargo"$'\x1f'"--remap-path-prefix=${REPO_ROOT}=/genie" \
+  cargo build --release --locked -p genie-rs --target "${RUST_TARGET}" --manifest-path "${REPO_ROOT}/Cargo.toml"
+GENIE_RS_BUILT="${REPO_ROOT}/target/${RUST_TARGET}/release/genie-rs"
+
 cp -R "${REPO_ROOT}/plugins"   "${STAGE}/plugins"
 bun run --cwd "${REPO_ROOT}/plugins/dsh-genie-board" build "${VERSION}" "${STAGE}/plugins/dsh-genie-board/dist"
 # The loader is host-only: one cordis row, one model-facing tool. It carries no
@@ -74,6 +100,14 @@ bun run --cwd "${REPO_ROOT}/plugins/dsh-workflow-loader" build "${VERSION}" "${S
 cp -R "${REPO_ROOT}/skills"    "${STAGE}/skills"
 cp -R "${REPO_ROOT}/templates" "${STAGE}/templates"
 cp "${REPO_ROOT}/LICENSE"       "${STAGE}/LICENSE"
+# The binary beside it is Apache-2.0 (genie-v7-tasks Decision 10).
+head -n 3 "${STAGE}/LICENSE" | grep -q 'Apache License' && head -n 3 "${STAGE}/LICENSE" | grep -q 'Version 2.0' \
+  || { echo "error: release payload LICENSE is not the Apache-2.0 text" >&2; exit 1; }
+# genie-rs rides the frozen `plugins` member (no ninth top-level member), at the
+# path the TS front door resolves second: <GENIE_HOME>/plugins/genie-rs/bin/genie-rs.
+rm -rf "${STAGE}/plugins/genie-rs"
+mkdir -p "${STAGE}/plugins/genie-rs/bin"
+install -m 0755 "${GENIE_RS_BUILT}" "${STAGE}/plugins/genie-rs/bin/genie-rs"
 
 # The default mikro agents ship INSIDE templates/, which already converges to
 # <GENIE_HOME>/templates on install and update. They are staged from the one
@@ -194,12 +228,17 @@ for required in \
   "plugins/dsh-workflow-loader/agent.cordis.yml" \
   "plugins/dsh-workflow-loader/cordis.patch.yml" \
   "plugins/dsh-workflow-loader/README.md" \
-  "plugins/dsh-workflow-loader/dist/index.js"; do
+  "plugins/dsh-workflow-loader/dist/index.js" \
+  "plugins/genie-herdr/mod.json" \
+  "plugins/genie-rs/bin/genie-rs"; do
   [[ -f "${STAGE}/${required}" ]] || { echo "error: release payload missing ${required}" >&2; exit 1; }
 done
 # Old binaries need the compat directory present; nothing may ship inside it.
 [[ -d "${STAGE}/plugins/genie" && ! -L "${STAGE}/plugins/genie" && -z "$(ls -A "${STAGE}/plugins/genie")" ]] \
   || { echo "error: release payload plugins/genie must be an empty directory" >&2; exit 1; }
+GENIE_RS_MODE="$(stat -c '%a' "${STAGE}/plugins/genie-rs/bin/genie-rs" 2>/dev/null || stat -f '%Lp' "${STAGE}/plugins/genie-rs/bin/genie-rs")"
+[[ "${GENIE_RS_MODE}" == "755" ]] \
+  || { echo "error: release payload plugins/genie-rs/bin/genie-rs must be mode 0755, not ${GENIE_RS_MODE}" >&2; exit 1; }
 
 bun "${REPO_ROOT}/scripts/fresh-install-smoke.ts" \
   --skills-dir "${STAGE}/skills"
@@ -267,7 +306,8 @@ assert_release_tree_equal() {
 
 assert_release_tree_equal "${STAGE}" "${VERIFY_ROOT}"
 bun "${REPO_ROOT}/scripts/fresh-install-smoke.ts" \
-  --skills-dir "${VERIFY_ROOT}/skills"
+  --skills-dir "${VERIFY_ROOT}/skills" \
+  --genie-rs "${VERIFY_ROOT}/plugins/genie-rs/bin/genie-rs"
 bun "${REPO_ROOT}/scripts/release-payload-version.ts" --verify "${VERIFY_ROOT}" "${VERSION}"
 rm -rf "${VERIFY_ROOT}"
 trap - EXIT

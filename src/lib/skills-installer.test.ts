@@ -2387,6 +2387,106 @@ describe('install record — the optional workflows field', () => {
   });
 });
 
+/**
+ * The Herdr mod channel (wish `genie-v7-board` group 3, decision 22) writes a
+ * second optional field into the same record, with the same two obligations as
+ * `workflows`: a record without it still parses, and the skills channel's
+ * rewrite carries it forward byte-for-byte — a dropped field orphans every mod
+ * file genie installed into Herdr's mods folder.
+ */
+describe('install record — the optional herdrMod field', () => {
+  const herdrMod = {
+    dir: '/home/u/.config/herdr-app/mods/genie-herdr',
+    ref: 'v6.261104.3',
+    files: { 'mod.json': 'a'.repeat(64), 'main.js': 'b'.repeat(64), '.gitignore': 'c'.repeat(64) },
+  };
+
+  function seedInstalledSkill(): void {
+    fixtureSkillsTree(['wish']);
+    for (const parent of [join(home, '.claude', 'skills'), join(home, '.agents', 'skills')]) {
+      mkdirSync(join(parent, 'wish'), { recursive: true });
+      writeFileSync(join(parent, 'wish', 'SKILL.md'), '# wish\n', 'utf8');
+    }
+  }
+
+  function recordWithoutHerdrMod(): SkillsInstallRecord {
+    return {
+      ref: 'v6.261104.2',
+      cliVersion: SKILLS_CLI_VERSION,
+      inventory: ['wish'],
+      agentDirs: [join(home, '.claude', 'skills')],
+      installedAt: '2026-11-04T12:00:00.000Z',
+    };
+  }
+
+  test('a record without the field still parses, and reads back without it', () => {
+    const record = recordWithoutHerdrMod();
+    writeFileSync(skillsInstallRecordPath(genieHome), JSON.stringify(record), 'utf8');
+    expect(readSkillsInstallRecord(genieHome)).toEqual(record);
+    expect(readSkillsInstallRecord(genieHome)?.herdrMod).toBeUndefined();
+  });
+
+  test('a record with the field round-trips', () => {
+    const record: SkillsInstallRecord = { ...recordWithoutHerdrMod(), herdrMod };
+    writeSkillsInstallRecord(genieHome, record);
+    expect(readSkillsInstallRecord(genieHome)).toEqual(record);
+  });
+
+  test('the field is traversal-proof and digest-typed, or the record is malformed', () => {
+    for (const invalid of [
+      { ...herdrMod, dir: 'relative/mods/genie-herdr' },
+      { ...herdrMod, dir: '/home/u/../../etc' },
+      { ...herdrMod, files: { '../evil.js': 'a'.repeat(64) } },
+      { ...herdrMod, files: { 'a/../../evil.js': 'a'.repeat(64) } },
+      { ...herdrMod, files: { '/etc/passwd': 'a'.repeat(64) } },
+      { ...herdrMod, files: { 'a//b.js': 'a'.repeat(64) } },
+      { ...herdrMod, files: { 'a\\b.js': 'a'.repeat(64) } },
+      { ...herdrMod, files: { 'main.js': 'NOTADIGEST' } },
+    ]) {
+      writeFileSync(
+        skillsInstallRecordPath(genieHome),
+        JSON.stringify({ ...recordWithoutHerdrMod(), herdrMod: invalid }),
+        'utf8',
+      );
+      const read = inspectSkillsInstallRecord(genieHome);
+      expect(read.status).toBe('invalid');
+      expect(read.status === 'invalid' ? read.error.field : '').toContain('herdrMod');
+    }
+  });
+
+  test('a skills-channel install carries an existing herdrMod value forward byte-for-byte', () => {
+    writeSkillsInstallRecord(genieHome, { ...recordWithoutHerdrMod(), herdrMod });
+    const before = JSON.stringify(readSkillsInstallRecord(genieHome)?.herdrMod);
+    seedInstalledSkill();
+
+    const outcome = runSkillsInstall({
+      version: VERSION_UNDER_TEST,
+      genieHome,
+      home,
+      which: alwaysFound,
+      spawn: okRunner({ argv: [] }),
+    });
+
+    expect(outcome.ok).toBe(true);
+    expect(outcome.ok === true && outcome.record.herdrMod).toEqual(herdrMod);
+    // Byte-for-byte on disk: the serialized field is what doctor and uninstall read.
+    const raw = JSON.parse(readFileSync(skillsInstallRecordPath(genieHome), 'utf8')) as { herdrMod?: unknown };
+    expect(JSON.stringify(raw.herdrMod)).toBe(before);
+  });
+
+  test('a skills-channel install over a record without the field writes no field', () => {
+    seedInstalledSkill();
+    const outcome = runSkillsInstall({
+      version: VERSION_UNDER_TEST,
+      genieHome,
+      home,
+      which: alwaysFound,
+      spawn: okRunner({ argv: [] }),
+    });
+    expect(outcome.ok === true && 'herdrMod' in outcome.record).toBe(false);
+  });
+});
+
 describe('isSafeSkillName', () => {
   test('is the one traversal guard uninstall shares with the installer', () => {
     expect(isSafeSkillName('wish')).toBe(true);

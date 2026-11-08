@@ -1,0 +1,19 @@
+[package]
+name = "genie-forge"
+description = "Genie's one-shot forge poller: records opened, merged and closed PRs/MRs through the operator's gh or glab"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+genie-part.workspace = true
+genie-tasks.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+
+[dev-dependencies]
+rusqlite.workspace = true

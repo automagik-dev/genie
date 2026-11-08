@@ -28,6 +28,7 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import type { HerdrModChannelConvergenceResult } from '../../lib/herdr-mod-installer.js';
 import { acquireLifecycleLease, currentSyncLockHostId, lifecycleLockPath } from '../../lib/lifecycle-lease';
 import { SKILLS_CLI_VERSION, type SkillsChannelConvergenceResult, releaseTag } from '../../lib/skills-installer.js';
 import { VERSION } from '../../lib/version';
@@ -90,6 +91,14 @@ const noSkillsChannel = (): SkillsChannelConvergenceResult => ({ status: 'skippe
  * seam so no unit test can touch a real product home.
  */
 const noWorkflowsChannel = (): WorkflowsChannelConvergenceResult => ({ status: 'skipped', warnings: [] });
+
+/**
+ * And this: the production default writes the operator's real Herdr mods
+ * folder (`~/.config/herdr-app/mods/genie-herdr`). Its behavior lives in
+ * `src/lib/herdr-mod-installer.test.ts`; every convergence test here injects
+ * the seam so no unit test can touch a real product home.
+ */
+const noHerdrModChannel = (): HerdrModChannelConvergenceResult => ({ status: 'skipped', warnings: [] });
 
 // ============================================================================
 // Pure-helper coverage — `decideVerify`, `normalizeVersion`,
@@ -2311,6 +2320,7 @@ describe('manual post-update convergence (2026-07-11 cascade regression)', () =>
     const calls: string[] = [];
     const result = runManualUpdateConvergence({
       runWorkflows: noWorkflowsChannel,
+      runHerdrMod: noHerdrModChannel,
       expectedVersion: '5.260711.3',
       runSkills: (selection) => {
         calls.push(`parent-skills:${selection}`);
@@ -2333,6 +2343,7 @@ describe('manual post-update convergence (2026-07-11 cascade regression)', () =>
     try {
       const result = runManualUpdateConvergence({
         runWorkflows: () => ({ status: 'failed', warnings: [] }),
+        runHerdrMod: noHerdrModChannel,
         expectedVersion: '5.260711.3',
         selection: 'all',
         runSkills: noSkillsChannel,
@@ -2351,6 +2362,7 @@ describe('manual post-update convergence (2026-07-11 cascade regression)', () =>
     try {
       const result = runManualUpdateConvergence({
         runWorkflows: noWorkflowsChannel,
+        runHerdrMod: noHerdrModChannel,
         expectedVersion: '5.260711.3',
         selection: 'all',
         runSkills: () => ({ status: 'failed', reason: 'skills CLI exited 1: boom' }),
@@ -2373,6 +2385,7 @@ describe('manual post-update convergence (2026-07-11 cascade regression)', () =>
       expect(
         runManualUpdateConvergence({
           runWorkflows: noWorkflowsChannel,
+          runHerdrMod: noHerdrModChannel,
           expectedVersion: VERSION,
           selection,
           runSkills: noSkillsChannel,
@@ -2381,6 +2394,7 @@ describe('manual post-update convergence (2026-07-11 cascade regression)', () =>
       ).toEqual({
         skills: { status: 'skipped', reason: 'test fixture' },
         workflows: { status: 'skipped', warnings: [] },
+        herdrMod: { status: 'skipped', warnings: [] },
       });
     }
     // Consent `none` reaches NO channel: the workflows leg is null too, and the
@@ -2388,6 +2402,7 @@ describe('manual post-update convergence (2026-07-11 cascade regression)', () =>
     expect(runManualUpdateConvergence({ expectedVersion: VERSION, selection: 'none', log: () => {} })).toEqual({
       skills: null,
       workflows: null,
+      herdrMod: null,
     });
 
     // Nothing in the update path can reach a client plugin registration.
@@ -2436,9 +2451,9 @@ describe('manual post-update convergence (2026-07-11 cascade regression)', () =>
             if (!('skipped' in borrowed)) borrowed.release();
             expect(existsSync(lease.path)).toBe(true);
           } finally {
-            if (previousPath === undefined) process.env.GENIE_LIFECYCLE_LEASE_PATH = undefined;
+            if (previousPath === undefined) Reflect.deleteProperty(process.env, 'GENIE_LIFECYCLE_LEASE_PATH');
             else process.env.GENIE_LIFECYCLE_LEASE_PATH = previousPath;
-            if (previousOwner === undefined) process.env.GENIE_LIFECYCLE_LEASE_OWNER = undefined;
+            if (previousOwner === undefined) Reflect.deleteProperty(process.env, 'GENIE_LIFECYCLE_LEASE_OWNER');
             else process.env.GENIE_LIFECYCLE_LEASE_OWNER = previousOwner;
           }
         },
@@ -2573,6 +2588,7 @@ describe('skills.sh channel in the post-delivery convergence (wish skills-everyw
         steps.push('workflows');
         return { status: 'skipped', warnings: [] };
       },
+      runHerdrMod: noHerdrModChannel,
       log: () => undefined,
     });
     expect(steps).toEqual(['skills', 'workflows']);
@@ -2595,6 +2611,7 @@ describe('skills.sh channel in the post-delivery convergence (wish skills-everyw
         },
       }),
       runWorkflows: noWorkflowsChannel,
+      runHerdrMod: noHerdrModChannel,
       log: (line) => lines.push(line),
     });
     expect(lines.some((line) => line.startsWith('integrations: '))).toBe(false);
@@ -2609,6 +2626,7 @@ describe('skills.sh channel in the post-delivery convergence (wish skills-everyw
     for (const selection of ['auto', 'all', 'claude', 'codex'] as const) {
       runManualUpdateConvergence({
         runWorkflows: noWorkflowsChannel,
+        runHerdrMod: noHerdrModChannel,
         expectedVersion: VERSION,
         selection,
         runSkills: (received) => {
@@ -2625,6 +2643,7 @@ describe('skills.sh channel in the post-delivery convergence (wish skills-everyw
     let skills = 0;
     runManualUpdateConvergence({
       runWorkflows: noWorkflowsChannel,
+      runHerdrMod: noHerdrModChannel,
       expectedVersion: VERSION,
       selection: 'none',
       runSkills: () => {
@@ -2640,6 +2659,7 @@ describe('skills.sh channel in the post-delivery convergence (wish skills-everyw
     const lines: string[] = [];
     runManualUpdateConvergence({
       runWorkflows: noWorkflowsChannel,
+      runHerdrMod: noHerdrModChannel,
       expectedVersion: VERSION,
       selection: 'claude',
       runSkills: (_selection, emit) => {
@@ -2655,6 +2675,7 @@ describe('skills.sh channel in the post-delivery convergence (wish skills-everyw
     const calls: string[] = [];
     const result = runManualUpdateConvergence({
       runWorkflows: noWorkflowsChannel,
+      runHerdrMod: noHerdrModChannel,
       expectedVersion: VERSION,
       selection: 'all',
       runSkills: () => {

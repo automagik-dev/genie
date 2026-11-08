@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, cpSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -266,5 +266,40 @@ describe('fresh-install-smoke', () => {
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
+  });
+
+  // genie-v7-tasks T6 (1c): build-binary.sh hands the extracted payload's genie-rs to --genie-rs. A stub
+  // stands in for it here so the wiring runs on the bun legs: it answers `[]` only to `list --json`,
+  // which the front door reaches through <GENIE_HOME>/plugins/genie-rs/bin/genie-rs.
+  describe('--genie-rs', () => {
+    let root: string;
+    let stub: string;
+    beforeEach(() => {
+      root = mkdtempSync(join(tmpdir(), 'genie-rs-smoke-fixture-'));
+      stub = join(root, 'genie-rs');
+      writeFileSync(
+        stub,
+        '#!/bin/sh\n[ "$*" = "list --json" ] || { echo "unexpected argv: $*" >&2; exit 9; }\necho "[]"\n',
+        {
+          mode: 0o755,
+        },
+      );
+      chmodSync(stub, 0o755);
+    });
+    afterEach(() => rmSync(root, { recursive: true, force: true }));
+
+    test('runs genie task v7-list --json against the given binary and passes on exit 0', () => {
+      const result = runSmoke(['--genie-rs', stub]);
+      expect(result.stderr).toBe('');
+      expect(result.stdout).toContain('genie task v7-list --json exit 0 on the payload genie-rs');
+      expect(result.code).toBe(0);
+    });
+
+    test('fails a binary that is not mode 0755', () => {
+      chmodSync(stub, 0o744);
+      const result = runSmoke(['--genie-rs', stub]);
+      expect(result.code).toBe(1);
+      expect(result.stderr).toContain('genie-rs must be mode 0755, not 744');
+    });
   });
 });

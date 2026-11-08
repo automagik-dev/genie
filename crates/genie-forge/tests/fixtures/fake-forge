@@ -1,0 +1,72 @@
+#!/bin/sh
+# The fake gh and fake glab of the genie-forge and genie-rs tests, copied under both names into a
+# per-test directory that also holds its canned replies (parallel tests share one environment, so
+# the directory, not a variable, carries them). Shell builtins only: it runs with a PATH that holds
+# nothing but that directory. Replies, by endpoint:
+#   .../pulls?...&page=<n>, .../merge_requests?...&page=<n>
+#                                               list-<n>.json, else list.json
+#   .../pulls?..., .../merge_requests?...       list.json
+#   .../activity?ref=<encoded ref>&...          activity-<encoded ref>.json (one JSON object per line)
+#   .../compare/<a>...<b>                       compare-<a>...<b>.json
+#   .../repository/compare?from=<a>&to=<b>      compare-<a>...<b>.json
+#   .../merge_requests/<n>/versions?...         versions-<n>.json
+# An absent reply file answers an empty list. A reply file whose first line is !fail makes the call
+# exit 1, so a list-2.json beginning with !fail fails page 2 only. `logged-out` present makes
+# `auth status` fail. calls.log gets one line per call, logged before its outcome.
+dir=${0%/*}
+printf '%s\n' "$*" >>"$dir/calls.log"
+case $1 in
+auth)
+  if [ -f "$dir/logged-out" ]; then exit 1; fi
+  exit 0
+  ;;
+api) shift ;;
+*)
+  printf 'fake forge: unsupported command %s\n' "$1" >&2
+  exit 2
+  ;;
+esac
+endpoint=
+while [ $# -gt 0 ]; do
+  case $1 in
+  --jq | --hostname) shift ;;
+  -*) ;;
+  *) [ -z "$endpoint" ] && endpoint=$1 ;;
+  esac
+  shift
+done
+case $endpoint in
+*/activity\?*)
+  ref=${endpoint#*ref=}
+  file=$dir/activity-${ref%%&*}.json
+  ;;
+*/repository/compare\?*)
+  from=${endpoint#*from=}
+  to=${endpoint#*to=}
+  file=$dir/compare-${from%%&*}...${to%%&*}.json
+  ;;
+*/compare/*) file=$dir/compare-${endpoint##*/compare/}.json ;;
+*/versions*)
+  n=${endpoint%/versions*}
+  file=$dir/versions-${n##*/}.json
+  ;;
+*[?\&]page=*)
+  n=${endpoint##*[?\&]page=}
+  file=$dir/list-${n%%\&*}.json
+  [ -f "$file" ] || file=$dir/list.json
+  ;;
+*) file=$dir/list.json ;;
+esac
+if [ ! -f "$file" ]; then
+  printf '[]\n'
+  exit 0
+fi
+first=1
+while IFS= read -r line || [ -n "$line" ]; do
+  if [ $first = 1 ] && [ "$line" = '!fail' ]; then
+    printf 'fake forge: HTTP 404 for %s\n' "$endpoint" >&2
+    exit 1
+  fi
+  first=0
+  printf '%s\n' "$line"
+done <"$file"
