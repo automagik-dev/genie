@@ -239,3 +239,205 @@ fn two_untracked_prs_get_two_keys_and_never_refuse_each_other() {
     let err = record(&store, store.project(), &keyless).unwrap_err();
     assert_eq!(err.exit_code(), 1, "{err}");
 }
+
+/// Fixed-clock receipts for every time field, including restarts whose legacy timestamps
+/// intentionally still describe the first PR and the latest worktree.
+#[test]
+fn board_time_fields_follow_the_current_pr_epoch_and_first_creation() {
+    use genie_tasks::{FixedClock, TaskEvent as E};
+    let tmp = Tmp::new("board-time");
+    let repo = ts_repo(&tmp);
+    let home = tmp.0.join("home");
+    let store = open_store_at(&repo, &home).unwrap().with_clock(Box::new(FixedClock("2026-11-08T12:00:59Z".into())));
+    struct Case<'a> {
+        task: &'a str,
+        events: &'a [(TaskEvent, &'a str)],
+        expected: (Option<i64>, Option<i64>, Option<i64>),
+    }
+    let cases = [
+        Case { task: "gn-1", events: &[(E::Created, "2026-11-08T10:00:00Z")], expected: (Some(120), None, None) },
+        Case { task: "gn-2", events: &[(E::Opened, "2026-11-08T11:00:00Z")], expected: (None, Some(60), None) },
+        Case {
+            task: "gn-3",
+            events: &[(E::Opened, "2026-11-08T10:00:00Z"), (E::Merged, "2026-11-08T11:30:59Z")],
+            expected: (None, None, Some(90)),
+        },
+        Case {
+            task: "gn-4",
+            events: &[(E::Opened, "2026-11-08T10:00:00Z"), (E::Closed, "2026-11-08T11:00:00Z")],
+            expected: (None, None, Some(60)),
+        },
+        Case { task: "gn-5", events: &[(E::Merged, "2026-11-08T11:00:00Z")], expected: (None, None, None) },
+        Case { task: "gn-6", events: &[(E::Closed, "2026-11-08T11:00:00Z")], expected: (None, None, None) },
+        Case {
+            task: "gn-7",
+            events: &[(E::Opened, "2026-11-08T11:00:00Z"), (E::Merged, "2026-11-08T10:00:00Z")],
+            expected: (None, None, None),
+        },
+        Case {
+            task: "gn-8",
+            events: &[(E::Opened, "2026-11-08T11:00:00Z"), (E::Closed, "2026-11-08T10:00:00Z")],
+            expected: (None, None, None),
+        },
+        Case {
+            task: "gn-9",
+            events: &[(E::Created, "2026-11-08T13:00:00Z"), (E::Opened, "2026-11-08T13:01:00Z")],
+            expected: (None, None, None),
+        },
+        Case { task: "gn-10", events: &[(E::Opened, "invalid")], expected: (None, None, None) },
+        Case {
+            task: "gn-11",
+            events: &[(E::Opened, "2026-11-08T11:00:00Z"), (E::Merged, "2026-11-08T11:00:00Z")],
+            expected: (None, None, Some(0)),
+        },
+        Case {
+            task: "gn-12",
+            events: &[(E::Opened, "2026-11-08T11:00:00.900Z"), (E::Closed, "2026-11-08T11:01:00.100Z")],
+            expected: (None, None, Some(0)),
+        },
+        Case { task: "gn-13", events: &[(E::Opened, "2026-11-08T13:00:00+02:00")], expected: (None, Some(60), None) },
+        Case { task: "gn-14", events: &[(E::Created, "")], expected: (None, None, None) },
+        Case { task: "gn-15", events: &[(E::Opened, "")], expected: (None, None, None) },
+        Case {
+            task: "gn-16",
+            events: &[(E::Opened, "2026-11-08T11:00:00Z"), (E::Closed, "invalid")],
+            expected: (None, None, None),
+        },
+        Case { task: "gn-17", events: &[(E::Created, "invalid")], expected: (None, None, None) },
+    ];
+    for Case { task, events, expected } in &cases {
+        for (event, at) in *events {
+            let mut row = opened(task, &format!("https://github.com/o/r/pull/{task}"));
+            row.event = *event;
+            row.at = Some((*at).into());
+            record(&store, store.project(), &row).unwrap();
+        }
+        let listed = store.listed().unwrap().into_iter().find(|l| l.row.task == *task).unwrap();
+        assert_eq!((listed.age_min, listed.pr_open_min, listed.pr_lead_min), *expected, "{task}");
+    }
+    // Reading twice cannot alter the event ledger or the unchanged v1 export.
+    let before = fs::read(home.join("tasks.jsonl")).unwrap();
+    assert_eq!(store.listed().unwrap(), store.listed().unwrap());
+    assert_eq!(fs::read(home.join("tasks.jsonl")).unwrap(), before);
+}
+
+#[test]
+fn a_restart_discards_old_pr_endpoints_but_keeps_the_tasks_first_age() {
+    use genie_tasks::{FixedClock, TaskEvent as E};
+    let tmp = Tmp::new("board-restart");
+    let repo = ts_repo(&tmp);
+    let store = open_store_at(&repo, &tmp.0.join("home"))
+        .unwrap()
+        .with_clock(Box::new(FixedClock("2026-11-08T12:00:00Z".into())));
+    for (event, at, expected) in [
+        (E::Created, "2026-11-08T08:00:00Z", (Some(240), None, None)),
+        (E::Opened, "2026-11-08T08:10:00Z", (Some(240), Some(230), None)),
+        (E::Closed, "2026-11-08T09:00:00Z", (Some(240), None, Some(50))),
+        (E::Created, "2026-11-08T10:00:00Z", (Some(240), None, None)),
+        // First observed merged in the restarted epoch: the old opening cannot be borrowed.
+        (E::Merged, "2026-11-08T11:00:00Z", (Some(240), None, None)),
+    ] {
+        let mut row = opened("gn-1", "https://github.com/o/r/pull/1");
+        row.event = event;
+        row.at = Some(at.into());
+        row.commit = at.into();
+        record(&store, store.project(), &row).unwrap();
+        let l = store.listed().unwrap().remove(0);
+        assert_eq!((l.age_min, l.pr_open_min, l.pr_lead_min), expected, "{event:?}");
+    }
+    for terminal in [E::Merged, E::Closed] {
+        let task = if terminal == E::Merged { "gn-2" } else { "gn-3" };
+        for (event, at) in [
+            (E::Opened, "2026-11-08T08:00:00Z"),
+            (E::Closed, "2026-11-08T09:00:00Z"),
+            (E::Created, "2026-11-08T10:00:00Z"),
+            (E::Opened, "2026-11-08T11:00:00Z"),
+            (terminal, "2026-11-08T11:30:00Z"),
+        ] {
+            let mut row = opened(task, &format!("https://github.com/o/r/pull/{task}"));
+            row.event = event;
+            row.at = Some(at.into());
+            row.commit = at.into();
+            record(&store, store.project(), &row).unwrap();
+            let l = store.listed().unwrap().into_iter().find(|l| l.row.task == task).unwrap();
+            if event == E::Opened && at.contains("11:00") {
+                assert_eq!(l.pr_open_min, Some(60), "current opening, not the old one");
+            }
+        }
+        let l = store.listed().unwrap().into_iter().find(|l| l.row.task == task).unwrap();
+        assert_eq!((l.age_min, l.pr_open_min, l.pr_lead_min), (Some(120), None, Some(30)));
+    }
+
+    // Reversed wall clocks do not change which creation/opening belongs to the restarted PR.
+    for (event, at) in [
+        (E::Created, "2026-11-08T10:00:00Z"),
+        (E::Opened, "2026-11-08T10:10:00Z"),
+        (E::Closed, "2026-11-08T11:00:00Z"),
+        (E::Created, "2026-11-08T08:00:00Z"),
+        (E::Opened, "2026-11-08T08:10:00Z"),
+        (E::Merged, "2026-11-08T09:00:00Z"),
+    ] {
+        let mut row = opened("gn-4", "https://github.com/o/r/pull/4");
+        row.event = event;
+        row.at = Some(at.into());
+        row.commit = at.into();
+        record(&store, store.project(), &row).unwrap();
+    }
+    let l = store.listed().unwrap().into_iter().find(|l| l.row.task == "gn-4").unwrap();
+    assert_eq!((l.age_min, l.pr_open_min, l.pr_lead_min), (Some(120), None, Some(50)));
+}
+
+#[test]
+fn board_durations_validate_endpoints_and_preserve_submillisecond_precision() {
+    use genie_tasks::{FixedClock, TaskEvent as E};
+    let cases = [
+        ("2026-11-08T11:00:00.0004Z", "2026-11-08T11:01:00.0000Z", Some(0)),
+        ("2026-11-08T11:00:00.0004Z", "2026-11-08T11:00:00.0000Z", None),
+        ("2026-11-08T11:00:00.0004Z", "2026-11-08T11:01:00.0004Z", Some(1)),
+        ("2026-11-08T11:00:00.9999Z", "2026-11-08T11:01:00.9998Z", Some(0)),
+        ("2026-11-08T11:00:00.0000000000001Z", "2026-11-08T11:01:00Z", Some(0)),
+        ("2026-11-08T11:00:00.1Z", "2026-11-08T11:01:00.100000Z", Some(1)),
+        ("2026-11-08T11:00:00.0004Z", "2026-11-08T13:01:00.0000+02:00", Some(0)),
+        ("2026-02-30T11:00:00Z", "2026-03-02T12:00:00Z", None),
+        ("2461352", "2026-11-08T12:00:00Z", None),
+        ("now", "2026-11-08T12:00:00Z", None),
+        ("2026-11-08T12:00:00Z", "now", None),
+        ("2026-11-08T12:00:00Z", "2461352", None),
+        ("2026-03-02T12:00:00Z", "2026-02-30T11:00:00Z", None),
+        ("2026-02-29T11:00:00Z", "2026-03-01T12:00:00Z", None),
+        ("2100-02-29T11:00:00Z", "2100-03-01T12:00:00Z", None),
+        ("2000-02-29T11:00:00Z", "2000-02-29T12:00:00Z", Some(60)),
+        ("2024-02-29T23:59:59.1Z", "2024-03-01T00:00:59.1000Z", Some(1)),
+        ("2026-04-31T11:00:00Z", "2026-05-01T12:00:00Z", None),
+        ("2026-11-08T24:00:00Z", "2026-11-09T01:00:00Z", None),
+        ("2026-11-08T11:00:00+24:00", "2026-11-08T12:00:00Z", None),
+        ("2026-11-08T11:00:00+00:60", "2026-11-08T12:00:00Z", None),
+        ("2026-11-08T11:00:00.+02:00", "2026-11-08T12:00:00Z", None),
+        ("2026-11-08 11:00:00Z", "2026-11-08T12:00:00Z", None),
+    ];
+    for (start, end, expected) in cases {
+        let tmp = Tmp::new("precise-board-time");
+        let repo = ts_repo(&tmp);
+        let store = open_store_at(&repo, &tmp.0.join("home")).unwrap().with_clock(Box::new(FixedClock(end.into())));
+        for (task, event, at) in [
+            ("gn-1", E::Created, start),
+            ("gn-2", E::Opened, start),
+            ("gn-3", E::Opened, start),
+            ("gn-3", E::Merged, end),
+            ("gn-4", E::Opened, start),
+            ("gn-4", E::Closed, end),
+        ] {
+            let mut row = opened(task, &format!("https://github.com/o/r/pull/{task}"));
+            row.event = event;
+            row.at = Some(at.into());
+            record(&store, store.project(), &row).unwrap();
+        }
+        let durations: Vec<_> =
+            store.listed().unwrap().iter().map(|l| (l.age_min, l.pr_open_min, l.pr_lead_min)).collect();
+        assert_eq!(
+            durations,
+            [(expected, None, None), (None, expected, None), (None, None, expected), (None, None, expected)],
+            "{start} -> {end}"
+        );
+    }
+}

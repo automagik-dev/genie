@@ -339,9 +339,12 @@ fn t1_list_and_status_carry_the_lifecycle_timestamps_worktree_and_project() {
         "closed_at",
         "worktree",
         "project",
+        "age_min",
+        "pr_open_min",
+        "pr_lead_min",
     ];
     expected.sort_unstable();
-    assert_eq!(keys, expected, "every old key kept, six added");
+    assert_eq!(keys, expected, "every old key kept, lifecycle and time fields added");
     let task = |id: &str| list.as_array().unwrap().iter().find(|t| t["task"] == id).unwrap().clone();
     let life =
         |t: &Value| ["created_at", "opened_at", "merged_at", "closed_at", "worktree", "project"].map(|k| t[k].clone());
@@ -470,4 +473,42 @@ fn a_nul_on_page_2_exits_1_keeps_page_1_and_says_only_that_page_was_not_written(
     assert_eq!(fx.rows(), 100, "page 1's rows persist in tasks.jsonl");
     let list = json_out(&fx.run(&["list", "--json"]));
     assert_eq!(list.as_array().unwrap().len(), 100, "page 1's tasks persist in genie.db");
+}
+
+#[test]
+fn board_time_fields_are_shared_by_list_and_status_without_changing_export_v1() {
+    let fx = fixture("time-json", true);
+    for (task, event, at) in [
+        ("gn-1", TaskEvent::Created, "2026-11-02T09:00:00Z"),
+        ("gn-1", TaskEvent::Opened, "2026-11-02T09:10:00Z"),
+        ("gn-1", TaskEvent::Closed, "2026-11-02T09:40:59Z"),
+        ("gn-2", TaskEvent::Merged, "2026-11-02T09:40:00Z"),
+        ("gn-3", TaskEvent::Opened, "2026-11-02T09:00:00Z"),
+    ] {
+        seed(&fx, task, event, at, "");
+    }
+    let before = fs::read(fx.home.join("tasks.jsonl")).unwrap();
+    let list_out = fx.run(&["list", "--json"]);
+    assert!(list_out.stderr.is_empty());
+    let list = json_out(&list_out);
+    for task in list.as_array().unwrap() {
+        let status_out = fx.run(&["status", task["task"].as_str().unwrap(), "--json"]);
+        assert!(status_out.stderr.is_empty());
+        let status = json_out(&status_out);
+        for key in ["age_min", "pr_open_min", "pr_lead_min"] {
+            assert!(task.get(key).is_some(), "{key} is present even when null");
+            assert_eq!(task[key], status[key]);
+        }
+    }
+    assert!(list[0]["age_min"].as_i64().unwrap() > 0);
+    assert_eq!(list[0]["pr_lead_min"], 30);
+    assert!(list[0]["pr_open_min"].is_null());
+    assert!(list[1]["pr_lead_min"].is_null());
+    assert!(list[2]["pr_open_min"].as_i64().unwrap() > 0);
+    assert_eq!(fs::read(fx.home.join("tasks.jsonl")).unwrap(), before);
+    for line in String::from_utf8(before).unwrap().lines() {
+        let event: Value = serde_json::from_str(line).unwrap();
+        assert_eq!(event["v"], 1);
+        assert!(event.get("age_min").is_none() && event.get("pr_lead_min").is_none());
+    }
 }
