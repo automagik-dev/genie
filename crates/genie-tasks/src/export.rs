@@ -23,10 +23,13 @@ pub const LOCK: &str = "tasks.jsonl.lock";
 #[derive(Serialize)]
 struct Row<'a> {
     v: u8,
+    seq: i64,
     event: &'a str,
     project: &'a str,
     /// JSON null for a PR with no task id (M3); the dedupe framing still uses `''`.
     task: Option<&'a str>,
+    /// Attribution before explicit links, needed to replay unlink after a linked first sighting.
+    original_task: Option<&'a str>,
     branch: &'a str,
     forge: &'a str,
     url: &'a str,
@@ -44,11 +47,18 @@ struct Row<'a> {
 
 /// The event's export row, newline-terminated.
 pub fn line(e: &StoredEvent) -> String {
+    attributed_line(e, None)
+}
+
+pub(crate) fn attributed_line(e: &StoredEvent, linked_task: Option<&str>) -> String {
+    let effective = linked_task.unwrap_or(&e.task);
     let row = Row {
         v: 1,
+        seq: e.seq,
         event: e.event.as_str(),
         project: &e.project,
-        task: (!e.task.is_empty()).then_some(e.task.as_str()),
+        task: (!effective.is_empty()).then_some(effective),
+        original_task: (!e.task.is_empty()).then_some(e.task.as_str()),
         branch: &e.branch,
         forge: &e.forge,
         url: &e.url,
@@ -115,9 +125,10 @@ pub fn rebuild(genie_home: &Path, projects: &[PathBuf]) -> Result<RebuildReport,
         )?;
         conn.busy_timeout(crate::store::BUSY_TIMEOUT)?;
         let events = read_events(&conn, &loc.project)?;
-        report.projects.push((loc.project.clone(), events.len()));
-        for e in &events {
-            rebuilt.push_str(&line(e));
+        let lines = crate::link::export_lines(&conn, &loc.project, events)?;
+        report.projects.push((loc.project.clone(), lines.len()));
+        for line in lines {
+            rebuilt.push_str(&line);
         }
     }
     let names: HashSet<&str> = located.iter().map(|l| l.project.as_str()).collect();

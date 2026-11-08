@@ -23,7 +23,7 @@ use crate::state::{Clock, Refusal, SystemClock, TaskEvent, TaskState, apply};
 /// The DDL and the `v7_schema` version row, shared with the TS T9 fixtures.
 pub const SCHEMA_SQL: &str = include_str!("schema.sql");
 /// The `v7_schema` version this build writes.
-pub const SCHEMA_VERSION: i64 = 1;
+pub const SCHEMA_VERSION: i64 = 2;
 /// `src/lib/v5/sqlite-open.ts` `BUSY_TIMEOUT_MS`.
 pub const BUSY_TIMEOUT: Duration = Duration::from_millis(5_000);
 /// `sqlite-open.ts` `BUSY_RETRY_DELAYS_MS`: paces the rare straggler that outlives busy_timeout.
@@ -355,10 +355,10 @@ fn retry_busy<T>(mut f: impl FnMut() -> Result<T, Error>) -> Result<T, Error> {
 
 /// An open handle on one repository's `v7_` tables.
 pub struct Store {
-    conn: Connection,
+    pub(crate) conn: Connection,
     location: Location,
     genie_home: PathBuf,
-    clock: Box<dyn Clock>,
+    pub(crate) clock: Box<dyn Clock>,
 }
 
 /// Open `repo`'s store, exporting to the environment's `<GENIE_HOME>`.
@@ -419,6 +419,17 @@ fn open_conn(db_path: &Path, access: Access) -> Result<Connection, Error> {
     };
     match version {
         Some(SCHEMA_VERSION) => {}
+        Some(1) if access == Access::Read => {}
+        Some(1) => {
+            conn.execute_batch("BEGIN IMMEDIATE")?;
+            if let Err(e) = conn
+                .execute_batch(SCHEMA_SQL)
+                .and_then(|()| conn.execute_batch("UPDATE v7_schema SET version = 2 WHERE id = 1; COMMIT"))
+            {
+                let _ = conn.execute_batch("ROLLBACK");
+                return Err(e.into());
+            }
+        }
         Some(v) => {
             return Err(Error::NewerSchema { path: db_path.to_path_buf(), version: v });
         }
@@ -604,6 +615,10 @@ impl Store {
     /// This project's `v7_tasks` rows with their lifecycle, in one aggregate query and no schema
     /// change; a database without the tables has none.
     pub fn listed(&self) -> Result<Vec<Listed>, Error> {
+        crate::link::project(self, self.raw_listed()?)
+    }
+
+    pub(crate) fn raw_listed(&self) -> Result<Vec<Listed>, Error> {
         // Sequence order defines epochs, not wall-clock order (timestamps can be reversed).
         // Use the latest opened after the preceding close/restart. For a terminal task the
         // current terminal row closes that epoch, so exclude it from the boundary search.
@@ -681,7 +696,7 @@ impl Store {
 
     /// The `v7_tasks` row of `task_key` in this project, if any.
     pub fn task(&self, task_key: &str) -> Result<Option<TaskRow>, Error> {
-        Ok(self.tasks()?.into_iter().find(|t| t.task_key == task_key))
+        Ok(self.tasks()?.into_iter().find(|t| t.task_key == task_key || t.task == task_key))
     }
 
     /// The latest `created` event whose worktree is `worktree`: the task a worktree belongs to.
@@ -763,10 +778,11 @@ impl Store {
         let next = apply(state.as_deref().and_then(TaskState::parse), &row.event, self.clock.as_ref())
             .map_err(Error::Refused)?;
         let at = row.at.clone().unwrap_or_else(|| self.clock.now());
+        let seq = crate::link::next_seq(&self.conn)?;
         self.conn.execute(
-            "INSERT INTO v7_task_events (project, task_key, task, event, forge, url, branch, \"commit\", worktree, \
+            "INSERT INTO v7_task_events (seq, project, task_key, task, event, forge, url, branch, \"commit\", worktree, \
              type, title, lead, at, counted, exclude_reason, pushed_after_open, dedupe_key) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
+             VALUES (?18, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
             params![
                 project,
                 key,
@@ -784,10 +800,10 @@ impl Store {
                 i64::from(row.counted),
                 row.exclude_reason,
                 row.pushed_after_open,
-                dedupe
+                dedupe,
+                seq
             ],
         )?;
-        let seq = self.conn.last_insert_rowid();
         // Title, lead and the PR fields keep their last non-empty value.
         self.conn.execute(
             "INSERT INTO v7_tasks (project, task_key, task, state, title, lead, forge, url, branch, last_seq, updated_at) \
@@ -821,16 +837,25 @@ pub fn record(store: &Store, project: &str, row: &EventRow) -> Result<Recorded, 
             return Err(Error::InvalidEvent(format!("a NUL byte in {name}")));
         }
     }
-    let (dedupe, stored) = retry_busy(|| {
+    let (dedupe, stored, line) = retry_busy(|| {
         store.conn.execute_batch("BEGIN IMMEDIATE")?;
         match store.record_tx(project, &key, row) {
-            Ok(stored) => match store.conn.execute_batch("COMMIT") {
-                Ok(()) => Ok(stored),
-                Err(e) => {
-                    let _ = store.conn.execute_batch("ROLLBACK");
-                    Err(e.into())
+            Ok((dedupe, stored)) => {
+                let line = match stored.as_ref().map(|e| crate::link::lifecycle_line(store, e)).transpose() {
+                    Ok(line) => line,
+                    Err(e) => {
+                        let _ = store.conn.execute_batch("ROLLBACK");
+                        return Err(e);
+                    }
+                };
+                match store.conn.execute_batch("COMMIT") {
+                    Ok(()) => Ok((dedupe, stored, line)),
+                    Err(e) => {
+                        let _ = store.conn.execute_batch("ROLLBACK");
+                        Err(e.into())
+                    }
                 }
-            },
+            }
             Err(e) => {
                 let _ = store.conn.execute_batch("ROLLBACK");
                 Err(e)
@@ -840,7 +865,7 @@ pub fn record(store: &Store, project: &str, row: &EventRow) -> Result<Recorded, 
     let Some(stored) = stored else {
         return Ok(Recorded::Duplicate { dedupe_key: dedupe });
     };
-    export::append(&store.genie_home, &export::line(&stored))
+    export::append(&store.genie_home, line.as_deref().expect("an appended event has an export line"))
         .map_err(|source| Error::Export { seq: stored.seq, source })?;
     Ok(Recorded::Appended { seq: stored.seq, dedupe_key: dedupe, state: stored.event.target() })
 }

@@ -61,4 +61,24 @@ CREATE TABLE IF NOT EXISTS v7_schema (
   id INTEGER PRIMARY KEY CHECK (id = 1),
   version INTEGER NOT NULL
 );
-INSERT OR IGNORE INTO v7_schema (id, version) VALUES (1, 1);
+INSERT OR IGNORE INTO v7_schema (id, version) VALUES (1, 2);
+
+-- Link history shares replay order with lifecycle events; neither history is rewritten.
+CREATE TABLE IF NOT EXISTS v7_link_events (
+  seq INTEGER PRIMARY KEY,
+  project TEXT NOT NULL,
+  task TEXT NOT NULL,
+  event TEXT NOT NULL CHECK (event IN ('link', 'unlink')),
+  url TEXT NOT NULL DEFAULT '',
+  branch TEXT NOT NULL DEFAULT '',
+  at TEXT NOT NULL,
+  dedupe_key TEXT NOT NULL UNIQUE
+);
+-- Current links, derived in the same transaction; reads never scan link history.
+CREATE TABLE IF NOT EXISTS v7_links (
+  project TEXT NOT NULL,
+  url TEXT NOT NULL DEFAULT '',
+  branch TEXT NOT NULL DEFAULT '',
+  task TEXT NOT NULL,
+  PRIMARY KEY (project, url, branch)
+);

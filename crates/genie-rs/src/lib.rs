@@ -31,6 +31,8 @@ pub const USAGE: &str = "usage: genie-rs <verb> [options]
   start (<gh-N|gl-N> | --title <t>) --lead <bot id> [--type fix|feat|docs|...] [--title <t>] [--project <path>]
                                                   cut a task worktree from the freshly fetched base;
                                                   prints {task, branch, worktree, lead, base_sha}
+  link <gh-N|gl-N|gn-N> (--pr <url> | --branch <b>) [--project <path>] [--json]
+  unlink <id> (--pr <url> | --branch <b>) [--project <path>] [--json]
   push [<task branch>] [--project <worktree>]     push HEAD to the task worktree's recorded branch
 
 exit: 0 ok, 1 failed, 2 refused (nothing changed)";
@@ -77,6 +79,7 @@ struct Flags {
     full: bool,
     projects: Vec<PathBuf>,
     positional: Vec<String>,
+    target: Option<genie_tasks::link::Target>,
 }
 
 impl Flags {
@@ -96,6 +99,7 @@ enum Extra {
     None,
     Rebuild,
     Full,
+    Link,
 }
 
 /// `--json`, `--project <path>` (or `--project=<path>`), `--rebuild` or `--full` where `extra` names
@@ -105,6 +109,20 @@ fn parse(args: &[String], extra: Extra) -> Result<Flags, Failure> {
     let mut it = args.iter();
     while let Some(arg) = it.next() {
         match arg.as_str() {
+            "--pr" | "--branch" if extra == Extra::Link => {
+                let value = it
+                    .next()
+                    .filter(|v| !v.starts_with("--"))
+                    .ok_or_else(|| Failure::usage(format!("{arg} needs a value")))?;
+                if flags.target.is_some() {
+                    return Err(Failure::usage("give exactly one --pr or --branch"));
+                }
+                flags.target = Some(if arg == "--pr" {
+                    genie_tasks::link::Target::Pr(value.clone())
+                } else {
+                    genie_tasks::link::Target::Branch(value.clone())
+                });
+            }
             "--json" => flags.json = true,
             "--rebuild" if extra == Extra::Rebuild => flags.rebuild = true,
             "--full" if extra == Extra::Full => flags.full = true,
@@ -317,6 +335,34 @@ fn push(args: &[String], out: &mut dyn Write) -> Result<(), Failure> {
     Ok(())
 }
 
+fn link(args: &[String], out: &mut dyn Write, unlink: bool) -> Result<(), Failure> {
+    let flags = parse(args, Extra::Link)?;
+    let [id] = flags.positional.as_slice() else {
+        return Err(Failure::usage("link/unlink takes exactly one task id"));
+    };
+    let target = flags.target.as_ref().ok_or_else(|| Failure::usage("give exactly one --pr or --branch"))?;
+    if !genie_tasks::link::valid_id(id) {
+        return Err(Failure::usage("malformed task id; expected gh-N, gl-N or gn-N"));
+    }
+    target.validate()?;
+    let project = flags.project()?;
+    let store = genie_tasks::open_store_at(&project, &genie_home())?;
+    let changed = genie_tasks::link::change(&store, id, target, unlink)?;
+    if flags.json {
+        writeln!(out, "{}", json!(changed))?;
+    } else {
+        writeln!(
+            out,
+            "{} {} {}{}",
+            changed.event,
+            id,
+            if changed.url.is_empty() { &changed.branch } else { &changed.url },
+            if changed.changed { "" } else { " (already recorded)" }
+        )?;
+    }
+    Ok(())
+}
+
 /// Run one `genie-rs` invocation (the arguments after the program name) and return its exit code.
 pub fn run(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
     let result = match args.split_first() {
@@ -328,6 +374,7 @@ pub fn run(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
             "list" => list(rest, out),
             "start" => start(rest, out, err),
             "push" => push(rest, out),
+            "link" | "unlink" => link(rest, out, verb == "unlink"),
             "help" | "--help" | "-h" => writeln!(out, "{USAGE}").map_err(Failure::from),
             "--version" | "-V" => writeln!(out, "genie-rs {}", env!("CARGO_PKG_VERSION")).map_err(Failure::from),
             other => Err(Failure::usage(format!("unknown verb '{other}'"))),

@@ -124,7 +124,10 @@ fn ts_first_then_rust_adds_only_its_tables() {
     let db = repo.join(".genie/genie.db");
     let before = ts_snapshot(&db);
     let store = open_store_at(&repo, &tmp.0.join("home")).unwrap();
-    assert_eq!(v7_tables(&db), ["v7_schema", "v7_task_events", "v7_task_ids", "v7_tasks"]);
+    assert_eq!(
+        v7_tables(&db),
+        ["v7_link_events", "v7_links", "v7_schema", "v7_task_events", "v7_task_ids", "v7_tasks"]
+    );
     let version: i64 =
         Connection::open(&db).unwrap().query_row("SELECT version FROM v7_schema", [], |r| r.get(0)).unwrap();
     assert_eq!(version, genie_tasks::SCHEMA_VERSION);
@@ -144,7 +147,9 @@ fn a_database_seeded_from_schema_sql_alone_is_complete() {
     let conn = Connection::open(&db).unwrap();
     conn.execute_batch(SCHEMA_SQL).unwrap();
     conn.execute_batch(SCHEMA_SQL).unwrap();
-    let rows: i64 = conn.query_row("SELECT count(*) FROM v7_schema WHERE version = 1", [], |r| r.get(0)).unwrap();
+    let rows: i64 = conn
+        .query_row("SELECT count(*) FROM v7_schema WHERE version = ?1", [genie_tasks::SCHEMA_VERSION], |r| r.get(0))
+        .unwrap();
     assert_eq!(rows, 1, "the version row is written once, by INSERT OR IGNORE");
     let store = open_store_at(&repo, &tmp.0.join("home")).unwrap();
     record(&store, store.project(), &opened("gh-2", "https://github.com/o/r/pull/2")).unwrap();
@@ -439,5 +444,40 @@ fn board_durations_validate_endpoints_and_preserve_submillisecond_precision() {
             [(expected, None, None), (None, expected, None), (None, None, expected), (None, None, expected)],
             "{start} -> {end}"
         );
+    }
+}
+
+#[test]
+fn link_schema_upgrade_is_additive_idempotent_and_preserves_v1_events() {
+    let tmp = Tmp::new("links-upgrade");
+    let repo = ts_repo(&tmp);
+    let db = repo.join(".genie/genie.db");
+    let home = tmp.0.join("home");
+    let before = ts_snapshot(&db);
+    // Frozen v1 schema: remove the new tables and restore its independent version marker.
+    let v1 = SCHEMA_SQL.split("-- Link history").next().unwrap().replace("VALUES (1, 2)", "VALUES (1, 1)");
+    Connection::open(&db).unwrap().execute_batch(&v1).unwrap();
+    let reader = genie_tasks::store::open_store_read_at(&repo, &home).unwrap();
+    assert!(reader.listed().unwrap().is_empty());
+    assert_eq!(v7_tables(&db), ["v7_schema", "v7_task_events", "v7_task_ids", "v7_tasks"]);
+    drop(reader);
+    let conn = Connection::open(&db).unwrap();
+    conn.execute("INSERT INTO v7_task_events (project, task_key, task, event, at, dedupe_key) VALUES (?1, 'gh-1', 'gh-1', 'created', '2026-11-08T00:00:00Z', 'legacy-key')", [repo.to_str().unwrap()]).unwrap();
+    let event_snapshot: Vec<String> = conn
+        .prepare("SELECT seq || ':' || task || ':' || event || ':' || dedupe_key FROM v7_task_events")
+        .unwrap()
+        .query_map([], |r| r.get(0))
+        .unwrap()
+        .map(Result::unwrap)
+        .collect();
+    drop(conn);
+    for _ in 0..2 {
+        let store = open_store_at(&repo, &home).unwrap();
+        let events = store.events().unwrap();
+        let after: Vec<String> =
+            events.iter().map(|e| format!("{}:{}:{}:{}", e.seq, e.task, e.event.as_str(), e.dedupe_key)).collect();
+        assert_eq!(after, event_snapshot);
+        assert_eq!(ts_snapshot(&db), before);
+        assert_eq!(v7_tables(&db).len(), 6);
     }
 }
