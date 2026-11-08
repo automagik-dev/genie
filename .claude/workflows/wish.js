@@ -33,7 +33,7 @@ export const meta = {
     {
       title: 'Publish',
       detail:
-        'one agent under a command allowlist checks the forge CLI is present before anything else and fails closed when it is not — nothing pushed, one named tooling gap the script reports as blocked, and never a credential hunt or a second route to the remote — then looks for an open PR on the branch before creating one, pushes the branch, opens the PR against the base with a body composed only from the frozen contract, the gate summary line, the verdict and the issue link, reads the remote head and the PR base, head and file set back, and watches the checks once under a bounded timeout; merging, forcing, hook bypass, API mutations and direct pushes to the integration branches are named forbidden in the same prompt',
+        'the script resolves the PR repository from origin’s push URL and blocks before any push when it cannot; one agent under a command allowlist checks the forge CLI is present before anything else and fails closed when it is not — nothing pushed, one named tooling gap the script reports as blocked, and never a credential hunt or a second route to the remote — then looks for an open PR on the branch before creating one, pushes the branch, opens the PR against the base in that same repository with every gh call pinned by --repo and a body composed only from the frozen contract, the gate summary line, the verdict and the issue link, reads the remote head and the PR repository, base, head and file set back, and watches the checks once under a bounded timeout; merging, forcing, hook bypass, API mutations and direct pushes to the integration branches are named forbidden in the same prompt',
     },
     {
       title: 'Read-back',
@@ -381,6 +381,7 @@ const EXEC_SCHEMA = obj(['status', 'worktree', 'branch', 'filesChanged'], {
   worktree: note('the absolute worktree path you worked in, as git reported it'),
   branch: str,
   head: note('the 40-character commit SHA you created'),
+  originPushUrl: note('origin push URL from git remote get-url --push origin, with userinfo, query and fragment stripped before output; empty when unavailable'),
   adopted: bool,
   installed: bool,
   filesChanged: notes('every repository-relative path in the commit'),
@@ -478,6 +479,19 @@ const objectOf = (value) => (value && typeof value === 'object' && !Array.isArra
 const intOf = (value, fallback) => (Number.isInteger(value) ? value : fallback)
 const texts = (value) => list(value).map(text).filter(Boolean)
 const bullets = (items) => items.map((item) => `- ${item}`).join('\n')
+
+// Resolve in the script, never by gh's fork-parent default or by the publisher's judgement.
+// GitHub URL and scp-style transports are supported; local paths and ambiguous URLs fail closed.
+function pushRepository(value) {
+  const url = text(value)
+  const match = /^(?:https?|ssh|git):\/\/(?:[^/@]*@)?github\.com(?::\d+)?\/([^/?#]+)\/([^/?#]+)\/?$/i.exec(url)
+    || /^(?:[^/@:]+@)?github\.com:([^/]+)\/([^/]+)\/?$/i.exec(url)
+  if (!match) return ''
+  const owner = match[1]
+  const repo = match[2].replace(/\.git$/, '')
+  const component = /^[a-z0-9][a-z0-9_.-]*$/i
+  return component.test(owner) && component.test(repo) ? `${owner}/${repo}` : ''
+}
 const listOr = (items, empty) => (items.length ? bullets(items) : `- ${empty}`)
 const section = (title, items) => (items && items.length ? `${title}:\n${bullets(items)}` : `${title}: (none given)`)
 const join = (parts) => parts.filter(Boolean).join('\n\n')
@@ -1055,6 +1069,7 @@ function executorPrompt(job, contract, diagnostic) {
       `The worktree path is <parent>/.claude/worktrees/wish-${job.slug} and the branch is wish/${job.slug}.`,
       `If that worktree already exists, adopt it ONLY when all three hold: it is on branch wish/${job.slug}; git status --porcelain in it is empty; and, after git fetch origin wish/${job.slug}, either that remote ref does not exist or the remote head is an ancestor of the worktree head (git merge-base --is-ancestor <remote-sha> HEAD exits 0 — equal heads, or local commits not yet pushed, both adopt). If any one fails, return status blocked with blockedReason naming which test failed and cleanupCommand set to the read-only diagnostic pair, verbatim: ${diagnostic} — the failing tests are exactly the states that hold uncommitted or unpushed work, so the next step is for the operator to SEE that work, never for you or for them to delete it. Never return a removal: no git worktree remove, no git branch -D, no git push origin --delete.`,
       `If it does not exist, create it from the base: git fetch origin ${job.base} then git worktree add -b wish/${job.slug} <path> origin/${job.base}.`,
+      `Read origin's PUSH URL in that worktree, stripping credentials before any output: git -C <path> remote get-url --push origin | sed -E 's#(://)[^/]*@#\\1#; s#^[^/@:]+@##; s/[?#].*$//'. Return it as originPushUrl, or empty when unavailable. Never return or log the unstripped URL. This is the repository that will receive the push; an upstream parent or origin's fetch URL cannot replace it.`,
       contract.installCommand
         ? `Run ${contract.installCommand} in the worktree BEFORE your first commit, so the repository prepare step materialises the git hooks — a commit made before that runs is a commit no hook saw.`
         : 'No install command was frozen for this repository: install nothing in the worktree, and answer installed false.',
@@ -1201,18 +1216,19 @@ function gatePrefix(choice) {
   return `no check command was discovered in this repository — ran ${choice.command}; CI is the authority — `
 }
 
-function publishPrompt(job, contract, worktree, branch, headSha, gateSummary, verdict, gateMode) {
+function publishPrompt(job, contract, worktree, branch, headSha, gateSummary, verdict, gateMode, repository) {
   return join([
     `You are the PUBLISHER of a single-task delivery run. You are the one stage that touches the remote, and you work under a command allowlist. Worktree: ${worktree}. Branch: ${branch}. Local head: ${headSha}. Base: ${job.base}.`,
+    `PR repository: ${repository}, resolved by the script from origin's push URL. The PR targets that repository itself, including in a fork checkout, never its upstream parent. Every gh call carries --repo ${repository}; --head ${branch} is local to that repository.`,
     `Every command you run runs INSIDE that worktree, and the git ones are spelled with -C ${worktree} so they cannot land anywhere else. ${GATE_PROOF[gateMode]}; a push fired from the shared checkout would run the shared checkout's pre-push hook over the shared checkout's working tree, which is neither the tree that was gated nor a tree this run may operate on.`,
     section('The only commands you may run', [
       'command -v gh — FIRST, before anything else: a presence check that prints a path and reads nothing else',
-      `gh pr list --head ${branch} --state open --json number,url,baseRefName — next, so a resumed or repeated run reuses the open PR and never opens a second one`,
+      `gh pr list --repo ${repository} --head ${branch} --state open --json number,url,baseRefName — next, so a resumed or repeated run reuses the open PR and never opens a second one`,
       `git -C ${worktree} push -u origin ${branch}`,
-      `gh pr create --base ${job.base} --head ${branch} --title <conventional title> --body <the body composed below> — only when the list above found no open PR`,
-      `git -C ${worktree} ls-remote origin ${branch}`,
-      'gh pr view <number> --json baseRefName,headRefName,headRefOid,files,url,number',
-      `T=$(command -v timeout || command -v gtimeout); $T ${CHECKS_TIMEOUT_SECONDS} gh pr checks <number> --watch — once, and only once (GNU timeout on Linux, gtimeout on macOS; with neither binary, run gh pr checks <number> once without --watch and report checks pending when it has not concluded)`,
+      `gh pr create --repo ${repository} --base ${job.base} --head ${branch} --title <conventional title> --body <the body composed below> — only when the list above found no open PR`,
+      `git -C ${worktree} ls-remote "$(git -C ${worktree} remote get-url --push origin)" ${branch} — read the PUSH destination, which can differ from origin's fetch URL; never print the URL itself`,
+      `gh pr view --repo ${repository} <number> --json baseRefName,headRefName,headRefOid,files,url,number`,
+      `T=$(command -v timeout || command -v gtimeout); $T ${CHECKS_TIMEOUT_SECONDS} gh pr checks --repo ${repository} <number> --watch — once, and only once (GNU timeout on Linux, gtimeout on macOS; with neither binary, run gh pr checks --repo ${repository} <number> once without --watch and report checks pending when it has not concluded)`,
     ]),
     'Run that presence check first and obey it. If it prints no path, the forge CLI is not installed on this host: stop there, push nothing, create nothing, and return pushed false, checks pending and toolingGap set to gh-missing. That is a real, reportable outcome — the script turns it into one named state the caller can act on, and the branch, the commit and the worktree stand exactly as the gate and the reviewer left them. Never look for a credential in the environment or in a file, never reach the remote with an HTTP client of your own, and never find a second way to open the pull request: a publisher that improvises its own credentials is worse than a branch that was not published.',
     section('Forbidden, and named verbatim so there is no doubt', [
@@ -2003,8 +2019,12 @@ if (!gate.pass || review.verdict === 'FIX-FIRST')
 
 phase('Publish')
 stageReached = 'Publish'
+const repository = pushRepository(work.originPushUrl)
+if (!repository) return finish('blocked', false, {
+  blockedReason: 'The origin push URL could not be resolved to a GitHub owner/repo (expected https://github.com/owner/repo or git@github.com:owner/repo). URL values are omitted to protect credentials. Nothing was pushed.',
+})
 const publishStep = await attempt('Publish', () =>
-  agent(publishPrompt(job, contract, worktree, branch, headSha, `${gatePrefix(gateChoice)}${gate.summaryLine || `exit ${gate.exitCode}, ${gate.failCount} fail`}`, review.verdict, gateChoice.mode), {
+  agent(publishPrompt(job, contract, worktree, branch, headSha, `${gatePrefix(gateChoice)}${gate.summaryLine || `exit ${gate.exitCode}, ${gate.failCount} fail`}`, review.verdict, gateChoice.mode, repository), {
     label: 'publish:pr',
     phase: 'Publish',
     schema: PUBLISH_SCHEMA,
@@ -2056,6 +2076,8 @@ phase('Read-back')
 stageReached = 'Read-back'
 mismatches = []
 if (!pr.url && !pr.number) mismatches.push('no pull request was reported on the branch')
+const prRepository = /^https:\/\/github\.com\/([^/]+\/[^/]+)\/pull\/[1-9]\d*\/?$/i.exec(pr.url)?.[1] || ''
+if (prRepository.toLowerCase() !== repository.toLowerCase()) mismatches.push(`the PR repository does not match the origin push repository ${repository}`)
 if (pr.remoteHead && pr.remoteHead !== headSha) mismatches.push(`remote head ${pr.remoteHead} is not the local head ${headSha}`)
 if (!pr.remoteHead) mismatches.push('the remote head was never read back, so the push is unconfirmed')
 if (pr.base && pr.base !== job.base) mismatches.push(`the PR targets ${pr.base}, not the requested base ${job.base}`)
