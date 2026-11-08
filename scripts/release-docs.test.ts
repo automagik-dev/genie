@@ -382,6 +382,8 @@ describe('Group E release and documentation contracts', () => {
     }
     expect(prepare).not.toContain('gh release download');
     expect(prepare).toContain('PREVIOUS_VERSION="$(jq -er');
+    expect(prepare).toContain('::error::release.previous_stable_missing');
+    expect(prepare).toContain('::error::release.previous_stable_unreadable');
     expect(prepare).toContain('release.version_not_newer candidate ${VERSION} equals the current stable');
     expect(prepare).toContain('release.version_not_newer candidate ${VERSION} is older than the current stable');
 
