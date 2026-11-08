@@ -95,7 +95,12 @@ describe('rolling-pr.yml token guard', () => {
     "::error::release-please-token.rate_limited the token is valid but its account's API quota is exhausted";
   const failed = '::error::release-please-token.probe_failed HTTP ';
 
-  function runGuard(status: string, headers = '', token = 'fixture-secret') {
+  function runGuard(
+    status: string,
+    headers = '',
+    token = 'fixture-secret',
+    options: { trace?: boolean; exitCode?: number } = {},
+  ) {
     const steps = job(workflow(join(WORKFLOWS, 'rolling-pr.yml')), 'maintain').steps;
     if (!Array.isArray(steps)) throw new Error('maintain job has no steps');
     const guard = steps.filter(isRecord).find((step) => step.name === 'Guard — RELEASE_PLEASE_TOKEN must be valid');
@@ -115,17 +120,20 @@ describe('rolling-pr.yml token guard', () => {
       writeFileSync(join(root, 'date'), '#!/bin/sh\n/bin/date "$@" 2>/dev/null || /bin/date -u -r "${3#@}" "$4"\n', {
         mode: 0o755,
       });
-      const run = Bun.spawnSync(['bash', '-e', '-o', 'pipefail', '-c', guard.run], {
+      const run = Bun.spawnSync(['bash', ...(options.trace ? ['-x'] : []), '-e', '-o', 'pipefail', '-c', guard.run], {
         env: {
           PATH: `${root}:${process.env.PATH ?? ''}`,
           GH_TOKEN: token,
-          GH_STUB_EXIT: status.includes('200 OK') ? '0' : '1',
+          GH_STUB_EXIT: String(options.exitCode ?? (status.includes('200 OK') ? 0 : 1)),
           GENIE_HOME: root,
         },
         stdout: 'pipe',
         stderr: 'pipe',
       });
-      expect(run.stderr.toString()).toBe('');
+      const diagnostics = run.stderr.toString();
+      expect(diagnostics).not.toContain('fixture-secret');
+      expect(diagnostics).not.toContain('fixture-response-body');
+      expect(diagnostics.trimEnd()).toBe(options.trace ? '+ set +x' : '');
       const output = run.stdout.toString();
       expect(output).not.toContain('fixture-secret');
       expect(output).not.toContain('fixture-response-body');
@@ -143,6 +151,21 @@ describe('rolling-pr.yml token guard', () => {
 
   test('HTTP 200 succeeds without logging the response', () => {
     expect(runGuard('HTTP/2.0 200 OK', 'X-Ratelimit-Remaining: 0\r\n')).toEqual({ code: 0, output: '' });
+  });
+
+  test.each(['200 OK', '401 Unauthorized'])('bash -x never prints the token or response for HTTP %s', (status) => {
+    const success = status.startsWith('200');
+    expect(runGuard(`HTTP/2.0 ${status}`, '', 'fixture-secret', { trace: true })).toEqual({
+      code: success ? 0 : 1,
+      output: success ? '' : invalid,
+    });
+  });
+
+  test('a failed gh request after HTTP 200 headers fails the probe', () => {
+    expect(runGuard('HTTP/2.0 200 OK', '', 'fixture-secret', { exitCode: 1 })).toEqual({
+      code: 1,
+      output: `${failed}200`,
+    });
   });
 
   test('HTTP 401 keeps the existing invalid-token message even with quota headers', () => {

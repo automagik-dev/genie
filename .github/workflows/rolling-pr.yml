@@ -22,13 +22,16 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN }}
         run: |
+          set +x
+          set -o pipefail
           if [ -z "$GH_TOKEN" ]; then
             echo "::error::RELEASE_PLEASE_TOKEN missing or invalid (HTTP 401) — mint a PAT with contents:read + pull-requests:write and add it to repo secrets"
             exit 1
           fi
           # Cheap read-only probe. Keep only status and quota headers; discard
           # the response body and gh diagnostics so neither can reach the log.
-          IFS='|' read -r status remaining reset retry_after < <(
+          probe_exit=0
+          probe_headers=$(
             gh api --include user 2>/dev/null | awk '
               BEGIN { headers = 1; status = "unknown" }
               { sub(/\r$/, "") }
@@ -42,9 +45,12 @@ jobs:
               }
               END { printf "%s|%s|%s|%s\n", status, remaining, reset, retry_after }
             '
-          )
+          ) || probe_exit=$?
+          IFS='|' read -r status remaining reset retry_after <<< "$probe_headers"
           case "$status" in
-            2??) exit 0 ;;
+            2??)
+              if [ "$probe_exit" -eq 0 ]; then exit 0; fi
+              ;;
             401)
               echo "::error::RELEASE_PLEASE_TOKEN missing or invalid (HTTP 401) — mint a PAT with contents:read + pull-requests:write and add it to repo secrets"
               exit 1
