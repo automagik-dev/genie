@@ -112,6 +112,7 @@ and the same arguments to `unlink` explicitly attribute existing PRs or branches
 project-local: `gn-N` needs a successful `start` in that project; `gh-N` and `gl-N` require no
 network lookup. A conflicting link refuses with exit 2 and names the current owner to unlink.
 Linking the same target/id twice or unlinking an absent link succeeds without adding history.
+A read-only preflight handles refusals and no-ops before installing or migrating Rust tables.
 An unlink with the wrong owner refuses. Malformed requests refuse with 2; a committed event whose
 export fails returns 1 and names `export --rebuild` as its repair.
 

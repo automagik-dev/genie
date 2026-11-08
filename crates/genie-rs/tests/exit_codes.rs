@@ -721,3 +721,34 @@ fn simultaneous_conflicting_links_commit_only_one_owner() {
     assert!(outputs.iter().find(|o| code(o) == 2).is_some_and(|o| stderr(o).contains("unlink")));
     assert_eq!(fx.rows(), 1);
 }
+
+#[test]
+fn link_refusals_and_absent_unlinks_do_not_install_or_migrate_rust_schema() {
+    let fx = fixture("link-refusal-no-migration", true);
+    let db = fx.repo.join(".genie/genie.db");
+    for v1 in [false, true] {
+        if v1 {
+            let sql = genie_tasks::SCHEMA_SQL
+                .split("-- Link history")
+                .next()
+                .unwrap()
+                .replace("VALUES (1, 2)", "VALUES (1, 1)");
+            rusqlite::Connection::open(&db).unwrap().execute_batch(&sql).unwrap();
+        }
+        let before = fs::read(&db).unwrap();
+        let no_task = fx.run(&["link", "gn-999", "--branch", "fix/unknown"]);
+        assert_eq!(code(&no_task), 2, "{}", stderr(&no_task));
+        assert!(stderr(&no_task).contains("not started in project"));
+        let absent = fx.run(&["unlink", "gh-1", "--branch", "fix/absent", "--json"]);
+        assert_eq!(code(&absent), 0, "{}", stderr(&absent));
+        assert_eq!(serde_json::from_slice::<Value>(&absent.stdout).unwrap()["changed"], false);
+        assert_eq!(fs::read(&db).unwrap(), before);
+        let conn = rusqlite::Connection::open(&db).unwrap();
+        let links: i64 = conn
+            .query_row("SELECT count(*) FROM sqlite_master WHERE name IN ('v7_link_events', 'v7_links')", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(links, 0, "no schema install or migration on refusal/no-op");
+    }
+}

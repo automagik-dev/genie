@@ -2,6 +2,7 @@
 //! the overlay. Link events and lifecycle events share sequence order, not a state machine.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::path::Path;
 
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::Serialize;
@@ -131,10 +132,20 @@ fn refuse(message: impl Into<String>) -> VerbError {
 }
 
 fn validate_request(store: &Store, id: &str, target: &Target, unlink: bool) -> Result<bool, VerbError> {
-    if id.starts_with("gn-") && !store.conn.query_row(
-        "SELECT EXISTS(SELECT 1 FROM v7_task_events WHERE project = ?1 AND task_key = ?2 AND event = 'created')",
-        params![store.project(), id], |r| r.get::<_, bool>(0),
-    ).map_err(Error::from)? {
+    let started = if id.starts_with("gn-") {
+        match store.conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM v7_task_events WHERE project = ?1 AND task_key = ?2 AND event = 'created')",
+            params![store.project(), id],
+            |r| r.get::<_, bool>(0),
+        ) {
+            Ok(found) => found,
+            Err(rusqlite::Error::SqliteFailure(_, Some(message))) if message.contains("no such table") => false,
+            Err(e) => return Err(Error::from(e).into()),
+        }
+    } else {
+        true
+    };
+    if !started {
         return Err(refuse(format!("{id} was not started in project {}", store.project())));
     }
     let links = bindings(&store.conn, store.project())?;
@@ -166,6 +177,29 @@ fn validate_request(store: &Store, id: &str, target: &Target, unlink: bool) -> R
         }
     }
     Ok(current.is_none())
+}
+
+/// Refuse or complete a no-op through a read handle before any schema installation/migration.
+/// The write transaction rechecks the request, so concurrent link changes still cannot overwrite.
+pub fn change_at(project: &Path, home: &Path, id: &str, target: &Target, unlink: bool) -> Result<Changed, VerbError> {
+    if !valid_id(id) {
+        return Err(refuse(format!("malformed task id '{id}'; expected gh-N, gl-N or gn-N")));
+    }
+    target.validate()?;
+    let read = crate::store::open_store_read_at(project, home)?;
+    if !validate_request(&read, id, target, unlink)? {
+        let (url, branch) = target.parts();
+        return Ok(Changed {
+            task: id.into(),
+            event: if unlink { "unlink" } else { "link" },
+            url: url.into(),
+            branch: branch.into(),
+            changed: false,
+        });
+    }
+    drop(read);
+    let write = crate::open_store_at(project, home)?;
+    change(&write, id, target, unlink)
 }
 
 /// Idempotent changes; conflicts refuse inside BEGIN IMMEDIATE before any event/projection write.

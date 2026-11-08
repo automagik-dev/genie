@@ -346,8 +346,7 @@ fn link(args: &[String], out: &mut dyn Write, unlink: bool) -> Result<(), Failur
     }
     target.validate()?;
     let project = flags.project()?;
-    let store = genie_tasks::open_store_at(&project, &genie_home())?;
-    let changed = genie_tasks::link::change(&store, id, target, unlink)?;
+    let changed = genie_tasks::link::change_at(&project, &genie_home(), id, target, unlink)?;
     if flags.json {
         writeln!(out, "{}", json!(changed))?;
     } else {
