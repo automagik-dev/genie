@@ -29,7 +29,8 @@ CREATE TABLE IF NOT EXISTS v7_task_events (
 CREATE INDEX IF NOT EXISTS v7_task_events_by_task ON v7_task_events (project, task_key, seq);
 -- Historical branch ambiguity uses two covering-index seeks, even after a task restarts.
 -- gn-8, macOS arm64 debug list --json, 10k events / 50 branch links, warm 3-run p50:
--- 48.27 ms with this index vs 262.29 ms without (2026-11-08; 50 linked cards / 100 raw tasks).
+-- 18.94 ms with this index vs 212.87 ms without (2026-11-08; 50 keys, real record/link calls).
+-- Per key: 66 created/opened/closed cycles, then created/merged; all transitions accepted.
 CREATE INDEX IF NOT EXISTS v7_task_events_by_branch_url ON v7_task_events (project, branch, url);
 
 -- The current state of each task, derived from v7_task_events in the same transaction.

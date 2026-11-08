@@ -122,21 +122,24 @@ pub(crate) fn project(store: &Store, mut rows: Vec<Listed>) -> Result<Vec<Listed
             row.lifecycle.worktree.clone_from(&start.lifecycle.worktree);
             row.age_min = start.age_min;
             // The creation lives under the started key, while the PR keeps its immutable key.
-            // A reopen cannot borrow a start from before that PR's previous terminal event.
+            // A completed epoch is bounded by terminal sequence, even if wall clocks reverse.
             let boundary: i64 = store.conn.query_row(
                 "SELECT COALESCE(MAX(seq), 0) FROM v7_task_events WHERE project = ?1 \
                  AND task_key = ?2 AND event IN ('merged', 'closed') AND seq < ?3",
                 params![store.project(), row.row.task_key, row.row.last_seq],
                 |r| r.get(0),
             )?;
-            if start.row.last_seq > boundary {
-                row.task_open_min = if row.row.state == TaskState::Opened { start.task_open_min } else { None };
-                row.task_lead_min = if matches!(row.row.state, TaskState::Merged | TaskState::Closed) {
-                    minutes_between(start.lifecycle.created_at.as_deref(), Some(&row.row.updated_at))
-                } else {
-                    None
-                };
-            }
+            let after_boundary = start.row.last_seq > boundary;
+            row.task_open_min =
+                if after_boundary && row.row.state == TaskState::Opened { start.task_open_min } else { None };
+            row.task_lead_min = if after_boundary
+                && matches!(row.row.state, TaskState::Merged | TaskState::Closed)
+                && start.row.last_seq < row.row.last_seq
+            {
+                minutes_between(start.lifecycle.created_at.as_deref(), Some(&row.row.updated_at))
+            } else {
+                None
+            };
             if row.row.lead.is_empty() {
                 row.row.lead.clone_from(&start.row.lead);
             }
