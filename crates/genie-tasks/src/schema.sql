@@ -27,6 +27,8 @@ CREATE TABLE IF NOT EXISTS v7_task_events (
   dedupe_key TEXT NOT NULL UNIQUE
 );
 CREATE INDEX IF NOT EXISTS v7_task_events_by_task ON v7_task_events (project, task_key, seq);
+-- Historical branch ambiguity uses two covering-index seeks, even after a task restarts.
+CREATE INDEX IF NOT EXISTS v7_task_events_by_branch_url ON v7_task_events (project, branch, url);
 
 -- The current state of each task, derived from v7_task_events in the same transaction.
 -- task_key is the task id, or pr:<forge>:<url> for a PR/MR whose branch carries none.
@@ -61,4 +63,24 @@ CREATE TABLE IF NOT EXISTS v7_schema (
   id INTEGER PRIMARY KEY CHECK (id = 1),
   version INTEGER NOT NULL
 );
-INSERT OR IGNORE INTO v7_schema (id, version) VALUES (1, 1);
+INSERT OR IGNORE INTO v7_schema (id, version) VALUES (1, 2);
+
+-- Link history shares replay order with lifecycle events; neither history is rewritten.
+CREATE TABLE IF NOT EXISTS v7_link_events (
+  seq INTEGER PRIMARY KEY,
+  project TEXT NOT NULL,
+  task TEXT NOT NULL,
+  event TEXT NOT NULL CHECK (event IN ('link', 'unlink')),
+  url TEXT NOT NULL DEFAULT '',
+  branch TEXT NOT NULL DEFAULT '',
+  at TEXT NOT NULL,
+  dedupe_key TEXT NOT NULL UNIQUE
+);
+-- Current links, derived in the same transaction; reads never scan link history.
+CREATE TABLE IF NOT EXISTS v7_links (
+  project TEXT NOT NULL,
+  url TEXT NOT NULL DEFAULT '',
+  branch TEXT NOT NULL DEFAULT '',
+  task TEXT NOT NULL,
+  PRIMARY KEY (project, url, branch)
+);

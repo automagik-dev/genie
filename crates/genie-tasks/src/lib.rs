@@ -4,6 +4,7 @@
 //! worktree and push only its branch. Library first, so Unfold can load it as a part.
 
 pub mod export;
+pub mod link;
 pub mod push;
 pub mod start;
 pub mod state;
