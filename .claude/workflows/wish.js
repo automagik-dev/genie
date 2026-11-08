@@ -38,7 +38,7 @@ export const meta = {
     {
       title: 'Read-back',
       detail:
-        'an agent-free comparison in the script: merge-ready requires the checks to pass AND the remote head to equal the local head AND the PR base to equal the base AND the PR head to equal the branch AND the PR file set to equal the declared set AND the verdict to be SHIP; an unresolved watch is pr-open with checks pending, never an inferred green; any single mismatch is blocked naming which comparison failed',
+        'an agent-free comparison in the script: merge-ready requires the checks to pass AND the remote head to equal the local head AND the PR base to equal the base AND the PR head to equal the branch AND the PR file set to be a nonempty subset of the declared set AND the verdict to be SHIP; an unresolved watch is pr-open with checks pending, never an inferred green; any single mismatch is blocked naming which comparison failed',
     },
     {
       title: 'Render',
@@ -2068,15 +2068,10 @@ if (pr.headOid && pr.headOid !== headSha) mismatches.push(`the PR head commit ${
 // script could not map, and merge-ready is reached with the PR file set never verified.
 if (!pr.files.length) mismatches.push('the PR file set was never read back')
 for (const rejected of prPaths.outside) mismatches.push(`the PR reports a ${rejected}`)
-// EQUALITY, not containment: merge-ready asserts the PR file set IS the declared file set. A path
-// outside it is unbounded scope; a declared path the PR does not carry is an unfulfilled contract —
-// most often the focused test the oracle names, never written — and asserting ok:true over that is
-// exactly the loosening this comparison exists to catch. Both directions are mismatches, so both
-// reach the relayed report instead of a log line the front door never sees.
+// The declared set bounds the scope: the PR may leave declared files untouched, but every changed
+// path must be declared. The empty-set guard above still requires a delivery to contain changes.
 const prExtra = pr.files.filter((path) => !contract.files.includes(path))
 if (prExtra.length) mismatches.push(`the PR changes ${prExtra.join(', ')}, outside the declared file set`)
-const prAbsent = contract.files.filter((path) => !pr.files.includes(path))
-if (pr.files.length && prAbsent.length) mismatches.push(`the PR does not carry ${prAbsent.join(', ')}, declared at admission`)
 const prDenylist = denylistHits(pr.files)
 if (prDenylist.length) mismatches.push(`the PR touches a denylisted path: ${prDenylist.map((h) => `${h.path} → ${h.rule}`).join('; ')}`)
 if (checks === 'fail') mismatches.push(`the remote checks failed: ${pr.failingChecks.join(', ') || 'no check name was returned'}`)

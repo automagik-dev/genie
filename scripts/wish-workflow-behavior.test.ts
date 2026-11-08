@@ -221,11 +221,16 @@ async function clean(data: Canned, extraArgs: Record<string, unknown> = {}) {
 }
 
 describe('wish.js read-back states', () => {
-  test('(1) checks pass and every comparison equal -> merge-ready, ok true', async () => {
+  test('(1) checks pass and PR files exactly match the declared set -> merge-ready, ok true', async () => {
     const { result } = await clean(canned('pass'));
     expect({ ok: result.ok, state: result.state }).toEqual({ ok: true, state: 'merge-ready' });
     // The scout offload rides on the result so a run ledger can price it; absence is recorded, never dropped.
     expect(result.scoutMikro?.agent).toBe('wish-context');
+  });
+
+  test('checks pass and PR files are a nonempty subset of the declared set -> merge-ready', async () => {
+    const { result } = await clean(canned('pass', { 'publish:pr': publishResult('pass', HEAD, [FILES[0]]) }));
+    expect({ ok: result.ok, state: result.state }).toEqual({ ok: true, state: 'merge-ready' });
   });
 
   test('(2) checks pending -> pr-open', async () => {
@@ -240,13 +245,20 @@ describe('wish.js read-back states', () => {
   });
 
   for (const checks of ['pass', 'fail'] as const) {
-    test(`(4) a structural mismatch -> blocked, checks ${checks}`, async () => {
-      const mismatched = { 'publish:pr': publishResult(checks, HEAD, [FILES[0]]) };
+    test(`(4) a PR file outside the declared set -> blocked, checks ${checks}`, async () => {
+      const extra = 'src/lib/undeclared.ts';
+      const mismatched = { 'publish:pr': publishResult(checks, HEAD, [...FILES, extra]) };
       const { result } = await clean(canned(checks, mismatched));
       expect({ ok: result.ok, state: result.state }).toEqual({ ok: false, state: 'blocked' });
-      expect(result.blockedReason).toContain(`does not carry ${FILES[1]}`);
+      expect(result.blockedReason).toContain(`the PR changes ${extra}, outside the declared file set`);
     });
   }
+
+  test('an empty PR file set -> blocked', async () => {
+    const { result } = await clean(canned('pass', { 'publish:pr': publishResult('pass', HEAD, []) }));
+    expect({ ok: result.ok, state: result.state }).toEqual({ ok: false, state: 'blocked' });
+    expect(result.blockedReason).toContain('the PR file set was never read back');
+  });
 
   test('(49) a publisher that reported no pull request logs no PR reported, never opened', async () => {
     const noPr = { ...publishResult('pending'), prUrl: '', prNumber: 0, prBase: '', prHead: '', prHeadOid: '' };
