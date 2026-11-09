@@ -484,8 +484,8 @@ const bullets = (items) => items.map((item) => `- ${item}`).join('\n')
 // GitHub URL and scp-style transports are supported; local paths and ambiguous URLs fail closed.
 function pushRepository(value) {
   const url = text(value)
-  const match = /^(?:https?|ssh|git):\/\/(?:[^/@]*@)?github\.com(?::\d+)?\/([^/?#]+)\/([^/?#]+)\/?$/i.exec(url)
-    || /^(?:[^/@:]+@)?github\.com:([^/]+)\/([^/]+)\/?$/i.exec(url)
+  const match = url.match(/^(?:https?|ssh|git):\/\/(?:[^/@]*@)?github\.com(?::\d+)?\/([^/?#]+)\/([^/?#]+)\/?$/i)
+    || url.match(/^(?:[^/@:]+@)?github\.com:([^/]+)\/([^/]+)\/?$/i)
   if (!match) return ''
   const owner = match[1]
   const repo = match[2].replace(/\.git$/, '')
@@ -2076,7 +2076,7 @@ phase('Read-back')
 stageReached = 'Read-back'
 mismatches = []
 if (!pr.url && !pr.number) mismatches.push('no pull request was reported on the branch')
-const prRepository = /^https:\/\/github\.com\/([^/]+\/[^/]+)\/pull\/[1-9]\d*\/?$/i.exec(pr.url)?.[1] || ''
+const prRepository = pr.url.match(/^https:\/\/github\.com\/([^/]+\/[^/]+)\/pull\/[1-9]\d*\/?$/i)?.[1] || ''
 if (prRepository.toLowerCase() !== repository.toLowerCase()) mismatches.push(`the PR repository does not match the origin push repository ${repository}`)
 if (pr.remoteHead && pr.remoteHead !== headSha) mismatches.push(`remote head ${pr.remoteHead} is not the local head ${headSha}`)
 if (!pr.remoteHead) mismatches.push('the remote head was never read back, so the push is unconfirmed')
