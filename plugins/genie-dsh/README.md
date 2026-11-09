@@ -89,6 +89,7 @@ fake fails on any member that is not in this table, so a new use has to be added
 | `rt.selfOf` | `src/host/store.js` | who called `grant_wish` |
 | `rt.botOf` | `src/host/store.js` | the caller's Bot |
 | `rt.createBot` | `src/host/roster.js` | making a Genie |
+| `rt.uiLanguage` | `src/host/channel.js` | the app's interface language, for the language a new Genie's instructions name |
 | `rt.ensureWorkspace` | `src/host/roster.js` | the team workspace for Genie's first project |
 | `rt.teamFolder` | `src/host/folders.js` | where wish copies live |
 | `rt.workDirOf` | `src/host/folders.js` | a Genie's project folder |
