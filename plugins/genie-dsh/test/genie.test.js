@@ -396,13 +396,16 @@ test('a Genie is told to write in the interface language, both when first made a
   const team = fakeTeam({ uiLanguage: 'pt-BR' });
   const { rt } = compose(team);
   await rt.genieReady;
-  assert.match(team.record.created[0].instructions, /before they write, in pt-BR, the language of this app's interface/);
+  assert.match(
+    team.record.created[0].instructions,
+    /before they write, in pt-BR, the language of this app's interface/,
+  );
   const create = team.record.endpoints.get('genie-create');
   await create({ folder: repoAt(join(dir, 'cards')) });
   assert.match(team.record.created[1].instructions, /before they write, in pt-BR/);
 });
 
-test('with no interface language reported yet, the rule still sends Genie to the user\'s language', async () => {
+test("with no interface language reported yet, the rule still sends Genie to the user's language", async () => {
   const team = fakeTeam();
   const { rt } = compose(team);
   await rt.genieReady;
