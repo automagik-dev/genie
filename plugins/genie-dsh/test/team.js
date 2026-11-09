@@ -47,7 +47,7 @@ export const gitIn = (cwd, ...args) => execFileSync('git', args, { cwd, encoding
  * its resume pass, `onTask(sessionId, state)` runs as a task starts (a first turn that ends
  * before the grant saves sets its status there).
  */
-export function fakeTeam(dir, { bots = {}, readOnly, noModel = false, tasks, resumesDone, onTask } = {}) {
+export function fakeTeam(dir, { bots = {}, readOnly, noModel = false, tasks, resumesDone, onTask, uiLanguage } = {}) {
   const model = noModel ? undefined : { provider: 'p', model: 'm' };
   const team = join(dir, 'team');
   mkdirSync(team, { recursive: true });
@@ -58,6 +58,7 @@ export function fakeTeam(dir, { bots = {}, readOnly, noModel = false, tasks, res
     state,
     record,
     load: async () => {},
+    uiLanguage: () => uiLanguage,
     readOnly: () => readOnly,
     save: async () => {
       record.saves += 1;

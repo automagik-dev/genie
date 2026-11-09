@@ -390,6 +390,31 @@ const repoAt = (path) => {
   return path;
 };
 
+// #3224: the Bot team stores this text as the Genie Bot's own instructions, so a prompt
+// with no language rule opened Genie in English on a pt-BR interface.
+test('a Genie is told to write in the interface language, both when first made and for + Genie', async () => {
+  const team = fakeTeam({ uiLanguage: 'pt-BR' });
+  const { rt } = compose(team);
+  await rt.genieReady;
+  assert.match(
+    team.record.created[0].instructions,
+    /before they write, in pt-BR, the language of this app's interface/,
+  );
+  const create = team.record.endpoints.get('genie-create');
+  await create({ folder: repoAt(join(dir, 'cards')) });
+  assert.match(team.record.created[1].instructions, /before they write, in pt-BR/);
+});
+
+test("with no interface language reported yet, the rule still sends Genie to the user's language", async () => {
+  const team = fakeTeam();
+  const { rt } = compose(team);
+  await rt.genieReady;
+  const instructions = team.record.created[0].instructions;
+  assert.match(instructions, /Write in the language the user writes in/);
+  assert.match(instructions, /language of this app's interface/);
+  assert.match(instructions, /no reason to answer in English/);
+});
+
 test('a Genie per repository: + Genie makes a new one in a free color, and the same repository opens its own', async () => {
   const team = fakeTeam();
   const { rt } = compose(team);
