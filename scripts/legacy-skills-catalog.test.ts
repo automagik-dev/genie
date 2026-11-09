@@ -1278,6 +1278,8 @@ describe('catalog CLI over isolated Git histories', () => {
     expect(() => collectCatalog(repo, proof, anchor)).toThrow('source-crossing HEAD history');
   });
 
+  // Twelve CLI launches and ~260 Git processes took 2.7–3.8 s locally and 4.86 s on Darwin CI.
+  // Give this real-history/consumer contract headroom above Bun's 5 s default.
   test('trusted proof keeps shared Genie archives and core despite source roles', async () => {
     const repo = seedOrigin();
     const { provenance, split, foreign, side } = importMikro(repo, true, undefined, false, true);
@@ -1338,7 +1340,7 @@ describe('catalog CLI over isolated Git histories', () => {
     expect(stale.stdout).toBe('');
     expect(stale.stderr).toContain('stale or unknown reference provenance');
     expect(readFileSync(join(repo, 'src/lib/legacy-skills-catalog.ts'), 'utf8')).toBe(recordedBefore);
-  });
+  }, 15_000);
 
   test.each(['unknown owner', 'conflicting duplicate'] as const)(
     'refuses %s in trusted reference proof without granting partial authority',
