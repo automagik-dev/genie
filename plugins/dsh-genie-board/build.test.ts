@@ -130,3 +130,40 @@ test('candidate build embeds override floor without changing source metadata', a
     await rm(output, { recursive: true, force: true });
   }
 }, 20_000);
+
+/**
+ * #3230: a git spec install packs only `files`, and `dist/` is not committed. pnpm then
+ * runs the package's own prepare script with the package's devDependencies installed, so
+ * the plugin has to build itself there — under plain node, which is what prepare names.
+ * This is the same build the release stages, started the way an install starts it.
+ */
+test('a git install builds the plugin: prepare runs this build under plain node', async () => {
+  const root = import.meta.dir;
+  const pkg = JSON.parse(await readFile(join(root, 'package.json'), 'utf8')) as {
+    version: string;
+    files: string[];
+    scripts: Record<string, string>;
+    devDependencies: Record<string, string>;
+  };
+  expect(pkg.scripts.build).toBe('bun run build.ts');
+  expect(pkg.scripts.prepare).toBe('node build.ts');
+  expect(pkg.files).toContain('dist');
+  // What the bundle resolves at build time: a bare git checkout has no root node_modules.
+  expect(pkg.devDependencies.esbuild).toBeString();
+  expect(pkg.devDependencies.zod).toBeString();
+  const output = await mkdtemp(join(tmpdir(), 'genie-prepare-'));
+  try {
+    const proc = Bun.spawn(['node', 'build.ts', pkg.version, output], {
+      cwd: root,
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+    const [code, stderr] = await Promise.all([proc.exited, new Response(proc.stderr).text()]);
+    expect(stderr).not.toContain('error');
+    expect(code).toBe(0);
+    expect((await readdir(output)).sort()).toEqual(['board.js', 'client.js', 'index.js', 'workflows.js']);
+    for (const bundle of HOST_BUNDLES) expect((await stat(join(output, bundle))).size).toBeGreaterThan(1000);
+  } finally {
+    await rm(output, { recursive: true, force: true });
+  }
+}, 20_000);
