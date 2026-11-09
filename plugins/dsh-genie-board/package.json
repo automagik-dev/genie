@@ -15,7 +15,12 @@
   "files": ["dist", "agent.cordis.yml", "cordis.patch.yml", "README.md", "NOTICE"],
   "scripts": {
     "build": "bun run build.ts",
+    "prepare": "node build.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.1",
+    "zod": "3.25.76"
   },
   "engines": {
     "dsh": ">=0.1.2-rc.1 <0.3.0-0"
