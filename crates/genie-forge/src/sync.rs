@@ -1,18 +1,21 @@
-//! One forge-sync pass: list the PRs/MRs updated since the cursor, page by page, plan at most one
-//! event per PR from the task's recorded state, record each event in its own transaction, then advance
+//! One forge-sync pass: list the PRs/MRs updated since the cursor, page by page, fill missing opened
+//! evidence and record terminal events, each in its own transaction, then advance
 //! the cursor.
 //!
-//! - A pass with no completed predecessor (`since` null) looks back [`HORIZON_SECS`] only; older PRs
-//!   are never recorded. Each page's events commit, newest first, and then the cursor's `seen` map
+//! - A pass with no completed predecessor (`since` null) normally looks back [`HORIZON_SECS`] only.
+//!   Missing opened evidence on already recorded PRs widens the listing and recording floor
+//!   to the oldest such row's updated_at, even before the horizon, until repaired. Each page's
+//!   events commit, newest first, and then the cursor's `seen` map
 //!   saves with `since` unchanged, so a cut pass resumes from the newest page without repeating a
 //!   count call. Only a completed pass sets `since`: the newest `updated_at` it LISTED, never below
 //!   the previous `since` or the pass's floor (the horizon when there is none of those), so `since`
 //!   never moves backward and `"since":null` means exactly "no completed pass".
 //! - `--full` (hand-run only) lists the whole history once, ignoring the horizon and `since`, and
 //!   saves its cursor only when it completes, so a killed `--full` leaves the cursor byte-identical.
-//! - `opened` only for a task with no row or at `created`, so a later push never yields a second
-//!   `opened` (Decision 5); `merged` or `closed` for a finished PR (a merged GitHub PR that the forge
-//!   also marks closed is `merged` only). A repeat of a recorded event dedupes to a no-op.
+//! - `opened` once per task and PR URL, at the forge's created_at, even when first seen finished;
+//!   a later push never yields a second `opened` (Decision 5). `merged` or `closed` for a finished PR
+//!   (a merged GitHub PR that the forge also marks closed is `merged` only). A repeat of a recorded
+//!   event dedupes to a no-op, without repeating its count request.
 //! - A transition `apply` refuses (a reopened PR merged after its `closed` was recorded) is skipped
 //!   and reported; the rest of the pass still commits and the cursor still advances (Decision 12).
 //! - Each page of the reply is checked for NUL bytes before any of its events is written: exit 1, and
@@ -23,14 +26,14 @@
 //!   every reply. Both record the origin only as `host/path`: a remote URL can carry a token, and
 //!   Genie stores no credential.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::ffi::OsString;
 use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use genie_tasks::{EventRow, Recorded, Store, TaskEvent, TaskState, open_store_at, record};
+use genie_tasks::{EventRow, Recorded, Store, StoredEvent, TaskEvent, open_store_at, record};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -224,14 +227,8 @@ fn check_nul(prs: &[Pr]) -> Result<(), Error> {
     Ok(())
 }
 
-/// The one event a PR yields given its task's recorded state, or `None`.
-fn plan(pr: &Pr, forge: Forge, state: Option<TaskState>) -> Option<EventRow> {
-    let event = match (pr.state, state) {
-        (PrState::Open, None | Some(TaskState::Created)) => TaskEvent::Opened,
-        (PrState::Open, Some(_)) => return None,
-        (PrState::Merged, _) => TaskEvent::Merged,
-        (PrState::Closed, _) => TaskEvent::Closed,
-    };
+/// The event's metadata comes from the same list reply, including the PR's creation time.
+fn plan(pr: &Pr, forge: Forge, event: TaskEvent) -> EventRow {
     let mut row = EventRow::new(event);
     let (kind, reason) = classify(&pr.title);
     row.task = task_id(&pr.branch).unwrap_or("").to_string();
@@ -249,8 +246,26 @@ fn plan(pr: &Pr, forge: Forge, state: Option<TaskState>) -> Option<EventRow> {
         _ => (&pr.head, &pr.created_at),
     };
     row.commit = commit.clone();
-    row.at = Some(rfc3339(parse_time(at).unwrap_or_else(|| pr.updated())));
-    Some(row)
+    row.at = Some(if parse_time(at).is_some() { at.clone() } else { rfc3339(pr.updated()) });
+    row
+}
+
+/// Existing opens and completed PRs superseded by a restart, under their immutable task keys.
+/// Head changes never make a second open; an older PR must not open a restarted task.
+fn opened_or_restarted_prs(events: &[StoredEvent]) -> HashSet<(String, String)> {
+    let mut created = HashMap::new();
+    for e in events.iter().filter(|e| e.event == TaskEvent::Created) {
+        created.entry(e.task_key.as_str()).and_modify(|seq: &mut i64| *seq = (*seq).max(e.seq)).or_insert(e.seq);
+    }
+    events
+        .iter()
+        .filter(|e| {
+            e.event == TaskEvent::Opened
+                || (matches!(e.event, TaskEvent::Merged | TaskEvent::Closed)
+                    && created.get(e.task_key.as_str()).is_some_and(|seq| *seq > e.seq))
+        })
+        .map(|e| (e.task_key.clone(), e.url.clone()))
+        .collect()
 }
 
 fn unix_now() -> i64 {
@@ -268,17 +283,36 @@ fn record_page(
     counts: &mut BTreeMap<String, Option<i64>>,
     report: &mut Report,
 ) -> Result<(), Error> {
-    let states: HashMap<String, TaskState> = store.tasks()?.into_iter().map(|t| (t.task_key, t.state)).collect();
-    let processed: Vec<&Pr> = prs.iter().filter(|p| cursor.pending(p, floor)).collect();
+    let recorded = store.events()?;
+    let mut opened = opened_or_restarted_prs(&recorded);
+    let known: HashSet<_> = recorded.iter().map(|e| e.dedupe_key.as_str()).collect();
+    let mut processed = Vec::new();
     let mut planned = Vec::new();
-    for pr in &processed {
+    for pr in prs.iter().filter(|p| floor.is_none_or(|f| p.updated() >= f)) {
         let task = task_id(&pr.branch).unwrap_or("");
         let key = genie_tasks::task_key(task, cli.forge.as_str(), &pr.url).unwrap_or_default();
-        let Some(mut row) = plan(pr, cli.forge, states.get(&key).copied()) else {
+        let missing_open = opened.insert((key, pr.url.clone()));
+        let pending = cursor.pending(pr, floor);
+        if !pending && !missing_open {
             continue;
+        }
+        processed.push(pr);
+        if missing_open {
+            planned.push(plan(pr, cli.forge, TaskEvent::Opened));
+        }
+        let event = match pr.state {
+            PrState::Open => continue,
+            PrState::Merged => TaskEvent::Merged,
+            PrState::Closed => TaskEvent::Closed,
         };
+        if !pending {
+            continue;
+        }
+        let mut row = plan(pr, cli.forge, event);
         // The contract's count is a property of the merge; other events carry null.
-        if row.event == TaskEvent::Merged {
+        let dedupe =
+            genie_tasks::dedupe_key(&report.project, &row.task, row.event, &row.url, &row.commit, &row.worktree);
+        if row.event == TaskEvent::Merged && !known.contains(dedupe.as_str()) {
             let count_key = format!("{}@{}", pr.url, pr.head);
             row.pushed_after_open = match counts.get(&count_key) {
                 Some(count) => *count,
@@ -324,9 +358,21 @@ pub fn sync(opts: &SyncOptions) -> Result<Report, Error> {
         .filter(|c| c.origin == origin_id)
         .unwrap_or_else(|| Cursor { origin: origin_id.clone(), ..Cursor::default() });
     let horizon = now - HORIZON_SECS;
-    // The oldest `updated_at` this pass lists and records: the cursor's, else the horizon; none for --full.
-    let floor = if opts.full { None } else { Some(cursor.since.unwrap_or(horizon)) };
-    let fresh = !opts.full && (0..CACHE_TTL_SECS).contains(&(now - cache.fetched_at));
+    let opened = opened_or_restarted_prs(&store.events()?);
+    let missing_floor = store
+        .tasks()?
+        .into_iter()
+        .filter(|t| !t.url.is_empty() && !opened.contains(&(t.task_key.clone(), t.url.clone())))
+        .filter_map(|t| parse_time(&t.updated_at))
+        .min();
+    // Ordinary polling reaches the cursor (30 days on first run). Repairing recorded holes
+    // reaches back to the oldest missing PR, without --full or per-PR API requests.
+    let normal_floor = cursor.since.unwrap_or(horizon);
+    let floor = if opts.full { None } else { Some(missing_floor.map_or(normal_floor, |f| f.min(normal_floor))) };
+    // A cached window cannot cover an older repair floor. Relist in that case.
+    let fresh = !opts.full
+        && missing_floor.is_none_or(|f| f >= normal_floor)
+        && (0..CACHE_TTL_SECS).contains(&(now - cache.fetched_at));
     let mut report =
         Report { project: project.clone(), forge: "", cached: false, appended: 0, duplicates: 0, skipped: vec![] };
     let mut listed: Option<i64> = None;
