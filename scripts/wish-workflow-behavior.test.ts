@@ -153,7 +153,7 @@ const reviewResult = (verdict = 'SHIP') => ({
 
 const publishResult = (checks: Checks, head = HEAD, files = FILES) => ({
   pushed: true,
-  prUrl: 'https://example.invalid/pull/1',
+  prUrl: 'https://github.com/automagik-dev/genie/pull/1',
   prNumber: 1,
   prBase: 'dev',
   prHead: BRANCH,
@@ -203,7 +203,14 @@ function canned(checks: Checks = 'pass', overrides: Canned = {}): Canned {
         installCommand: GENIE_INSTALL,
       },
     },
-    'work:executor': { status: 'committed', branch: BRANCH, head: HEAD, worktree: '/w', filesChanged: [...FILES] },
+    'work:executor': {
+      status: 'committed',
+      branch: BRANCH,
+      head: HEAD,
+      worktree: '/w',
+      filesChanged: [...FILES],
+      originPushUrl: 'https://github.com/automagik-dev/genie.git',
+    },
     'gate:check': gateResult(),
     'review:diff': reviewResult(),
     'publish:pr': publishResult(checks),
@@ -219,6 +226,107 @@ async function clean(data: Canned, extraArgs: Record<string, unknown> = {}) {
   expect(record.problems).toEqual([]);
   return record;
 }
+
+describe('wish.js publishes on the repository that receives the push (#3188)', () => {
+  async function onOrigin(originPushUrl: unknown, repository = 'automagik-dev/genie') {
+    return clean(
+      canned('pass', {
+        'work:executor': { ...(canned()['work:executor'] as object), originPushUrl },
+        'publish:pr': { ...publishResult('pass'), prUrl: `https://github.com/${repository}/pull/1` },
+      }),
+    );
+  }
+
+  test('a plain clone keeps its base, branch, push and PR repository', async () => {
+    const { result, prompts } = await onOrigin('https://github.com/automagik-dev/genie.git');
+    expect(result.state).toBe('merge-ready');
+    expect(prompts['work:executor'][0]).toContain('remote get-url --push origin');
+    const prompt = prompts['publish:pr'][0];
+    for (const verb of ['list', 'create', 'view', 'checks']) {
+      expect(prompt).toContain(`gh pr ${verb} --repo automagik-dev/genie`);
+    }
+    expect(prompt).toContain(`git -C /w push -u origin ${BRANCH}`);
+    expect(prompt).toContain(`git -C /w ls-remote "$(git -C /w remote get-url --push origin)" ${BRANCH}`);
+    expect(prompt).toContain(`--base dev --head ${BRANCH}`);
+  });
+
+  test('the remote discovery command reads a distinct push URL and strips userinfo before output', async () => {
+    const { prompts } = await onOrigin('https://github.com/contributor/genie.git', 'contributor/genie');
+    const command = /git -C <path> remote get-url --push origin \| sed -E '[^']+'/.exec(
+      prompts['work:executor'][0],
+    )?.[0];
+    expect(command).toBeDefined();
+    const dir = mkdtempSync(join(tmpdir(), 'wish-origin-'));
+    const env = { ...process.env, HOME: dir, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' };
+    const git = (...args: string[]) => {
+      const result = Bun.spawnSync(['git', '-C', dir, ...args], { env });
+      expect(result.exitCode).toBe(0);
+    };
+    try {
+      git('init', '--quiet');
+      git('remote', 'add', 'origin', 'https://github.com/automagik-dev/genie.git');
+      git(
+        'remote',
+        'set-url',
+        '--push',
+        'origin',
+        'https://user:fake-secret@github.com/contributor/genie.git?fake=query#fragment',
+      );
+      const result = Bun.spawnSync(['sh', '-c', (command as string).replace('<path>', dir)], { env });
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout.toString().trim()).toBe('https://github.com/contributor/genie.git');
+      expect(result.stderr.toString()).toBe('');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  for (const url of [
+    'git@github.com:contributor/genie.git',
+    'https://github.com/contributor/genie',
+    'ssh://git@github.com/contributor/genie.git',
+    // A distinct push URL wins over the fetch URL and any upstream parent.
+    'https://user:private-token@github.com/contributor/genie.git',
+  ]) {
+    test(`a fork origin pins every gh operation to the fork (${url.split(':')[0]})`, async () => {
+      const { result, prompts } = await onOrigin(url, 'contributor/genie');
+      expect(result.state).toBe('merge-ready');
+      const prompt = prompts['publish:pr'][0];
+      for (const verb of ['list', 'create', 'view', 'checks']) {
+        expect(prompt).toContain(`gh pr ${verb} --repo contributor/genie`);
+      }
+      // The issue's contract targets the fork itself, so the head is local to that repository.
+      expect(prompt).toContain(`--base dev --head ${BRANCH}`);
+      expect(prompt).not.toContain('--repo automagik-dev/genie');
+      expect(prompt).not.toContain('private-token');
+      expect(result.report).not.toContain('private-token');
+    });
+  }
+
+  for (const url of [
+    '',
+    '/local/repo.git',
+    'https://user:private-token@example.org/repo',
+    'https://github.com/owner/repo;touch-secret.git',
+    'https://github.com/owner/repo/extra',
+  ]) {
+    test(`an unsupported origin URL blocks before the publisher runs (${url.split(':')[0]})`, async () => {
+      const { result, prompts } = await onOrigin(url);
+      expect(result.state).toBe('blocked');
+      expect(result.blockedReason).toContain('origin push URL');
+      expect(result.blockedReason).toContain('owner/repo');
+      expect(prompts['publish:pr']).toBeUndefined();
+      expect(result.report).not.toContain('private-token');
+    });
+  }
+
+  test('read-back refuses a PR on the upstream parent even when its refs and files match', async () => {
+    const { result } = await onOrigin('git@github.com:contributor/genie.git');
+    expect(result.state).toBe('blocked');
+    expect(result.blockedReason).toContain('PR repository');
+    expect(result.blockedReason).toContain('contributor/genie');
+  });
+});
 
 describe('wish.js read-back states', () => {
   test('(1) checks pass and PR files exactly match the declared set -> merge-ready, ok true', async () => {
