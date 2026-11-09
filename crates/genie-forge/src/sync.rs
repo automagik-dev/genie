@@ -1,47 +1,55 @@
-//! One forge-sync pass: list the PRs/MRs updated since the cursor, page by page, plan at most one
-//! event per PR from the task's recorded state, record each event in its own transaction, then advance
+//! One forge-sync pass: list the PRs/MRs updated since the cursor, page by page, fill missing opened
+//! evidence and record terminal events, each in its own transaction, then advance
 //! the cursor.
 //!
-//! - A pass with no completed predecessor (`since` null) looks back [`HORIZON_SECS`] only; older PRs
-//!   are never recorded. Each page's events commit, newest first, and then the cursor's `seen` map
+//! - Normal admission starts at the cursor, or [`HORIZON_SECS`] on first run. Missing opens on
+//!   exact recorded PRs of the current origin may widen the LISTING floor, never admission.
+//!   Repair appends only opened evidence and processes at most [`REPAIR_PAGE_BUDGET`] pages
+//!   after normal polling reaches its floor (including the boundary page), then resumes from
+//!   its saved page on a later network pass. Unrelated older PRs require `--full`. Each page's
+//!   normal events commit, newest first, and then the cursor's `seen` map
 //!   saves with `since` unchanged, so a cut pass resumes from the newest page without repeating a
 //!   count call. Only a completed pass sets `since`: the newest `updated_at` it LISTED, never below
 //!   the previous `since` or the pass's floor (the horizon when there is none of those), so `since`
 //!   never moves backward and `"since":null` means exactly "no completed pass".
 //! - `--full` (hand-run only) lists the whole history once, ignoring the horizon and `since`, and
 //!   saves its cursor only when it completes, so a killed `--full` leaves the cursor byte-identical.
-//! - `opened` only for a task with no row or at `created`, so a later push never yields a second
-//!   `opened` (Decision 5); `merged` or `closed` for a finished PR (a merged GitHub PR that the forge
-//!   also marks closed is `merged` only). A repeat of a recorded event dedupes to a no-op.
+//! - `opened` once per task and PR URL, at the forge's created_at, even when first seen finished;
+//!   a later push never yields a second `opened` (Decision 5). `merged` or `closed` for a finished PR
+//!   (a merged GitHub PR that the forge also marks closed is `merged` only). A repeat of a recorded
+//!   event dedupes to a no-op, without repeating its count request.
 //! - A transition `apply` refuses (a reopened PR merged after its `closed` was recorded) is skipped
 //!   and reported; the rest of the pass still commits and the cursor still advances (Decision 12).
 //! - Each page of the reply is checked for NUL bytes before any of its events is written: exit 1, and
 //!   nothing of that page or a later one is written; earlier pages may have committed.
 //! - Every forge call of a pass, the `pushed_after_open` calls for merged PRs included, is cached for
-//!   60 s in `<GENIE_HOME>/cache/forge/<sha256(project)>.json`, written only when the pass completes
-//!   (in every mode). The cursor lives beside it in `<sha256(project)>.cursor.json`, so it outlives
-//!   every reply. Both record the origin only as `host/path`: a remote URL can carry a token, and
+//!   60 s in `<GENIE_HOME>/cache/forge/<sha256(project)>.json`. A completed normal poll keeps
+//!   that throttle even if optional repair cannot resolve a hole or its next page fails. The cursor
+//!   lives beside it in `<sha256(project)>.cursor.json`, so it outlives every reply. Both record the origin only as `host/path`: a remote URL can carry a token, and
 //!   Genie stores no credential.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::ffi::OsString;
 use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use genie_tasks::{EventRow, Recorded, Store, TaskEvent, TaskState, open_store_at, record};
+use genie_tasks::{EventRow, Recorded, Store, StoredEvent, TaskEvent, TaskRow, open_store_at, record};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::Error;
-use crate::client::{Cli, Forge, Pr, PrState, detect, last_page, origin, parse_time, rfc3339};
+use crate::client::{Cli, Forge, Pr, PrState, Remote, detect, last_page, origin, parse_time, rfc3339};
 
 /// How long a forge reply is reused.
 pub const CACHE_TTL_SECS: i64 = 60;
 
 /// How far back a pass with no completed predecessor looks: 30 days (the usage feed's `d30`).
 pub const HORIZON_SECS: i64 = 30 * 86_400;
+
+/// Extra list pages per normal network pass for repairing recorded PRs only.
+pub const REPAIR_PAGE_BUDGET: usize = 2;
 
 pub struct SyncOptions {
     /// Any folder of the repository; rows are recorded under its main checkout.
@@ -138,6 +146,9 @@ struct CacheFile {
     prs: Vec<Pr>,
     /// `pushed_after_open` per `<url>@<head>` of a merged PR; null when the forge cannot say.
     counts: BTreeMap<String, Option<i64>>,
+    /// Resume bounded repair scans after the cache expires. Zero from older caches means page 1.
+    #[serde(default)]
+    repair_page: usize,
 }
 
 fn state_path(genie_home: &Path, project: &str, suffix: &str) -> PathBuf {
@@ -224,14 +235,8 @@ fn check_nul(prs: &[Pr]) -> Result<(), Error> {
     Ok(())
 }
 
-/// The one event a PR yields given its task's recorded state, or `None`.
-fn plan(pr: &Pr, forge: Forge, state: Option<TaskState>) -> Option<EventRow> {
-    let event = match (pr.state, state) {
-        (PrState::Open, None | Some(TaskState::Created)) => TaskEvent::Opened,
-        (PrState::Open, Some(_)) => return None,
-        (PrState::Merged, _) => TaskEvent::Merged,
-        (PrState::Closed, _) => TaskEvent::Closed,
-    };
+/// The event's metadata comes from the same list reply, including the PR's creation time.
+fn plan(pr: &Pr, forge: Forge, event: TaskEvent) -> EventRow {
     let mut row = EventRow::new(event);
     let (kind, reason) = classify(&pr.title);
     row.task = task_id(&pr.branch).unwrap_or("").to_string();
@@ -249,8 +254,64 @@ fn plan(pr: &Pr, forge: Forge, state: Option<TaskState>) -> Option<EventRow> {
         _ => (&pr.head, &pr.created_at),
     };
     row.commit = commit.clone();
-    row.at = Some(rfc3339(parse_time(at).unwrap_or_else(|| pr.updated())));
-    Some(row)
+    row.at = Some(if parse_time(at).is_some() { at.clone() } else { rfc3339(pr.updated()) });
+    row
+}
+
+/// Existing opens and completed PRs superseded by a restart, under their immutable task keys.
+/// Head changes never make a second open; an older PR must not open a restarted task.
+fn opened_or_restarted_prs(events: &[StoredEvent]) -> HashSet<(String, String)> {
+    let mut created = HashMap::new();
+    for e in events.iter().filter(|e| e.event == TaskEvent::Created) {
+        created.entry(e.task_key.as_str()).and_modify(|seq: &mut i64| *seq = (*seq).max(e.seq)).or_insert(e.seq);
+    }
+    events
+        .iter()
+        .filter(|e| {
+            e.event == TaskEvent::Opened
+                || (matches!(e.event, TaskEvent::Merged | TaskEvent::Closed)
+                    && created.get(e.task_key.as_str()).is_some_and(|seq| *seq > e.seq))
+        })
+        .map(|e| (e.task_key.clone(), e.url.clone()))
+        .collect()
+}
+
+/// Only current-origin PR identities can extend the normal listing window for repair.
+fn missing_opens(store: &Store, forge: Forge, remote: &Remote) -> Result<Vec<TaskRow>, Error> {
+    let opened = opened_or_restarted_prs(&store.events()?);
+    Ok(store
+        .tasks()?
+        .into_iter()
+        .filter(|t| {
+            t.forge == forge.as_str()
+                && in_repository(&t.url, forge, remote)
+                && !opened.contains(&(t.task_key.clone(), t.url.clone()))
+        })
+        .collect())
+}
+
+fn in_repository(url: &str, forge: Forge, remote: &Remote) -> bool {
+    let Some(rest) = url.strip_prefix("https://").or_else(|| url.strip_prefix("http://")) else { return false };
+    let Some((host, path)) = rest.split_once('/') else { return false };
+    let Some((prefix, number)) = path.rsplit_once('/') else { return false };
+    let route = if forge == Forge::Github { "pull" } else { "-/merge_requests" };
+    let expected = format!("{}/{route}", remote.path);
+    host.eq_ignore_ascii_case(&remote.host)
+        && if forge == Forge::Github { prefix.eq_ignore_ascii_case(&expected) } else { prefix == expected }
+        && number.parse::<u64>().is_ok_and(|n| n > 0)
+}
+
+/// Below the normal floor, append only missing opens for exact recorded task/URL pairs.
+/// No terminal events, cursor notes, or per-PR forge calls belong to repair.
+fn repair_opens(store: &Store, cli: &Cli, remote: &Remote, prs: &[Pr], report: &mut Report) -> Result<(), Error> {
+    let missing: HashSet<_> =
+        missing_opens(store, cli.forge, remote)?.into_iter().map(|t| (t.task_key, t.url)).collect();
+    let rows: Vec<_> = prs
+        .iter()
+        .map(|p| plan(p, cli.forge, TaskEvent::Opened))
+        .filter(|r| r.task_key().is_ok_and(|key| missing.contains(&(key, r.url.clone()))))
+        .collect();
+    record_rows(store, &rows, report)
 }
 
 fn unix_now() -> i64 {
@@ -268,17 +329,36 @@ fn record_page(
     counts: &mut BTreeMap<String, Option<i64>>,
     report: &mut Report,
 ) -> Result<(), Error> {
-    let states: HashMap<String, TaskState> = store.tasks()?.into_iter().map(|t| (t.task_key, t.state)).collect();
-    let processed: Vec<&Pr> = prs.iter().filter(|p| cursor.pending(p, floor)).collect();
+    let recorded = store.events()?;
+    let mut opened = opened_or_restarted_prs(&recorded);
+    let known: HashSet<_> = recorded.iter().map(|e| e.dedupe_key.as_str()).collect();
+    let mut processed = Vec::new();
     let mut planned = Vec::new();
-    for pr in &processed {
+    for pr in prs.iter().filter(|p| floor.is_none_or(|f| p.updated() >= f)) {
         let task = task_id(&pr.branch).unwrap_or("");
         let key = genie_tasks::task_key(task, cli.forge.as_str(), &pr.url).unwrap_or_default();
-        let Some(mut row) = plan(pr, cli.forge, states.get(&key).copied()) else {
+        let missing_open = opened.insert((key, pr.url.clone()));
+        let pending = cursor.pending(pr, floor);
+        if !pending && !missing_open {
             continue;
+        }
+        processed.push(pr);
+        if missing_open {
+            planned.push(plan(pr, cli.forge, TaskEvent::Opened));
+        }
+        let event = match pr.state {
+            PrState::Open => continue,
+            PrState::Merged => TaskEvent::Merged,
+            PrState::Closed => TaskEvent::Closed,
         };
+        if !pending {
+            continue;
+        }
+        let mut row = plan(pr, cli.forge, event);
         // The contract's count is a property of the merge; other events carry null.
-        if row.event == TaskEvent::Merged {
+        let dedupe =
+            genie_tasks::dedupe_key(&report.project, &row.task, row.event, &row.url, &row.commit, &row.worktree);
+        if row.event == TaskEvent::Merged && !known.contains(dedupe.as_str()) {
             let count_key = format!("{}@{}", pr.url, pr.head);
             row.pushed_after_open = match counts.get(&count_key) {
                 Some(count) => *count,
@@ -291,7 +371,13 @@ fn record_page(
         }
         planned.push(row);
     }
-    for row in &planned {
+    record_rows(store, &planned, report)?;
+    cursor.note(&processed);
+    Ok(())
+}
+
+fn record_rows(store: &Store, rows: &[EventRow], report: &mut Report) -> Result<(), Error> {
+    for row in rows {
         match record(store, &report.project, row) {
             Ok(Recorded::Appended { .. }) => report.appended += 1,
             Ok(Recorded::Duplicate { .. }) => report.duplicates += 1,
@@ -304,8 +390,75 @@ fn record_page(
             Err(e) => return Err(e.into()),
         }
     }
-    cursor.note(&processed);
     Ok(())
+}
+
+struct Polled {
+    listed: Option<i64>,
+    repair_error: Option<Error>,
+}
+
+/// Finish normal pagination before bounding optional history repair. A repair-only failure
+/// returns the completed normal poll so its cursor and 60-second cache can still be saved.
+fn poll_pages(
+    store: &Store,
+    cli: &Cli,
+    remote: &Remote,
+    floor: Option<i64>,
+    cache: &mut CacheFile,
+    cursor: &mut Cursor,
+    cursor_path: &Path,
+    report: &mut Report,
+) -> Result<Polled, Error> {
+    let mut listed: Option<i64> = None;
+    let mut repair_error = None;
+    let missing_floor =
+        missing_opens(store, cli.forge, remote)?.into_iter().filter_map(|t| parse_time(&t.updated_at)).min();
+    let list_floor = floor.map(|f| missing_floor.map_or(f, |m| m.min(f)));
+    let mut normal_complete = false;
+    let mut repair_pages = 0;
+    let mut page = 1;
+    loop {
+        let prs = match cli.list_page(page, list_floor).and_then(|prs| {
+            check_nul(&prs)?;
+            Ok(prs)
+        }) {
+            Ok(prs) => prs,
+            Err(e) if normal_complete => {
+                repair_error = Some(e);
+                break;
+            }
+            Err(e) => return Err(e),
+        };
+        listed = listed.max(prs.iter().map(Pr::updated).max());
+        record_page(store, cli, &prs, floor, cursor, &mut cache.counts, report)?;
+        if floor.is_some() {
+            repair_opens(store, cli, remote, &prs, report)?;
+            save(cursor_path, cursor)?;
+        }
+        normal_complete |= last_page(&prs, floor);
+        let done = last_page(&prs, list_floor);
+        cache.prs.extend(prs);
+        if done {
+            cache.repair_page = 1;
+            break;
+        }
+        if normal_complete {
+            if missing_opens(store, cli.forge, remote)?.is_empty() {
+                cache.repair_page = 1;
+                break;
+            }
+            repair_pages += 1;
+            if repair_pages >= REPAIR_PAGE_BUDGET {
+                cache.repair_page = page + 1;
+                break;
+            }
+            page = (page + 1).max(cache.repair_page);
+        } else {
+            page += 1;
+        }
+    }
+    Ok(Polled { listed, repair_error })
 }
 
 /// One pass. A missing or uninitialized `genie.db` refuses before any forge call (exit 2).
@@ -324,21 +477,22 @@ pub fn sync(opts: &SyncOptions) -> Result<Report, Error> {
         .filter(|c| c.origin == origin_id)
         .unwrap_or_else(|| Cursor { origin: origin_id.clone(), ..Cursor::default() });
     let horizon = now - HORIZON_SECS;
-    // The oldest `updated_at` this pass lists and records: the cursor's, else the horizon; none for --full.
+    // Repair never changes which PRs normal polling admits, or bypasses the cache throttle.
     let floor = if opts.full { None } else { Some(cursor.since.unwrap_or(horizon)) };
     let fresh = !opts.full && (0..CACHE_TTL_SECS).contains(&(now - cache.fetched_at));
     let mut report =
         Report { project: project.clone(), forge: "", cached: false, appended: 0, duplicates: 0, skipped: vec![] };
-    let mut listed: Option<i64> = None;
-    match cache.forge {
+    let polled = match cache.forge {
         Some(forge) if fresh => {
             let cli = Cli::new(forge, &remote, opts.path.clone());
             report.forge = forge.as_str();
             report.cached = true;
             let prs = std::mem::take(&mut cache.prs);
-            listed = prs.iter().map(Pr::updated).max();
+            let listed = prs.iter().map(Pr::updated).max();
             record_page(&store, &cli, &prs, floor, &mut cursor, &mut cache.counts, &mut report)?;
+            repair_opens(&store, &cli, &remote, &prs, &mut report)?;
             cache.prs = prs;
+            Polled { listed, repair_error: None }
         }
         _ => {
             let cli = detect(&remote, opts.path.clone())?;
@@ -347,24 +501,14 @@ pub fn sync(opts: &SyncOptions) -> Result<Report, Error> {
             cache.fetched_at = now;
             cache.prs.clear();
             cache.counts.clear();
-            for page in 1.. {
-                let prs = cli.list_page(page, floor)?;
-                check_nul(&prs)?;
-                listed = listed.max(prs.iter().map(Pr::updated).max());
-                record_page(&store, &cli, &prs, floor, &mut cursor, &mut cache.counts, &mut report)?;
-                if !opts.full {
-                    save(&cursor_path, &cursor)?;
-                }
-                let done = last_page(&prs, floor);
-                cache.prs.extend(prs);
-                if done {
-                    break;
-                }
-            }
+            poll_pages(&store, &cli, &remote, floor, &mut cache, &mut cursor, &cursor_path, &mut report)?
         }
-    }
-    cursor.advance(listed, floor, horizon);
+    };
+    cursor.advance(polled.listed, floor, horizon);
     save(&cache_path, &cache)?;
     save(&cursor_path, &cursor)?;
+    if let Some(error) = polled.repair_error {
+        return Err(error);
+    }
     Ok(report)
 }
