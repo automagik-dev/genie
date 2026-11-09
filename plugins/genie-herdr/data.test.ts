@@ -153,13 +153,20 @@ describe('T3 lanes and card', () => {
 
 describe('T4 cost, time and ETA', () => {
   const rows = [
-    row({ task: 'gh-1', lane: 'Working', pr_open_min: 90 }),
+    row({
+      task: 'gh-1',
+      lane: 'Working',
+      state: 'created',
+      created_at: iso(NOW - 90 * MIN),
+      task_open_min: 90,
+      pr_open_min: null,
+    }),
     row({ task: 'gh-2', lane: 'Working' }),
-    row({ task: 'gh-3', state: 'merged', lane: 'Merged', pr_lead_min: 60 }),
-    row({ task: null, lane: 'Review', pr_open_min: 300, url: 'https://github.com/o/r/pull/9' }),
+    row({ task: 'gh-3', state: 'merged', lane: 'Merged', pr_lead_min: 60, task_lead_min: 60 }),
+    row({ task: null, state: 'opened', lane: 'Review', pr_open_min: 300, url: 'https://github.com/o/r/pull/9' }),
     row({ task: 'gh-4', state: 'closed', lane: 'Closed' }),
-    row({ task: 'gh-old1', state: 'merged', lane: 'Merged', pr_lead_min: 120 }),
-    row({ task: 'gh-old2', state: 'merged', lane: 'Merged', pr_lead_min: 240 }),
+    row({ task: 'gh-old1', state: 'merged', lane: 'Merged', pr_lead_min: 120, task_lead_min: 120 }),
+    row({ task: 'gh-old2', state: 'merged', lane: 'Merged', pr_lead_min: 240, task_lead_min: 240 }),
   ];
   const feed = (over = {}) => ({
     space: {
@@ -247,7 +254,7 @@ describe('T4 cost, time and ETA', () => {
     expect(c['gh-1'].bots).toEqual([{ bot: 'b-lead', usd: 1.5, work_min: 30 }]);
   });
 
-  test('list PR times drive open and terminal cards; missing list time stays unknown', () => {
+  test('list task and PR times drive open and terminal cards; missing list time stays unknown', () => {
     const c = cards(feed());
     expect(c['gh-3'].time).toBe('1.0h');
     expect(c['gh-1'].time).toBe('1.5h');
@@ -283,6 +290,21 @@ describe('T4 cost, time and ETA', () => {
     expect(cards(feed())['gh-1'].merges).toBe(3);
   });
 
+  test('Working and Review use separate comparable merged histories', () => {
+    const samples = [
+      row({ task: 'gh-1', state: 'created', created_at: iso(NOW - 30 * MIN), task_open_min: 30 }),
+      row({ task: 'gh-2', state: 'opened', lane: 'Review', task_open_min: 90, pr_open_min: 10 }),
+      row({ task: 'gh-3', state: 'merged', lane: 'Merged', task_lead_min: 120, pr_lead_min: 20 }),
+      row({ task: 'gh-4', state: 'merged', lane: 'Merged', task_lead_min: null, pr_lead_min: 40 }),
+      row({ task: 'gh-5', state: 'closed', lane: 'Closed', task_lead_min: 999 }),
+    ];
+    const lanes = D.lanesOf(P, samples, null);
+    expect(lanes[0].cards[0]).toMatchObject({ time: '30m', eta: '~1.5h', merges: 1, est: { basis: 1 } });
+    expect(lanes[1].cards[0]).toMatchObject({ time: '10m', eta: '~20m', merges: 2, est: { basis: 2 } });
+    const legacy = D.lanesOf(P, [row({ pr_open_min: null, age_min: 900 })], null)[0].cards[0];
+    expect(legacy).toMatchObject({ time: '–', eta: '–' });
+  });
+
   test('meter hours, started_at, work_min and lead_min never supply card time or ETA', () => {
     const meter = [{ task: 'gh-1', hours: 100, started_at: iso(NOW - 900 * MIN), work_min: 999, lead_min: 999 }];
     const unknown = D.lanesOf(P, [row({})], meter, NOW)[0].cards[0];
@@ -292,7 +314,13 @@ describe('T4 cost, time and ETA', () => {
     const closed = D.lanesOf(P, [row({ state: 'closed', lane: 'Closed', pr_lead_min: 0 })], meter, NOW)[3].cards[0];
     expect(closed).toMatchObject({ time: '0m', eta: '–' });
     const old = D.normalizeRow({ task: 'gh-1' });
-    expect([old.age_min, old.pr_open_min, old.pr_lead_min]).toEqual([null, null, null]);
+    expect([old.age_min, old.task_open_min, old.task_lead_min, old.pr_open_min, old.pr_lead_min]).toEqual([
+      null,
+      null,
+      null,
+      null,
+      null,
+    ]);
   });
 
   test('missing or failed meter feeds leave costs unknown and preserve list time and ETA', () => {

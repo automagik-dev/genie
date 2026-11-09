@@ -319,6 +319,8 @@ fn board_time_fields_follow_the_current_pr_epoch_and_first_creation() {
         }
         let listed = store.listed().unwrap().into_iter().find(|l| l.row.task == *task).unwrap();
         assert_eq!((listed.age_min, listed.pr_open_min, listed.pr_lead_min), *expected, "{task}");
+        assert_eq!(listed.task_open_min, if *task == "gn-1" { Some(120) } else { None }, "{task}");
+        assert_eq!(listed.task_lead_min, None, "{task}: no terminal case has a creation endpoint");
     }
     // Reading twice cannot alter the event ledger or the unchanged v1 export.
     let before = fs::read(home.join("tasks.jsonl")).unwrap();
@@ -349,6 +351,14 @@ fn a_restart_discards_old_pr_endpoints_but_keeps_the_tasks_first_age() {
         record(&store, store.project(), &row).unwrap();
         let l = store.listed().unwrap().remove(0);
         assert_eq!((l.age_min, l.pr_open_min, l.pr_lead_min), expected, "{event:?}");
+        let task_times = match (event, at) {
+            (E::Created, "2026-11-08T08:00:00Z") => (Some(240), None),
+            (E::Opened, _) => (Some(240), None),
+            (E::Closed, _) => (None, Some(60)),
+            (E::Created, _) => (Some(120), None),
+            (E::Merged, _) => (None, Some(60)),
+        };
+        assert_eq!((l.task_open_min, l.task_lead_min), task_times, "{event:?}");
     }
     for terminal in [E::Merged, E::Closed] {
         let task = if terminal == E::Merged { "gn-2" } else { "gn-3" };
@@ -371,6 +381,7 @@ fn a_restart_discards_old_pr_endpoints_but_keeps_the_tasks_first_age() {
         }
         let l = store.listed().unwrap().into_iter().find(|l| l.row.task == task).unwrap();
         assert_eq!((l.age_min, l.pr_open_min, l.pr_lead_min), (Some(120), None, Some(30)));
+        assert_eq!((l.task_open_min, l.task_lead_min), (None, Some(90)));
     }
 
     // Reversed wall clocks do not change which creation/opening belongs to the restarted PR.
@@ -390,6 +401,7 @@ fn a_restart_discards_old_pr_endpoints_but_keeps_the_tasks_first_age() {
     }
     let l = store.listed().unwrap().into_iter().find(|l| l.row.task == "gn-4").unwrap();
     assert_eq!((l.age_min, l.pr_open_min, l.pr_lead_min), (Some(120), None, Some(50)));
+    assert_eq!(l.task_lead_min, Some(60));
 }
 
 #[test]
@@ -427,8 +439,10 @@ fn board_durations_validate_endpoints_and_preserve_submillisecond_precision() {
         for (task, event, at) in [
             ("gn-1", E::Created, start),
             ("gn-2", E::Opened, start),
+            ("gn-3", E::Created, start),
             ("gn-3", E::Opened, start),
             ("gn-3", E::Merged, end),
+            ("gn-4", E::Created, start),
             ("gn-4", E::Opened, start),
             ("gn-4", E::Closed, end),
         ] {
@@ -437,11 +451,14 @@ fn board_durations_validate_endpoints_and_preserve_submillisecond_precision() {
             row.at = Some(at.into());
             record(&store, store.project(), &row).unwrap();
         }
+        let task_durations: Vec<_> =
+            store.listed().unwrap().iter().map(|l| (l.task_open_min, l.task_lead_min)).collect();
+        assert_eq!(task_durations, [(expected, None), (None, None), (None, expected), (None, expected)]);
         let durations: Vec<_> =
             store.listed().unwrap().iter().map(|l| (l.age_min, l.pr_open_min, l.pr_lead_min)).collect();
         assert_eq!(
             durations,
-            [(expected, None, None), (None, expected, None), (None, None, expected), (None, None, expected)],
+            [(expected, None, None), (None, expected, None), (expected, None, expected), (expected, None, expected)],
             "{start} -> {end}"
         );
     }
@@ -479,5 +496,83 @@ fn link_schema_upgrade_is_additive_idempotent_and_preserves_v1_events() {
         assert_eq!(after, event_snapshot);
         assert_eq!(ts_snapshot(&db), before);
         assert_eq!(v7_tables(&db).len(), 6);
+    }
+}
+
+#[test]
+fn linked_cards_take_task_time_from_the_started_key_and_pr_time_from_the_pr_key() {
+    use genie_tasks::{FixedClock, TaskEvent as E, link};
+    let tmp = Tmp::new("linked-task-time");
+    let repo = ts_repo(&tmp);
+    let home = tmp.0.join("home");
+    let store = open_store_at(&repo, &home).unwrap().with_clock(Box::new(FixedClock("2026-11-08T12:00:00Z".into())));
+    let mut start = EventRow::new(E::Created);
+    start.task = "gn-1".into();
+    start.branch = "feat/existing".into();
+    start.at = Some("2026-11-08T10:00:00Z".into());
+    record(&store, store.project(), &start).unwrap();
+    let working = store.listed().unwrap().remove(0);
+    assert_eq!((working.task_open_min, working.pr_open_min), (Some(120), None));
+    let mut pr = opened("", "https://github.com/o/r/pull/1");
+    pr.branch = start.branch.clone();
+    pr.at = Some("2026-11-08T11:00:00Z".into());
+    record(&store, store.project(), &pr).unwrap();
+    link::change_at(&repo, &home, "gn-1", &link::Target::Branch(start.branch), false).unwrap();
+    let review = store.listed().unwrap();
+    assert_eq!(review.len(), 1);
+    assert_eq!((review[0].task_open_min, review[0].pr_open_min), (Some(120), Some(60)));
+    pr.event = E::Merged;
+    pr.at = Some("2026-11-08T11:30:59Z".into());
+    record(&store, store.project(), &pr).unwrap();
+    let merged = store.listed().unwrap().remove(0);
+    assert_eq!((merged.task_open_min, merged.task_lead_min, merged.pr_lead_min), (None, Some(90), Some(30)));
+}
+
+#[test]
+fn linked_terminal_time_requires_creation_before_the_terminal_sequence_even_with_reversed_clocks() {
+    use genie_tasks::{FixedClock, TaskEvent as E, link};
+    for terminal in [E::Merged, E::Closed] {
+        for creation_before_terminal in [true, false] {
+            let tmp = Tmp::new("linked-terminal-sequence");
+            let repo = ts_repo(&tmp);
+            let store = open_store_at(&repo, &tmp.0.join("home"))
+                .unwrap()
+                .with_clock(Box::new(FixedClock("2026-11-08T12:00:00Z".into())));
+            let mut pr = opened("", "https://github.com/o/r/pull/1");
+            pr.branch = "feat/existing".into();
+            pr.at = Some("2026-11-08T09:00:00Z".into());
+            record(&store, store.project(), &pr).unwrap();
+            let mut creation = EventRow::new(E::Created);
+            creation.task = "gn-1".into();
+            creation.branch = pr.branch.clone();
+            creation.at = Some("2026-11-08T10:00:00Z".into());
+            if creation_before_terminal {
+                record(&store, store.project(), &creation).unwrap();
+                link::change(&store, "gn-1", &link::Target::Branch(pr.branch.clone()), false).unwrap();
+                let active = store.listed().unwrap().remove(0);
+                assert_eq!(
+                    (active.task_open_min, active.pr_open_min),
+                    (Some(120), Some(180)),
+                    "an active linked PR can acquire a start after its opening"
+                );
+            }
+            pr.event = terminal;
+            pr.at = Some("2026-11-08T11:00:00Z".into());
+            record(&store, store.project(), &pr).unwrap();
+            if !creation_before_terminal {
+                // The clock goes backwards, but the creation is sequenced AFTER the terminal.
+                record(&store, store.project(), &creation).unwrap();
+                link::change(&store, "gn-1", &link::Target::Branch(pr.branch.clone()), false).unwrap();
+            }
+            let listed = store.listed().unwrap();
+            assert_eq!(listed.len(), 1);
+            assert_eq!(listed[0].task_open_min, None);
+            assert_eq!(
+                listed[0].task_lead_min,
+                if creation_before_terminal { Some(60) } else { None },
+                "{terminal:?}, creation_before_terminal={creation_before_terminal}"
+            );
+            assert_eq!(listed[0].pr_lead_min, Some(120));
+        }
     }
 }
