@@ -431,7 +431,7 @@ export function cardOf(project, r, rows, history) {
   const working = r.lane === 'Working';
   const elapsed = open ? ((working ? r.task_open_min : r.pr_open_min) ?? null) : null;
   const est = open ? estimateOf(elapsed, history) : null;
-  const leadMin = r.pr_lead_min ?? null;
+  const leadMin = r.task_lead_min ?? r.pr_lead_min ?? null;
   return {
     key: rowKey(r),
     id: r.task ?? 'untracked',

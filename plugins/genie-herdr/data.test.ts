@@ -305,6 +305,52 @@ describe('T4 cost, time and ETA', () => {
     expect(legacy).toMatchObject({ time: '–', eta: '–' });
   });
 
+  test('terminal producer rows prefer task lead time and fall back to PR lead time', () => {
+    const samples = D.applyList(
+      null,
+      ok(
+        JSON.stringify([
+          { task: 'gn-13', task_key: 'gn-13', state: 'merged', lane: 'Merged', task_lead_min: 15, pr_lead_min: 5 },
+          {
+            task: null,
+            task_key: 'pr:github:https://github.com/o/r/pull/9',
+            state: 'merged',
+            lane: 'Merged',
+            url: 'https://github.com/o/r/pull/9',
+            task_lead_min: null,
+            pr_lead_min: 29,
+          },
+          { task: 'gn-14', task_key: 'gn-14', state: 'closed', lane: 'Closed', task_lead_min: 0, pr_lead_min: 10 },
+          {
+            task: null,
+            task_key: 'pr:github:https://github.com/o/r/pull/10',
+            state: 'closed',
+            lane: 'Closed',
+            url: 'https://github.com/o/r/pull/10',
+            task_lead_min: null,
+            pr_lead_min: 12,
+          },
+          { task: 'gn-15', task_key: 'gn-15', state: 'merged', lane: 'Merged', task_lead_min: null, pr_lead_min: null },
+          { task: 'gn-16', task_key: 'gn-16', state: 'merged', lane: 'Merged', task_lead_min: 30, pr_lead_min: null },
+        ]),
+      ),
+      NOW,
+    ).rows;
+    const lanes = D.lanesOf(P, samples, null);
+    expect(lanes[2].cards.map((c) => [c.time, c.lead_min])).toEqual([
+      ['15m', 15],
+      ['29m', 29],
+      ['–', null],
+      ['30m', 30],
+    ]);
+    expect(lanes[3].cards.map((c) => [c.time, c.lead_min])).toEqual([
+      ['0m', 0],
+      ['12m', 12],
+    ]);
+    expect(D.historyOf(samples)).toEqual([5, 29]);
+    expect(D.historyOf(samples, 'task_lead_min')).toEqual([15, 30]);
+  });
+
   test('meter hours, started_at, work_min and lead_min never supply card time or ETA', () => {
     const meter = [{ task: 'gh-1', hours: 100, started_at: iso(NOW - 900 * MIN), work_min: 999, lead_min: 999 }];
     const unknown = D.lanesOf(P, [row({})], meter, NOW)[0].cards[0];
