@@ -67,9 +67,10 @@ const GENIE_RULES = [
  */
 export function genieInstructions(language) {
   const known = typeof language === 'string' ? language.trim() : '';
-  const rule = known === ''
-    ? "Write in the language the user writes in; before they write, in the language of this app's interface. These instructions being in English is no reason to answer in English."
-    : `Write in the language the user writes in; before they write, in ${known}, the language of this app's interface.`;
+  const rule =
+    known === ''
+      ? "Write in the language the user writes in; before they write, in the language of this app's interface. These instructions being in English is no reason to answer in English."
+      : `Write in the language the user writes in; before they write, in ${known}, the language of this app's interface.`;
   return [...GENIE_RULES, rule].join('\n');
 }
 
@@ -259,7 +260,14 @@ export function install(rt) {
       if (color === undefined)
         throw new Error(`Every Genie color is taken (${GENIE_COLORS.length} Genies). Remove a Genie to add another.`);
       const name = genieNameFor(repo, (candidate) => rt.findBot?.(candidate) !== undefined);
-      const bot = await rt.createBot({ ...GENIE_BOT, name, color, workDir: repo, instructions: genieInstructions(rt.uiLanguage?.()), pickModel: await noModel() });
+      const bot = await rt.createBot({
+        ...GENIE_BOT,
+        name,
+        color,
+        workDir: repo,
+        instructions: genieInstructions(rt.uiLanguage?.()),
+        pickModel: await noModel(),
+      });
       load().genieCreated = true;
       save();
       return { bot: genieView(bot), existed: false };
