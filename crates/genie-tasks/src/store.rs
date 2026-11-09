@@ -797,13 +797,37 @@ impl Store {
         if seen.is_some() {
             return Ok((dedupe.to_string(), None));
         }
-        let state: Option<String> = self
+        let current: Option<(String, String, String)> = self
             .conn
-            .query_row("SELECT state FROM v7_tasks WHERE project = ?1 AND task_key = ?2", [project, key], |r| r.get(0))
+            .query_row(
+                "SELECT state, url, updated_at FROM v7_tasks WHERE project = ?1 AND task_key = ?2",
+                [project, key],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
             .optional()?;
-        let next = apply(state.as_deref().and_then(TaskState::parse), &row.event, self.clock.as_ref())
-            .map_err(Error::Refused)?;
+        let state = current.as_ref().and_then(|(state, _, _)| TaskState::parse(state));
         let at = row.at.clone().unwrap_or_else(|| self.clock.now());
+        // An old forge-sync may have recorded only the terminal event. Fill its missing open
+        // evidence without reopening the task or moving its terminal sequence/timestamp.
+        // Only the same PR, with a valid open at or before its terminal time, qualifies.
+        let historical_open = row.event == TaskEvent::Opened
+            && row.at.is_some()
+            && !row.url.is_empty()
+            && matches!(state, Some(TaskState::Merged | TaskState::Closed))
+            && current.as_ref().is_some_and(|(_, url, terminal)| {
+                *url == row.url && minutes_between(Some(&at), Some(terminal)).is_some()
+            })
+            && self.conn.query_row(
+                "SELECT NOT EXISTS(SELECT 1 FROM v7_task_events \
+                 WHERE project = ?1 AND task_key = ?2 AND url = ?3 AND event = 'opened')",
+                params![project, key, row.url],
+                |r| r.get::<_, bool>(0),
+            )?;
+        let next = if historical_open {
+            state.unwrap()
+        } else {
+            apply(state, &row.event, self.clock.as_ref()).map_err(Error::Refused)?
+        };
         let seq = crate::link::next_seq(&self.conn)?;
         self.conn.execute(
             "INSERT INTO v7_task_events (seq, project, task_key, task, event, forge, url, branch, \"commit\", worktree, \
@@ -830,8 +854,10 @@ impl Store {
                 seq
             ],
         )?;
-        // Title, lead and the PR fields keep their last non-empty value.
-        self.conn.execute(
+        // Title, lead and the PR fields keep their last non-empty value. A historical open
+        // adds evidence only; the materialized task remains byte-for-byte unchanged.
+        if !historical_open {
+            self.conn.execute(
             "INSERT INTO v7_tasks (project, task_key, task, state, title, lead, forge, url, branch, last_seq, updated_at) \
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11) \
              ON CONFLICT (project, task_key) DO UPDATE SET state = excluded.state, task = excluded.task, \
@@ -842,7 +868,8 @@ impl Store {
              branch = coalesce(nullif(excluded.branch, ''), v7_tasks.branch), \
              last_seq = excluded.last_seq, updated_at = excluded.updated_at",
             params![project, key, row.task, next.as_str(), row.title, row.lead, row.forge, row.url, row.branch, seq, at],
-        )?;
+            )?;
+        }
         let sql = format!("SELECT {EVENT_COLUMNS} FROM v7_task_events WHERE seq = ?1");
         Ok((dedupe.to_string(), Some(self.conn.query_row(&sql, [seq], event_from_row)?)))
     }

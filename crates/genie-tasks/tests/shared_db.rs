@@ -140,6 +140,42 @@ fn ts_first_then_rust_adds_only_its_tables() {
 }
 
 #[test]
+fn historical_open_fills_terminal_evidence_without_changing_task_state_or_identity() {
+    for event in [TaskEvent::Merged, TaskEvent::Closed] {
+        let tmp = Tmp::new("historical-open");
+        let repo = ts_repo(&tmp);
+        let home = tmp.0.join("home");
+        let store = open_store_at(&repo, &home).unwrap();
+        let mut terminal = opened("gh-1", "https://github.com/o/r/pull/1");
+        terminal.event = event;
+        terminal.at = Some("2026-11-08T12:00:00Z".into());
+        record(&store, store.project(), &terminal).unwrap();
+        let before = store.tasks().unwrap();
+        let mut open = opened("gh-1", &terminal.url);
+        for (url, at) in [
+            ("https://github.com/o/r/pull/2", "2026-11-08T11:00:00Z"),
+            (terminal.url.as_str(), "2026-11-08T13:00:00Z"),
+            (terminal.url.as_str(), "invalid"),
+        ] {
+            open.url = url.into();
+            open.at = Some(at.into());
+            assert!(matches!(record(&store, store.project(), &open), Err(Error::Refused(_))));
+        }
+        open.url.clone_from(&terminal.url);
+        open.at = Some("2026-11-08T11:00:00Z".into());
+        assert!(matches!(record(&store, store.project(), &open).unwrap(), Recorded::Appended { .. }));
+        assert_eq!(store.tasks().unwrap(), before);
+        assert_eq!(store.listed().unwrap()[0].pr_lead_min, Some(60));
+        assert!(matches!(record(&store, store.project(), &open).unwrap(), Recorded::Duplicate { .. }));
+        open.commit = "another-head".into();
+        assert!(matches!(record(&store, store.project(), &open), Err(Error::Refused(_))));
+        let export = fs::read(home.join("tasks.jsonl")).unwrap();
+        genie_tasks::rebuild(&home, &[repo]).unwrap();
+        assert_eq!(fs::read(home.join("tasks.jsonl")).unwrap(), export);
+    }
+}
+
+#[test]
 fn a_database_seeded_from_schema_sql_alone_is_complete() {
     let tmp = Tmp::new("schema-sql");
     let repo = ts_repo(&tmp);
