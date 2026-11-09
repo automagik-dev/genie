@@ -177,7 +177,7 @@ fn t5_a_refused_transition_exits_0_with_one_stderr_line_and_commits_the_rest() {
     let err = stderr(&out);
     assert_eq!(err.lines().count(), 1, "{err}");
     assert!(err.contains("gh-30") && err.contains("refused closed -> merged"), "{err}");
-    assert_eq!(fx.rows(), 2, "the closed row plus the other PR's opened row");
+    assert_eq!(fx.rows(), 3, "the first PR's opened and closed rows plus the other PR's opened row");
 }
 
 #[test]

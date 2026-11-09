@@ -262,6 +262,46 @@ impl Fx {
     fn recorded_urls(&self) -> std::collections::BTreeSet<String> {
         self.events().into_iter().map(|e| e.url).collect()
     }
+
+    fn legacy_terminal(&self, c: &Case) {
+        let store = open_store_at(&self.repo, &self.home).unwrap();
+        let mut row = EventRow::new(if c.state == "merged" { TaskEvent::Merged } else { TaskEvent::Closed });
+        row.task = task_id(c.branch).unwrap_or("").into();
+        row.forge = self.forge.as_str().into();
+        row.url = self.url(c.n);
+        row.branch = c.branch.into();
+        row.commit = if c.state == "merged" { format!("merge-{}", c.n) } else { c.head.into() };
+        row.at = Some(at(c.updated));
+        record(&store, store.project(), &row).unwrap();
+    }
+
+    fn resume_at(&self, since: i64) {
+        let origin = match self.forge {
+            Forge::Github => "github.com/o/r",
+            Forge::Gitlab => "gitlab.example.com/grp/sub/proj",
+        };
+        fs::create_dir_all(self.cursor_path().parent().unwrap()).unwrap();
+        fs::write(self.cursor_path(), json!({"origin": origin, "since": since, "seen": {}}).to_string()).unwrap();
+    }
+
+    fn list_call(&self, page: usize, floor: i64) -> String {
+        match self.forge {
+            Forge::Github => {
+                format!("api repos/o/r/pulls?state=all&sort=updated&direction=desc&per_page=100&page={page}")
+            }
+            Forge::Gitlab => format!(
+                "api projects/grp%2Fsub%2Fproj/merge_requests?state=all&order_by=updated_at&sort=desc&per_page=100&page={page}&updated_after={} --hostname gitlab.example.com",
+                at(floor - t0())
+            ),
+        }
+    }
+
+    fn expected_calls(&self, pages: &[usize], floor: i64) -> Vec<String> {
+        let mut calls =
+            if self.forge == Forge::Gitlab { vec!["auth status --hostname gitlab.example.com".into()] } else { vec![] };
+        calls.extend(pages.iter().map(|p| self.list_call(*p, floor)));
+        calls
+    }
 }
 
 fn first_run(forge: Forge) {
@@ -444,9 +484,15 @@ fn normal_pass_repairs_recorded_holes_older_than_the_cursor_and_horizon() {
         .unwrap();
         fx.serve(&[old]);
 
-        let report = fx.sync(now90() + 10).unwrap();
+        if !seen {
+            let cached = fx.sync(now90() + 10).unwrap();
+            assert!(cached.cached, "a missing hole never bypasses a fresh cache");
+            assert_eq!(cached.appended, 0);
+            assert!(fx.calls().is_empty());
+        }
+        let report = fx.sync(now90() + 71).unwrap();
         assert!(!report.cached);
-        assert_eq!((report.appended, report.duplicates, report.skipped.len()), (1, usize::from(!seen), 0));
+        assert_eq!((report.appended, report.duplicates, report.skipped.len()), (1, 0, 0));
         assert_eq!(fx.calls().iter().filter(|c| c.starts_with("api ")).count(), 1, "backfill uses only the list call");
         assert_eq!(store.tasks().unwrap(), before, "backfill leaves the terminal projection untouched");
         let listed = store.listed().unwrap().remove(0);
@@ -484,6 +530,125 @@ fn an_old_terminal_pr_missing_opened_does_not_open_the_restarted_task() {
     let listed = store.listed().unwrap().remove(0);
     assert_eq!(listed.row.state, TaskState::Created);
     assert_eq!(listed.lifecycle.opened_at, None);
+}
+
+#[test]
+fn repair_skips_unrecorded_history_and_resumes_with_only_list_calls() {
+    for forge in [Forge::Github, Forge::Gitlab] {
+        let fx = fixture("mixed-repair", forge);
+        let hole = Case { updated: 100, ..case(1, "misc-recorded", "fix: recorded", "merged", "head-1") };
+        fx.legacy_terminal(&hole);
+        fx.resume_at(t0() + 2_000);
+        let p1: Vec<_> = (2..=101)
+            .map(|n| Case { updated: 900, ..case(n, "misc-old", "fix: unrelated", "merged", "head") })
+            .collect();
+        let p2: Vec<_> = (102..=201)
+            .map(|n| Case { updated: 800, ..case(n, "misc-old", "fix: unrelated", "merged", "head") })
+            .collect();
+        fx.serve_pages(&[&p1, &p2, &[hole]]);
+
+        let first = fx.sync(now90()).unwrap();
+        assert_eq!((first.appended, first.skipped.len()), (0, 0));
+        let mut calls = fx.expected_calls(&[1, 2], t0() + 100);
+        assert_eq!(fx.calls(), calls, "two bounded pages, no activity or compare calls");
+        assert_eq!(fx.events().len(), 1, "unrelated old PRs are not imported");
+        assert!(fx.sync(now90() + 30).unwrap().cached);
+        assert_eq!(fx.calls(), calls);
+
+        let next = fx.sync(now90() + 61).unwrap();
+        calls.extend(fx.expected_calls(&[1, 3], t0() + 100));
+        assert_eq!(fx.calls(), calls, "resume at the saved repair page after the normal first page");
+        assert_eq!((next.appended, next.duplicates, next.skipped.len()), (1, 0, 0));
+        assert_eq!(fx.recorded_urls(), urls(&fx, [1]));
+        assert_eq!(fx.events().len(), 2);
+        assert_eq!(open_store_at(&fx.repo, &fx.home).unwrap().listed().unwrap()[0].pr_lead_min, Some(1));
+        assert_eq!(fx.cursor()["since"], json!(t0() + 2_000));
+    }
+}
+
+#[test]
+fn an_inaccessible_current_origin_hole_keeps_the_cache_throttle_and_fixed_page_bound() {
+    for forge in [Forge::Github, Forge::Gitlab] {
+        let fx = fixture("missing-repair", forge);
+        let hole = Case { updated: 100, ..case(1, "misc-missing", "fix: missing", "merged", "head-1") };
+        fx.legacy_terminal(&hole);
+        fx.resume_at(t0() + 2_000);
+        let pages: Vec<Vec<_>> = (0..4)
+            .map(|p| {
+                (0..100)
+                    .map(|j| Case {
+                        updated: 900 - p * 100,
+                        ..case((p * 100 + j + 2) as u64, "misc-unrecorded", "fix: old", "merged", "head")
+                    })
+                    .collect()
+            })
+            .collect();
+        fx.serve_pages(&pages.iter().map(Vec::as_slice).collect::<Vec<_>>());
+
+        assert_eq!(fx.sync(now90()).unwrap().appended, 0);
+        let mut calls = fx.expected_calls(&[1, 2], t0() + 100);
+        assert_eq!(fx.calls(), calls);
+        assert!(fx.sync(now90() + 1).unwrap().cached);
+        assert!(fx.sync(now90() + 59).unwrap().cached);
+        assert_eq!(fx.calls(), calls, "unresolved holes cannot force an immediate rescan");
+
+        assert_eq!(fx.sync(now90() + 61).unwrap().appended, 0);
+        calls.extend(fx.expected_calls(&[1, 3], t0() + 100));
+        assert_eq!(fx.calls(), calls, "each expired-cache pass has the same fixed page budget");
+        assert!(fx.sync(now90() + 62).unwrap().cached);
+        assert_eq!(fx.calls(), calls);
+        assert_eq!(fx.events().len(), 1, "an inaccessible PR and unrelated history remain unchanged");
+    }
+}
+
+#[test]
+fn former_origin_and_other_forge_holes_do_not_extend_normal_polling() {
+    for forge in [Forge::Github, Forge::Gitlab] {
+        let fx = fixture("foreign-repair", forge);
+        let store = open_store_at(&fx.repo, &fx.home).unwrap();
+        for (url, recorded_forge) in [
+            ("https://elsewhere.example/o/r/pull/1".into(), forge.as_str()),
+            (fx.url(2).replace("/r/", "/other/").replace("/proj/", "/other/"), forge.as_str()),
+            (fx.url(3), if forge == Forge::Github { "gitlab" } else { "github" }),
+        ] {
+            let mut row = EventRow::new(TaskEvent::Merged);
+            row.url = url;
+            row.forge = recorded_forge.into();
+            row.at = Some(at(100));
+            record(&store, store.project(), &row).unwrap();
+        }
+        fx.resume_at(t0() + 2_000);
+        let old: Vec<_> =
+            (10..110).map(|n| Case { updated: 900, ..case(n, "misc-old", "fix: old", "merged", "head") }).collect();
+        fx.serve_pages(&[&old, &old]);
+        assert_eq!(fx.sync(now90()).unwrap().appended, 0);
+        assert_eq!(fx.calls(), fx.expected_calls(&[1], t0() + 2_000));
+        assert!(fx.sync(now90() + 1).unwrap().cached);
+        assert_eq!(fx.calls(), fx.expected_calls(&[1], t0() + 2_000));
+        assert_eq!(fx.events().len(), 3);
+    }
+}
+
+#[test]
+fn a_failed_optional_repair_page_keeps_the_completed_normal_polls_cache() {
+    for forge in [Forge::Github, Forge::Gitlab] {
+        let fx = fixture("failed-repair", forge);
+        let hole = Case { updated: 100, ..case(1, "misc-missing", "fix: missing", "merged", "head-1") };
+        fx.legacy_terminal(&hole);
+        fx.resume_at(t0() + 2_000);
+        let old: Vec<_> =
+            (10..110).map(|n| Case { updated: 900, ..case(n, "misc-old", "fix: old", "merged", "head") }).collect();
+        fx.serve_pages(&[&old]);
+        fx.fail_page(2);
+        assert!(fx.sync(now90()).is_err());
+        let calls = fx.expected_calls(&[1, 2], t0() + 100);
+        assert_eq!(fx.calls(), calls);
+        assert!(fx.sync(now90() + 1).unwrap().cached);
+        assert!(fx.sync(now90() + 59).unwrap().cached);
+        assert_eq!(fx.calls(), calls);
+        assert_eq!(fx.events().len(), 1);
+        assert_eq!(fx.cursor()["since"], json!(t0() + 2_000));
+    }
 }
 
 #[test]

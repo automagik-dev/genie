@@ -232,7 +232,7 @@ fn a_task_whose_pr_closed_without_merging_starts_with_exit_0() {
     let status: Value = serde_json::from_slice(&fx.run(&["status", "gh-6", "--json"]).stdout).unwrap();
     assert_eq!((status["state"].as_str(), status["lane"].as_str()), (Some("created"), Some("Working")));
     let events: Vec<&str> = status["events"].as_array().unwrap().iter().map(|e| e["event"].as_str().unwrap()).collect();
-    assert_eq!(events, ["closed", "created"]);
+    assert_eq!(events, ["opened", "closed", "created"]);
 }
 
 #[test]
@@ -420,7 +420,7 @@ fn a_task_started_closed_and_started_again_at_the_same_base_gets_a_second_lifecy
     let status: Value = serde_json::from_slice(&fx.run(&["status", "gh-6", "--json"]).stdout).unwrap();
     assert_eq!((status["state"].as_str(), status["lane"].as_str()), (Some("created"), Some("Working")));
     let events: Vec<&str> = status["events"].as_array().unwrap().iter().map(|e| e["event"].as_str().unwrap()).collect();
-    assert_eq!(events, ["created", "closed", "created"]);
+    assert_eq!(events, ["created", "opened", "closed", "created"]);
     let rows: Vec<Value> = fs::read_to_string(fx.home.join("tasks.jsonl"))
         .unwrap()
         .lines()
@@ -433,5 +433,5 @@ fn a_task_started_closed_and_started_again_at_the_same_base_gets_a_second_lifecy
     // A retry of the same start inside this lifecycle appends nothing.
     let retry = fx.run(&args);
     assert_eq!(code(&retry), 1, "{}", stderr(&retry));
-    assert_eq!((fx.events(), fx.rows()), (3, 3));
+    assert_eq!((fx.events(), fx.rows()), (4, 4));
 }
