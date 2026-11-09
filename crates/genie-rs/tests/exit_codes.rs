@@ -339,10 +339,18 @@ fn t1_list_and_status_carry_the_lifecycle_timestamps_worktree_and_project() {
         "closed_at",
         "worktree",
         "project",
+        "age_min",
+        "task_open_min",
+        "task_lead_min",
+        "pr_open_min",
+        "pr_lead_min",
     ];
     expected.sort_unstable();
-    assert_eq!(keys, expected, "every old key kept, six added");
+    assert_eq!(keys, expected, "every old key kept, lifecycle and time fields added");
     let task = |id: &str| list.as_array().unwrap().iter().find(|t| t["task"] == id).unwrap().clone();
+    let restarted = task("gh-2");
+    assert_eq!(restarted["task_open_min"].as_i64(), restarted["age_min"].as_i64().map(|m| m - 120));
+    assert!(restarted["pr_open_min"].is_null());
     let life =
         |t: &Value| ["created_at", "opened_at", "merged_at", "closed_at", "worktree", "project"].map(|k| t[k].clone());
     let (gh1, gh2, gh3) = (task("gh-1"), task("gh-2"), task("gh-3"));
@@ -470,4 +478,358 @@ fn a_nul_on_page_2_exits_1_keeps_page_1_and_says_only_that_page_was_not_written(
     assert_eq!(fx.rows(), 100, "page 1's rows persist in tasks.jsonl");
     let list = json_out(&fx.run(&["list", "--json"]));
     assert_eq!(list.as_array().unwrap().len(), 100, "page 1's tasks persist in genie.db");
+}
+
+#[test]
+fn board_time_fields_are_shared_by_list_and_status_without_changing_export_v1() {
+    let fx = fixture("time-json", true);
+    for (task, event, at) in [
+        ("gn-1", TaskEvent::Created, "2026-11-02T09:00:00Z"),
+        ("gn-1", TaskEvent::Opened, "2026-11-02T09:10:00Z"),
+        ("gn-1", TaskEvent::Closed, "2026-11-02T09:40:59Z"),
+        ("gn-2", TaskEvent::Merged, "2026-11-02T09:40:00Z"),
+        ("gn-3", TaskEvent::Opened, "2026-11-02T09:00:00Z"),
+    ] {
+        seed(&fx, task, event, at, "");
+    }
+    let before = fs::read(fx.home.join("tasks.jsonl")).unwrap();
+    let list_out = fx.run(&["list", "--json"]);
+    assert!(list_out.stderr.is_empty());
+    let list = json_out(&list_out);
+    for task in list.as_array().unwrap() {
+        let status_out = fx.run(&["status", task["task"].as_str().unwrap(), "--json"]);
+        assert!(status_out.stderr.is_empty());
+        let status = json_out(&status_out);
+        for key in ["age_min", "task_open_min", "task_lead_min", "pr_open_min", "pr_lead_min"] {
+            assert!(task.get(key).is_some(), "{key} is present even when null");
+            assert_eq!(task[key], status[key]);
+        }
+    }
+    assert!(list[0]["age_min"].as_i64().unwrap() > 0);
+    assert_eq!(list[0]["task_lead_min"], 40);
+    assert!(list[0]["task_open_min"].is_null());
+    assert_eq!(list[0]["pr_lead_min"], 30);
+    assert!(list[0]["pr_open_min"].is_null());
+    assert!(list[1]["task_lead_min"].is_null());
+    assert!(list[2]["task_open_min"].is_null());
+    assert!(list[1]["pr_lead_min"].is_null());
+    assert!(list[2]["pr_open_min"].as_i64().unwrap() > 0);
+    assert_eq!(fs::read(fx.home.join("tasks.jsonl")).unwrap(), before);
+    for line in String::from_utf8(before).unwrap().lines() {
+        let event: Value = serde_json::from_str(line).unwrap();
+        assert_eq!(event["v"], 1);
+        assert!(
+            event.get("age_min").is_none()
+                && event.get("pr_lead_min").is_none()
+                && event.get("task_open_min").is_none()
+                && event.get("task_lead_min").is_none()
+        );
+    }
+}
+
+#[test]
+fn linking_replays_without_rewriting_history_and_survives_sync_and_rebuild() {
+    let fx = fixture("link-replay", true);
+    let url = "https://github.com/o/r/pull/731";
+    let untouched = "https://github.com/o/r/pull/732";
+    fx.serve(&[
+        pr(731, "feat/existing-731", "open", "2026-11-01T12:00:00Z"),
+        pr(732, "fix/incidental-732", "open", "2026-11-01T12:00:00Z"),
+    ]);
+    let out = fx.run(&["forge-sync"]);
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    let store = open_store_at(&fx.repo, &fx.home).unwrap();
+    let history = store.events().unwrap();
+    assert!(history.iter().all(|e| e.task.is_empty()));
+    let mut started = EventRow::new(TaskEvent::Created);
+    started.task = "gn-1".into();
+    started.branch = "feat/gn-1-started".into();
+    started.worktree = "/isolated/gn-1".into();
+    record(&store, store.project(), &started).unwrap();
+    let life_before = store.events().unwrap();
+
+    let out = fx.run(&["link", "gn-1", "--pr", url, "--json"]);
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    assert!(stderr(&out).is_empty());
+    assert_eq!(serde_json::from_slice::<Value>(&out.stdout).unwrap()["changed"], true);
+    for args in [vec!["list"], vec!["status", "gn-1"]] {
+        let text = fx.run(&args);
+        assert_eq!(code(&text), 0, "{}", stderr(&text));
+        assert!(
+            String::from_utf8_lossy(&text.stdout).lines().any(|line| line.starts_with("gn-1  ")),
+            "{args:?} hides the linked ID: {}",
+            String::from_utf8_lossy(&text.stdout)
+        );
+    }
+    let rows = fx.rows();
+    let again = fx.run(&["link", "gn-1", "--pr", url, "--json"]);
+    assert_eq!(code(&again), 0, "{}", stderr(&again));
+    assert_eq!(serde_json::from_slice::<Value>(&again.stdout).unwrap()["changed"], false);
+    assert_eq!(fx.rows(), rows);
+    let conflict = fx.run(&["link", "gh-9", "--pr", url]);
+    assert_eq!(code(&conflict), 2);
+    assert!(stderr(&conflict).contains("gn-1") && stderr(&conflict).contains("unlink"));
+    assert!(conflict.stdout.is_empty());
+    assert_eq!(fx.rows(), rows);
+    assert_eq!(store.events().unwrap(), life_before, "lifecycle history stays byte for byte");
+
+    let linked = fx.run(&["status", "gn-1", "--json"]);
+    assert_eq!(code(&linked), 0, "{}", stderr(&linked));
+    let status: Value = serde_json::from_slice(&linked.stdout).unwrap();
+    assert_eq!((status["task"].as_str(), status["url"].as_str()), (Some("gn-1"), Some(url)));
+    assert_eq!(status["worktree"], "/isolated/gn-1");
+    let list = || -> Vec<Value> {
+        let out = fx.run(&["list", "--json"]);
+        assert_eq!(code(&out), 0, "{}", stderr(&out));
+        serde_json::from_slice(&out.stdout).unwrap()
+    };
+    let tasks = list();
+    assert_eq!(tasks.len(), 2, "the created card joins its linked PR");
+    assert!(tasks.iter().find(|t| t["url"] == untouched).unwrap()["task"].is_null());
+    assert_eq!(code(&fx.run(&["forge-sync"])), 0);
+    assert_eq!(list(), tasks);
+    fx.serve(&[
+        pr(731, "feat/existing-731", "merged", "2026-11-01T14:00:00Z"),
+        pr(732, "fix/incidental-732", "open", "2026-11-01T12:00:00Z"),
+    ]);
+    let out = fx.run(&["forge-sync", "--full"]);
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    let merged = list().into_iter().find(|t| t["url"] == url).unwrap();
+    assert_eq!((merged["task"].as_str(), merged["state"].as_str()), (Some("gn-1"), Some("merged")));
+    let original = fs::read(fx.home.join("tasks.jsonl")).unwrap();
+    let exported: Vec<Value> =
+        String::from_utf8(original.clone()).unwrap().lines().map(|l| serde_json::from_str(l).unwrap()).collect();
+    assert!(exported.iter().any(|e| e["event"] == "link" && e["task"] == "gn-1"));
+    assert!(exported.iter().any(|e| e["event"] == "merged" && e["task"] == "gn-1"));
+    fs::remove_file(fx.home.join("tasks.jsonl")).unwrap();
+    let out = fx.run(&["export", "--rebuild", "--project", fx.repo.to_str().unwrap()]);
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    assert_eq!(fs::read(fx.home.join("tasks.jsonl")).unwrap(), original);
+    assert_eq!(code(&fx.run(&["unlink", "gn-1", "--pr", url])), 0);
+    assert!(list().iter().find(|t| t["url"] == url).unwrap()["task"].is_null());
+    let untracked_key = format!("pr:github:{url}");
+    for args in [vec!["list"], vec!["status", untracked_key.as_str()]] {
+        let text = fx.run(&args);
+        assert_eq!(code(&text), 0, "{}", stderr(&text));
+        assert!(
+            String::from_utf8_lossy(&text.stdout).lines().any(|line| line.starts_with(&format!("{untracked_key}  ")))
+        );
+    }
+    let rows = fx.rows();
+    assert_eq!(code(&fx.run(&["unlink", "gn-1", "--pr", url])), 0);
+    assert_eq!(fx.rows(), rows);
+    assert_eq!(code(&fx.run(&["link", "gl-92", "--pr", url])), 0);
+    assert_eq!(list().iter().find(|t| t["url"] == url).unwrap()["task"], "gl-92");
+    for args in [vec!["list"], vec!["status", "gl-92"]] {
+        let text = fx.run(&args);
+        assert_eq!(code(&text), 0, "{}", stderr(&text));
+        assert!(String::from_utf8_lossy(&text.stdout).lines().any(|line| line.starts_with("gl-92  ")));
+    }
+    assert_eq!(code(&fx.run(&["unlink", "gl-92", "--pr", url])), 0);
+    assert_eq!(code(&fx.run(&["link", "gn-1", "--pr", url])), 0, "a relink appends a new event");
+    let before = fs::read(fx.home.join("tasks.jsonl")).unwrap();
+    assert_eq!(code(&fx.run(&["export", "--rebuild", "--project", fx.repo.to_str().unwrap()])), 0);
+    assert_eq!(fs::read(fx.home.join("tasks.jsonl")).unwrap(), before);
+}
+
+#[test]
+fn branch_links_refuse_ambiguous_reuse_and_cross_target_conflicts() {
+    let fx = fixture("link-branch", true);
+    let url = "https://github.com/o/r/pull/51";
+    assert_eq!(code(&fx.run(&["link", "gh-3", "--branch", "feat/old-name"])), 0);
+    fx.serve(&[pr(51, "feat/old-name", "open", "2026-11-01T12:00:00Z")]);
+    assert_eq!(code(&fx.run(&["forge-sync"])), 0);
+    let out = fx.run(&["status", "gh-3", "--json"]);
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    assert_eq!(serde_json::from_slice::<Value>(&out.stdout).unwrap()["url"], url);
+    let exported: Vec<Value> = fs::read_to_string(fx.home.join("tasks.jsonl"))
+        .unwrap()
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
+    let opened = exported.iter().find(|e| e["event"] == "opened").unwrap();
+    assert_eq!(opened["task"], "gh-3");
+    assert!(
+        opened.get("original_task").unwrap().is_null(),
+        "unlink can restore null even when the first sighting was linked"
+    );
+    let before = fs::read(fx.home.join("tasks.jsonl")).unwrap();
+    assert_eq!(code(&fx.run(&["export", "--rebuild", "--project", fx.repo.to_str().unwrap()])), 0);
+    assert_eq!(fs::read(fx.home.join("tasks.jsonl")).unwrap(), before);
+    let conflict = fx.run(&["link", "gl-4", "--pr", url]);
+    assert_eq!(code(&conflict), 2);
+    assert!(stderr(&conflict).contains("gh-3"));
+    assert_eq!(code(&fx.run(&["unlink", "gh-3", "--branch", "feat/old-name"])), 0);
+    assert_eq!(code(&fx.run(&["link", "gl-4", "--pr", url])), 0);
+    let conflict = fx.run(&["link", "gh-3", "--branch", "feat/old-name"]);
+    assert_eq!(code(&conflict), 2);
+    assert!(stderr(&conflict).contains("gl-4"));
+    assert_eq!(code(&fx.run(&["unlink", "gl-4", "--pr", url])), 0);
+    fx.serve(&[
+        pr(51, "feat/old-name", "merged", "2026-11-01T14:00:00Z"),
+        pr(52, "feat/old-name", "open", "2026-11-01T15:00:00Z"),
+    ]);
+    assert_eq!(code(&fx.run(&["forge-sync", "--full"])), 0);
+    let ambiguous = fx.run(&["link", "gh-3", "--branch", "feat/old-name"]);
+    assert_eq!(code(&ambiguous), 2);
+    assert!(stderr(&ambiguous).contains("multiple PRs"));
+    assert_eq!(code(&fx.run(&["link", "gh-3", "--pr", url])), 0);
+}
+
+#[test]
+fn a_future_branch_reuse_keeps_attribution_unknown_until_prs_are_linked_explicitly() {
+    let fx = fixture("link-future-reuse", true);
+    assert_eq!(code(&fx.run(&["link", "gh-17", "--branch", "fix/reused"])), 0);
+    fx.serve(&[
+        pr(81, "fix/reused", "open", "2026-11-01T12:00:00Z"),
+        pr(82, "fix/reused", "open", "2026-11-01T12:00:00Z"),
+    ]);
+    assert_eq!(code(&fx.run(&["forge-sync"])), 0);
+    let out = fx.run(&["list", "--json"]);
+    let tasks: Vec<Value> = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(tasks.len(), 2);
+    assert!(tasks.iter().all(|t| t["task"].is_null()));
+}
+
+#[test]
+fn link_usage_project_isolation_and_export_failures_have_the_promised_codes() {
+    let a = fixture("link-project-a", true);
+    let b = fixture("link-project-b", true);
+    let url = "https://github.com/o/r/pull/9";
+    let store = open_store_at(&a.repo, &a.home).unwrap();
+    let mut created = EventRow::new(TaskEvent::Created);
+    created.task = "gn-7".into();
+    record(&store, store.project(), &created).unwrap();
+    for args in [
+        vec!["link", "gn-7", "--pr", url, "--project", b.repo.to_str().unwrap()],
+        vec!["link", "gn-999", "--pr", url],
+        vec!["link", "gh-0", "--pr", url],
+        vec!["link", "gh-01", "--pr", url],
+        vec!["link", "task-12", "--pr", url],
+        vec!["link", "gh-1", "--pr", "not-a-url"],
+        vec!["link", "gh-1", "--branch", ""],
+        vec!["link", "gh-1", "--branch", "bad\nbranch"],
+        vec!["link", "gh-1", "--pr", url, "--branch", "main"],
+        vec!["link", "gh-1"],
+        vec!["unlink", "gh-1", "--pr"],
+    ] {
+        let out = a.run(&args);
+        assert_eq!(code(&out), 2, "{args:?}: {}", stderr(&out));
+        assert!(!stderr(&out).is_empty());
+        assert!(out.stdout.is_empty());
+    }
+    assert_eq!(code(&a.run(&["link", "gn-7", "--pr", url])), 0);
+    assert!(open_store_at(&b.repo, &b.home).unwrap().tasks().unwrap().is_empty());
+    // A gh/gl id is accepted locally even when no forge client is installed or queried.
+    assert_eq!(code(&b.run(&["link", "gh-44", "--pr", url])), 0);
+    assert_eq!(code(&b.run(&["link", "gl-44", "--branch", "fix/offline"])), 0);
+    assert!(!b.bin.join("calls.log").exists());
+    fs::remove_file(b.home.join("tasks.jsonl")).unwrap();
+    fs::create_dir(b.home.join("tasks.jsonl")).unwrap();
+    let failed = b.run(&["link", "gh-45", "--branch", "fix/export-fails"]);
+    assert_eq!(code(&failed), 1);
+    assert!(stderr(&failed).contains("committed") && stderr(&failed).contains("export --rebuild"));
+}
+
+#[test]
+fn simultaneous_conflicting_links_commit_only_one_owner() {
+    let fx = fixture("link-race", true);
+    // Initialize once so this test measures the competing link transaction, not DDL.
+    drop(open_store_at(&fx.repo, &fx.home).unwrap());
+    let mut children = Vec::new();
+    for id in ["gh-31", "gl-32"] {
+        children.push(
+            Command::new(BIN)
+                .args(["link", id, "--branch", "fix/race"])
+                .current_dir(&fx.repo)
+                .env("GENIE_HOME", &fx.home)
+                .env("PATH", &fx.bin)
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .unwrap(),
+        );
+    }
+    let outputs: Vec<_> = children.into_iter().map(|c| c.wait_with_output().unwrap()).collect();
+    let mut codes: Vec<_> = outputs.iter().map(code).collect();
+    codes.sort();
+    assert_eq!(codes, [0, 2], "{outputs:?}");
+    assert!(outputs.iter().find(|o| code(o) == 2).is_some_and(|o| stderr(o).contains("unlink")));
+    assert_eq!(fx.rows(), 1);
+}
+
+#[test]
+fn link_refusals_and_absent_unlinks_do_not_install_or_migrate_rust_schema() {
+    let fx = fixture("link-refusal-no-migration", true);
+    let db = fx.repo.join(".genie/genie.db");
+    for v1 in [false, true] {
+        if v1 {
+            let sql = genie_tasks::SCHEMA_SQL
+                .split("-- Link history")
+                .next()
+                .unwrap()
+                .replace("VALUES (1, 2)", "VALUES (1, 1)");
+            rusqlite::Connection::open(&db).unwrap().execute_batch(&sql).unwrap();
+        }
+        let before = fs::read(&db).unwrap();
+        let no_task = fx.run(&["link", "gn-999", "--branch", "fix/unknown"]);
+        assert_eq!(code(&no_task), 2, "{}", stderr(&no_task));
+        assert!(stderr(&no_task).contains("not started in project"));
+        let absent = fx.run(&["unlink", "gh-1", "--branch", "fix/absent", "--json"]);
+        assert_eq!(code(&absent), 0, "{}", stderr(&absent));
+        assert_eq!(serde_json::from_slice::<Value>(&absent.stdout).unwrap()["changed"], false);
+        assert_eq!(fs::read(&db).unwrap(), before);
+        let conn = rusqlite::Connection::open(&db).unwrap();
+        let links: i64 = conn
+            .query_row("SELECT count(*) FROM sqlite_master WHERE name IN ('v7_link_events', 'v7_links')", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(links, 0, "no schema install or migration on refusal/no-op");
+    }
+}
+
+#[test]
+fn tracked_restart_keeps_historical_branch_ambiguity_in_live_and_rebuilt_rows() {
+    let fx = fixture("link-tracked-restart", true);
+    let branch = "fix/gh-41-reused";
+    let second_url = "https://github.com/o/r/pull/102";
+    assert_eq!(code(&fx.run(&["link", "gh-9", "--branch", branch])), 0);
+    fx.serve(&[pr(101, branch, "closed", "2026-11-01T12:00:00Z")]);
+    assert_eq!(code(&fx.run(&["forge-sync", "--full"])), 0);
+    let store = open_store_at(&fx.repo, &fx.home).unwrap();
+    // The valid transition start records after close, on the same task and branch.
+    let mut restart = EventRow::new(TaskEvent::Created);
+    restart.task = "gh-41".into();
+    restart.branch = branch.into();
+    restart.worktree = "/isolated/restarted-gh-41".into();
+    record(&store, store.project(), &restart).unwrap();
+    fx.serve(&[pr(102, branch, "open", "2026-11-01T15:00:00Z")]);
+    let sync = fx.run(&["forge-sync", "--full"]);
+    assert_eq!(code(&sync), 0, "{}", stderr(&sync));
+    let list = fx.run(&["list", "--json"]);
+    assert_eq!(code(&list), 0, "{}", stderr(&list));
+    let tasks: Vec<Value> = serde_json::from_slice(&list.stdout).unwrap();
+    assert_eq!(tasks.len(), 1, "restart replaces the tracked task's current PR row");
+    assert_eq!(tasks[0]["url"], second_url);
+    assert!(tasks[0]["task"].is_null(), "the historical PR makes this branch ambiguous: {}", tasks[0]);
+    let before = fs::read(fx.home.join("tasks.jsonl")).unwrap();
+    let rows: Vec<Value> =
+        String::from_utf8(before.clone()).unwrap().lines().map(|l| serde_json::from_str(l).unwrap()).collect();
+    let opened = rows.iter().find(|e| e["event"] == "opened" && e["url"] == second_url).unwrap();
+    assert!(opened["task"].is_null(), "live export must also preserve ambiguity");
+    let rebuild = fx.run(&["export", "--rebuild", "--project", fx.repo.to_str().unwrap()]);
+    assert_eq!(code(&rebuild), 0, "{}", stderr(&rebuild));
+    assert_eq!(fs::read(fx.home.join("tasks.jsonl")).unwrap(), before);
+    assert_eq!(code(&fx.run(&["unlink", "gh-9", "--branch", branch])), 0);
+    let count = fx.rows();
+    let ambiguous = fx.run(&["link", "gh-8", "--branch", branch]);
+    assert_eq!(code(&ambiguous), 2, "{}", stderr(&ambiguous));
+    assert!(stderr(&ambiguous).contains("multiple PRs"));
+    assert!(ambiguous.stdout.is_empty());
+    assert_eq!(fx.rows(), count, "historical ambiguity refusal appends nothing");
+    assert_eq!(code(&fx.run(&["link", "gh-9", "--pr", second_url])), 0);
+    let resolved = fx.run(&["status", "gh-9", "--json"]);
+    assert_eq!(code(&resolved), 0, "{}", stderr(&resolved));
+    assert_eq!(serde_json::from_slice::<Value>(&resolved.stdout).unwrap()["task"], "gh-9");
 }

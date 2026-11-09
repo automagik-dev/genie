@@ -124,7 +124,10 @@ fn ts_first_then_rust_adds_only_its_tables() {
     let db = repo.join(".genie/genie.db");
     let before = ts_snapshot(&db);
     let store = open_store_at(&repo, &tmp.0.join("home")).unwrap();
-    assert_eq!(v7_tables(&db), ["v7_schema", "v7_task_events", "v7_task_ids", "v7_tasks"]);
+    assert_eq!(
+        v7_tables(&db),
+        ["v7_link_events", "v7_links", "v7_schema", "v7_task_events", "v7_task_ids", "v7_tasks"]
+    );
     let version: i64 =
         Connection::open(&db).unwrap().query_row("SELECT version FROM v7_schema", [], |r| r.get(0)).unwrap();
     assert_eq!(version, genie_tasks::SCHEMA_VERSION);
@@ -144,7 +147,9 @@ fn a_database_seeded_from_schema_sql_alone_is_complete() {
     let conn = Connection::open(&db).unwrap();
     conn.execute_batch(SCHEMA_SQL).unwrap();
     conn.execute_batch(SCHEMA_SQL).unwrap();
-    let rows: i64 = conn.query_row("SELECT count(*) FROM v7_schema WHERE version = 1", [], |r| r.get(0)).unwrap();
+    let rows: i64 = conn
+        .query_row("SELECT count(*) FROM v7_schema WHERE version = ?1", [genie_tasks::SCHEMA_VERSION], |r| r.get(0))
+        .unwrap();
     assert_eq!(rows, 1, "the version row is written once, by INSERT OR IGNORE");
     let store = open_store_at(&repo, &tmp.0.join("home")).unwrap();
     record(&store, store.project(), &opened("gh-2", "https://github.com/o/r/pull/2")).unwrap();
@@ -238,4 +243,336 @@ fn two_untracked_prs_get_two_keys_and_never_refuse_each_other() {
     keyless.forge = "github".into();
     let err = record(&store, store.project(), &keyless).unwrap_err();
     assert_eq!(err.exit_code(), 1, "{err}");
+}
+
+/// Fixed-clock receipts for every time field, including restarts whose legacy timestamps
+/// intentionally still describe the first PR and the latest worktree.
+#[test]
+fn board_time_fields_follow_the_current_pr_epoch_and_first_creation() {
+    use genie_tasks::{FixedClock, TaskEvent as E};
+    let tmp = Tmp::new("board-time");
+    let repo = ts_repo(&tmp);
+    let home = tmp.0.join("home");
+    let store = open_store_at(&repo, &home).unwrap().with_clock(Box::new(FixedClock("2026-11-08T12:00:59Z".into())));
+    struct Case<'a> {
+        task: &'a str,
+        events: &'a [(TaskEvent, &'a str)],
+        expected: (Option<i64>, Option<i64>, Option<i64>),
+    }
+    let cases = [
+        Case { task: "gn-1", events: &[(E::Created, "2026-11-08T10:00:00Z")], expected: (Some(120), None, None) },
+        Case { task: "gn-2", events: &[(E::Opened, "2026-11-08T11:00:00Z")], expected: (None, Some(60), None) },
+        Case {
+            task: "gn-3",
+            events: &[(E::Opened, "2026-11-08T10:00:00Z"), (E::Merged, "2026-11-08T11:30:59Z")],
+            expected: (None, None, Some(90)),
+        },
+        Case {
+            task: "gn-4",
+            events: &[(E::Opened, "2026-11-08T10:00:00Z"), (E::Closed, "2026-11-08T11:00:00Z")],
+            expected: (None, None, Some(60)),
+        },
+        Case { task: "gn-5", events: &[(E::Merged, "2026-11-08T11:00:00Z")], expected: (None, None, None) },
+        Case { task: "gn-6", events: &[(E::Closed, "2026-11-08T11:00:00Z")], expected: (None, None, None) },
+        Case {
+            task: "gn-7",
+            events: &[(E::Opened, "2026-11-08T11:00:00Z"), (E::Merged, "2026-11-08T10:00:00Z")],
+            expected: (None, None, None),
+        },
+        Case {
+            task: "gn-8",
+            events: &[(E::Opened, "2026-11-08T11:00:00Z"), (E::Closed, "2026-11-08T10:00:00Z")],
+            expected: (None, None, None),
+        },
+        Case {
+            task: "gn-9",
+            events: &[(E::Created, "2026-11-08T13:00:00Z"), (E::Opened, "2026-11-08T13:01:00Z")],
+            expected: (None, None, None),
+        },
+        Case { task: "gn-10", events: &[(E::Opened, "invalid")], expected: (None, None, None) },
+        Case {
+            task: "gn-11",
+            events: &[(E::Opened, "2026-11-08T11:00:00Z"), (E::Merged, "2026-11-08T11:00:00Z")],
+            expected: (None, None, Some(0)),
+        },
+        Case {
+            task: "gn-12",
+            events: &[(E::Opened, "2026-11-08T11:00:00.900Z"), (E::Closed, "2026-11-08T11:01:00.100Z")],
+            expected: (None, None, Some(0)),
+        },
+        Case { task: "gn-13", events: &[(E::Opened, "2026-11-08T13:00:00+02:00")], expected: (None, Some(60), None) },
+        Case { task: "gn-14", events: &[(E::Created, "")], expected: (None, None, None) },
+        Case { task: "gn-15", events: &[(E::Opened, "")], expected: (None, None, None) },
+        Case {
+            task: "gn-16",
+            events: &[(E::Opened, "2026-11-08T11:00:00Z"), (E::Closed, "invalid")],
+            expected: (None, None, None),
+        },
+        Case { task: "gn-17", events: &[(E::Created, "invalid")], expected: (None, None, None) },
+    ];
+    for Case { task, events, expected } in &cases {
+        for (event, at) in *events {
+            let mut row = opened(task, &format!("https://github.com/o/r/pull/{task}"));
+            row.event = *event;
+            row.at = Some((*at).into());
+            record(&store, store.project(), &row).unwrap();
+        }
+        let listed = store.listed().unwrap().into_iter().find(|l| l.row.task == *task).unwrap();
+        assert_eq!((listed.age_min, listed.pr_open_min, listed.pr_lead_min), *expected, "{task}");
+        assert_eq!(listed.task_open_min, if *task == "gn-1" { Some(120) } else { None }, "{task}");
+        assert_eq!(listed.task_lead_min, None, "{task}: no terminal case has a creation endpoint");
+    }
+    // Reading twice cannot alter the event ledger or the unchanged v1 export.
+    let before = fs::read(home.join("tasks.jsonl")).unwrap();
+    assert_eq!(store.listed().unwrap(), store.listed().unwrap());
+    assert_eq!(fs::read(home.join("tasks.jsonl")).unwrap(), before);
+}
+
+#[test]
+fn a_restart_discards_old_pr_endpoints_but_keeps_the_tasks_first_age() {
+    use genie_tasks::{FixedClock, TaskEvent as E};
+    let tmp = Tmp::new("board-restart");
+    let repo = ts_repo(&tmp);
+    let store = open_store_at(&repo, &tmp.0.join("home"))
+        .unwrap()
+        .with_clock(Box::new(FixedClock("2026-11-08T12:00:00Z".into())));
+    for (event, at, expected) in [
+        (E::Created, "2026-11-08T08:00:00Z", (Some(240), None, None)),
+        (E::Opened, "2026-11-08T08:10:00Z", (Some(240), Some(230), None)),
+        (E::Closed, "2026-11-08T09:00:00Z", (Some(240), None, Some(50))),
+        (E::Created, "2026-11-08T10:00:00Z", (Some(240), None, None)),
+        // First observed merged in the restarted epoch: the old opening cannot be borrowed.
+        (E::Merged, "2026-11-08T11:00:00Z", (Some(240), None, None)),
+    ] {
+        let mut row = opened("gn-1", "https://github.com/o/r/pull/1");
+        row.event = event;
+        row.at = Some(at.into());
+        row.commit = at.into();
+        record(&store, store.project(), &row).unwrap();
+        let l = store.listed().unwrap().remove(0);
+        assert_eq!((l.age_min, l.pr_open_min, l.pr_lead_min), expected, "{event:?}");
+        let task_times = match (event, at) {
+            (E::Created, "2026-11-08T08:00:00Z") => (Some(240), None),
+            (E::Opened, _) => (Some(240), None),
+            (E::Closed, _) => (None, Some(60)),
+            (E::Created, _) => (Some(120), None),
+            (E::Merged, _) => (None, Some(60)),
+        };
+        assert_eq!((l.task_open_min, l.task_lead_min), task_times, "{event:?}");
+    }
+    for terminal in [E::Merged, E::Closed] {
+        let task = if terminal == E::Merged { "gn-2" } else { "gn-3" };
+        for (event, at) in [
+            (E::Opened, "2026-11-08T08:00:00Z"),
+            (E::Closed, "2026-11-08T09:00:00Z"),
+            (E::Created, "2026-11-08T10:00:00Z"),
+            (E::Opened, "2026-11-08T11:00:00Z"),
+            (terminal, "2026-11-08T11:30:00Z"),
+        ] {
+            let mut row = opened(task, &format!("https://github.com/o/r/pull/{task}"));
+            row.event = event;
+            row.at = Some(at.into());
+            row.commit = at.into();
+            record(&store, store.project(), &row).unwrap();
+            let l = store.listed().unwrap().into_iter().find(|l| l.row.task == task).unwrap();
+            if event == E::Opened && at.contains("11:00") {
+                assert_eq!(l.pr_open_min, Some(60), "current opening, not the old one");
+            }
+        }
+        let l = store.listed().unwrap().into_iter().find(|l| l.row.task == task).unwrap();
+        assert_eq!((l.age_min, l.pr_open_min, l.pr_lead_min), (Some(120), None, Some(30)));
+        assert_eq!((l.task_open_min, l.task_lead_min), (None, Some(90)));
+    }
+
+    // Reversed wall clocks do not change which creation/opening belongs to the restarted PR.
+    for (event, at) in [
+        (E::Created, "2026-11-08T10:00:00Z"),
+        (E::Opened, "2026-11-08T10:10:00Z"),
+        (E::Closed, "2026-11-08T11:00:00Z"),
+        (E::Created, "2026-11-08T08:00:00Z"),
+        (E::Opened, "2026-11-08T08:10:00Z"),
+        (E::Merged, "2026-11-08T09:00:00Z"),
+    ] {
+        let mut row = opened("gn-4", "https://github.com/o/r/pull/4");
+        row.event = event;
+        row.at = Some(at.into());
+        row.commit = at.into();
+        record(&store, store.project(), &row).unwrap();
+    }
+    let l = store.listed().unwrap().into_iter().find(|l| l.row.task == "gn-4").unwrap();
+    assert_eq!((l.age_min, l.pr_open_min, l.pr_lead_min), (Some(120), None, Some(50)));
+    assert_eq!(l.task_lead_min, Some(60));
+}
+
+#[test]
+fn board_durations_validate_endpoints_and_preserve_submillisecond_precision() {
+    use genie_tasks::{FixedClock, TaskEvent as E};
+    let cases = [
+        ("2026-11-08T11:00:00.0004Z", "2026-11-08T11:01:00.0000Z", Some(0)),
+        ("2026-11-08T11:00:00.0004Z", "2026-11-08T11:00:00.0000Z", None),
+        ("2026-11-08T11:00:00.0004Z", "2026-11-08T11:01:00.0004Z", Some(1)),
+        ("2026-11-08T11:00:00.9999Z", "2026-11-08T11:01:00.9998Z", Some(0)),
+        ("2026-11-08T11:00:00.0000000000001Z", "2026-11-08T11:01:00Z", Some(0)),
+        ("2026-11-08T11:00:00.1Z", "2026-11-08T11:01:00.100000Z", Some(1)),
+        ("2026-11-08T11:00:00.0004Z", "2026-11-08T13:01:00.0000+02:00", Some(0)),
+        ("2026-02-30T11:00:00Z", "2026-03-02T12:00:00Z", None),
+        ("2461352", "2026-11-08T12:00:00Z", None),
+        ("now", "2026-11-08T12:00:00Z", None),
+        ("2026-11-08T12:00:00Z", "now", None),
+        ("2026-11-08T12:00:00Z", "2461352", None),
+        ("2026-03-02T12:00:00Z", "2026-02-30T11:00:00Z", None),
+        ("2026-02-29T11:00:00Z", "2026-03-01T12:00:00Z", None),
+        ("2100-02-29T11:00:00Z", "2100-03-01T12:00:00Z", None),
+        ("2000-02-29T11:00:00Z", "2000-02-29T12:00:00Z", Some(60)),
+        ("2024-02-29T23:59:59.1Z", "2024-03-01T00:00:59.1000Z", Some(1)),
+        ("2026-04-31T11:00:00Z", "2026-05-01T12:00:00Z", None),
+        ("2026-11-08T24:00:00Z", "2026-11-09T01:00:00Z", None),
+        ("2026-11-08T11:00:00+24:00", "2026-11-08T12:00:00Z", None),
+        ("2026-11-08T11:00:00+00:60", "2026-11-08T12:00:00Z", None),
+        ("2026-11-08T11:00:00.+02:00", "2026-11-08T12:00:00Z", None),
+        ("2026-11-08 11:00:00Z", "2026-11-08T12:00:00Z", None),
+    ];
+    for (start, end, expected) in cases {
+        let tmp = Tmp::new("precise-board-time");
+        let repo = ts_repo(&tmp);
+        let store = open_store_at(&repo, &tmp.0.join("home")).unwrap().with_clock(Box::new(FixedClock(end.into())));
+        for (task, event, at) in [
+            ("gn-1", E::Created, start),
+            ("gn-2", E::Opened, start),
+            ("gn-3", E::Created, start),
+            ("gn-3", E::Opened, start),
+            ("gn-3", E::Merged, end),
+            ("gn-4", E::Created, start),
+            ("gn-4", E::Opened, start),
+            ("gn-4", E::Closed, end),
+        ] {
+            let mut row = opened(task, &format!("https://github.com/o/r/pull/{task}"));
+            row.event = event;
+            row.at = Some(at.into());
+            record(&store, store.project(), &row).unwrap();
+        }
+        let task_durations: Vec<_> =
+            store.listed().unwrap().iter().map(|l| (l.task_open_min, l.task_lead_min)).collect();
+        assert_eq!(task_durations, [(expected, None), (None, None), (None, expected), (None, expected)]);
+        let durations: Vec<_> =
+            store.listed().unwrap().iter().map(|l| (l.age_min, l.pr_open_min, l.pr_lead_min)).collect();
+        assert_eq!(
+            durations,
+            [(expected, None, None), (None, expected, None), (expected, None, expected), (expected, None, expected)],
+            "{start} -> {end}"
+        );
+    }
+}
+
+#[test]
+fn link_schema_upgrade_is_additive_idempotent_and_preserves_v1_events() {
+    let tmp = Tmp::new("links-upgrade");
+    let repo = ts_repo(&tmp);
+    let db = repo.join(".genie/genie.db");
+    let home = tmp.0.join("home");
+    let before = ts_snapshot(&db);
+    // Frozen v1 schema: remove the new tables and restore its independent version marker.
+    let v1 = SCHEMA_SQL.split("-- Link history").next().unwrap().replace("VALUES (1, 2)", "VALUES (1, 1)");
+    Connection::open(&db).unwrap().execute_batch(&v1).unwrap();
+    let reader = genie_tasks::store::open_store_read_at(&repo, &home).unwrap();
+    assert!(reader.listed().unwrap().is_empty());
+    assert_eq!(v7_tables(&db), ["v7_schema", "v7_task_events", "v7_task_ids", "v7_tasks"]);
+    drop(reader);
+    let conn = Connection::open(&db).unwrap();
+    conn.execute("INSERT INTO v7_task_events (project, task_key, task, event, at, dedupe_key) VALUES (?1, 'gh-1', 'gh-1', 'created', '2026-11-08T00:00:00Z', 'legacy-key')", [repo.to_str().unwrap()]).unwrap();
+    let event_snapshot: Vec<String> = conn
+        .prepare("SELECT seq || ':' || task || ':' || event || ':' || dedupe_key FROM v7_task_events")
+        .unwrap()
+        .query_map([], |r| r.get(0))
+        .unwrap()
+        .map(Result::unwrap)
+        .collect();
+    drop(conn);
+    for _ in 0..2 {
+        let store = open_store_at(&repo, &home).unwrap();
+        let events = store.events().unwrap();
+        let after: Vec<String> =
+            events.iter().map(|e| format!("{}:{}:{}:{}", e.seq, e.task, e.event.as_str(), e.dedupe_key)).collect();
+        assert_eq!(after, event_snapshot);
+        assert_eq!(ts_snapshot(&db), before);
+        assert_eq!(v7_tables(&db).len(), 6);
+    }
+}
+
+#[test]
+fn linked_cards_take_task_time_from_the_started_key_and_pr_time_from_the_pr_key() {
+    use genie_tasks::{FixedClock, TaskEvent as E, link};
+    let tmp = Tmp::new("linked-task-time");
+    let repo = ts_repo(&tmp);
+    let home = tmp.0.join("home");
+    let store = open_store_at(&repo, &home).unwrap().with_clock(Box::new(FixedClock("2026-11-08T12:00:00Z".into())));
+    let mut start = EventRow::new(E::Created);
+    start.task = "gn-1".into();
+    start.branch = "feat/existing".into();
+    start.at = Some("2026-11-08T10:00:00Z".into());
+    record(&store, store.project(), &start).unwrap();
+    let working = store.listed().unwrap().remove(0);
+    assert_eq!((working.task_open_min, working.pr_open_min), (Some(120), None));
+    let mut pr = opened("", "https://github.com/o/r/pull/1");
+    pr.branch = start.branch.clone();
+    pr.at = Some("2026-11-08T11:00:00Z".into());
+    record(&store, store.project(), &pr).unwrap();
+    link::change_at(&repo, &home, "gn-1", &link::Target::Branch(start.branch), false).unwrap();
+    let review = store.listed().unwrap();
+    assert_eq!(review.len(), 1);
+    assert_eq!((review[0].task_open_min, review[0].pr_open_min), (Some(120), Some(60)));
+    pr.event = E::Merged;
+    pr.at = Some("2026-11-08T11:30:59Z".into());
+    record(&store, store.project(), &pr).unwrap();
+    let merged = store.listed().unwrap().remove(0);
+    assert_eq!((merged.task_open_min, merged.task_lead_min, merged.pr_lead_min), (None, Some(90), Some(30)));
+}
+
+#[test]
+fn linked_terminal_time_requires_creation_before_the_terminal_sequence_even_with_reversed_clocks() {
+    use genie_tasks::{FixedClock, TaskEvent as E, link};
+    for terminal in [E::Merged, E::Closed] {
+        for creation_before_terminal in [true, false] {
+            let tmp = Tmp::new("linked-terminal-sequence");
+            let repo = ts_repo(&tmp);
+            let store = open_store_at(&repo, &tmp.0.join("home"))
+                .unwrap()
+                .with_clock(Box::new(FixedClock("2026-11-08T12:00:00Z".into())));
+            let mut pr = opened("", "https://github.com/o/r/pull/1");
+            pr.branch = "feat/existing".into();
+            pr.at = Some("2026-11-08T09:00:00Z".into());
+            record(&store, store.project(), &pr).unwrap();
+            let mut creation = EventRow::new(E::Created);
+            creation.task = "gn-1".into();
+            creation.branch = pr.branch.clone();
+            creation.at = Some("2026-11-08T10:00:00Z".into());
+            if creation_before_terminal {
+                record(&store, store.project(), &creation).unwrap();
+                link::change(&store, "gn-1", &link::Target::Branch(pr.branch.clone()), false).unwrap();
+                let active = store.listed().unwrap().remove(0);
+                assert_eq!(
+                    (active.task_open_min, active.pr_open_min),
+                    (Some(120), Some(180)),
+                    "an active linked PR can acquire a start after its opening"
+                );
+            }
+            pr.event = terminal;
+            pr.at = Some("2026-11-08T11:00:00Z".into());
+            record(&store, store.project(), &pr).unwrap();
+            if !creation_before_terminal {
+                // The clock goes backwards, but the creation is sequenced AFTER the terminal.
+                record(&store, store.project(), &creation).unwrap();
+                link::change(&store, "gn-1", &link::Target::Branch(pr.branch.clone()), false).unwrap();
+            }
+            let listed = store.listed().unwrap();
+            assert_eq!(listed.len(), 1);
+            assert_eq!(listed[0].task_open_min, None);
+            assert_eq!(
+                listed[0].task_lead_min,
+                if creation_before_terminal { Some(60) } else { None },
+                "{terminal:?}, creation_before_terminal={creation_before_terminal}"
+            );
+            assert_eq!(listed[0].pr_lead_min, Some(120));
+        }
+    }
 }

@@ -1,5 +1,5 @@
-// The Tasks board's pure rules: discovery, the forge-sync budget, lanes and cards, cost and time
-// from usagemeter, the badge join and the degraded states. No imports at all (no `herdr`, no
+// The Tasks board's pure rules: discovery, the forge-sync budget, lanes and cards, lifecycle time
+// from genie-rs, cost from usagemeter, the badge join and degraded states. No imports (no `herdr`, no
 // `gpui-kit`, no node built-ins): the same file loads in Herdr and in bun:test. Every process is
 // spawned by main.js; the shell it runs is exported here so the tests run the very same strings.
 
@@ -308,7 +308,7 @@ export function forgeReason(outcome) {
 // ---------- list ----------
 
 const ROW_FIELDS =
-  'task task_key state lane title lead forge url branch updated_at created_at opened_at merged_at closed_at worktree project'.split(
+  'task task_key state lane title lead forge url branch updated_at created_at opened_at merged_at closed_at worktree project age_min task_open_min task_lead_min pr_open_min pr_lead_min'.split(
     ' ',
   );
 
@@ -369,17 +369,18 @@ export function feedRowFor(rows, task, url) {
   return url ? (rows.find((r) => r?.task == null && r?.url === url) ?? null) : null;
 }
 
-/** The project's past `lead_min` values, sorted. */
-export const historyOf = (rows) =>
+/** This project's comparable merged lead times from list, including measured zero, sorted. */
+export const historyOf = (rows, field = 'pr_lead_min') =>
   (rows ?? [])
-    .map((r) => r?.lead_min)
-    .filter((m) => typeof m === 'number' && Number.isFinite(m))
+    .filter((r) => r?.state === 'merged')
+    .map((r) => r?.[field])
+    .filter((m) => typeof m === 'number' && Number.isFinite(m) && m >= 0)
     .sort((a, b) => a - b);
 
 const median = (xs) => (xs.length % 2 ? xs[(xs.length - 1) / 2] : (xs[xs.length / 2 - 1] + xs[xs.length / 2]) / 2);
 
 /**
- * An open task's time left, in minutes: the median of the past `lead_min` values above the
+ * An open task's time left, in minutes: the median of its comparable merged lead times above the
  * elapsed time, minus it (`basis` of them); past the slowest, `over`. null without both.
  */
 export function estimateOf(elapsed, history) {
@@ -424,13 +425,13 @@ export function fmtUsd(x) {
 const rowKey = (r) => r.task_key ?? r.task ?? r.url ?? r.branch ?? r.title ?? '';
 
 /** The read-only card model: what a card and its drawer show. No actions. */
-export function cardOf(project, r, rows, history, now) {
+export function cardOf(project, r, rows, history) {
   const f = feedRowFor(rows, r.task, r.url);
   const open = OPEN.has(r.lane);
-  const started = parseTime(f?.started_at);
-  const elapsed = open && started != null ? Math.max(0, (now - started) / MIN_MS) : null;
+  const working = r.lane === 'Working';
+  const elapsed = open ? ((working ? r.task_open_min : r.pr_open_min) ?? null) : null;
   const est = open ? estimateOf(elapsed, history) : null;
-  const leadMin = f?.lead_min ?? null;
+  const leadMin = r.pr_lead_min ?? null;
   return {
     key: rowKey(r),
     id: r.task ?? 'untracked',
@@ -464,9 +465,12 @@ export function cardOf(project, r, rows, history, now) {
 const byUpdated = (a, b) => (parseTime(b.updated_at) ?? 0) - (parseTime(a.updated_at) ?? 0);
 
 /** Working, Review, Merged and Closed, newest `updated_at` first, CARD_CAP cards each with the total. */
-export function lanesOf(project, rows, feed, now) {
-  const history = historyOf(feed);
-  const cards = (rows ?? []).map((r) => cardOf(project, normalizeRow(r), feed, history, now));
+export function lanesOf(project, rows, feed) {
+  const taskHistory = historyOf(rows, 'task_lead_min');
+  const prHistory = historyOf(rows);
+  const cards = (rows ?? []).map((r) =>
+    cardOf(project, normalizeRow(r), feed, r.lane === 'Working' ? taskHistory : prHistory),
+  );
   return LANES.map((key) => {
     const all = cards.filter((c) => c.lane === key).sort(byUpdated);
     return { key, label: key, cards: all.slice(0, CARD_CAP), total: all.length };
@@ -643,7 +647,7 @@ async function binaryGone(m, io, outcomes) {
  * `now()`, `notify()` and `publish()`. Order: the login PATH (once per model), binary, probe, the
  * workers tail only when needed, realpaths, the plan, `list` for every project, `doc get`, the badge,
  * then the planned forge-syncs (their outcomes go to the next plan). BIN_SCRIPT, `list`, `doc get`
- * (usagemeter's cost and time, from `automagik-herdr`) and `forge-sync` run under the login PATH. `sync: false` plans no forge-sync; `feed: false` skips `doc get`.
+ * (usagemeter's cost, from `automagik-herdr`) and `forge-sync` run under the login PATH. `sync: false` plans no forge-sync; `feed: false` skips `doc get`.
  */
 export async function refresh(m, io, { sync = true, feed = true } = {}) {
   if (m.path === undefined) m.path = await resolveLoginPath(io);

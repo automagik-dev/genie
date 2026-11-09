@@ -3,7 +3,7 @@
 Genie's v7 task record, as a library: the pure state machine, its Rust-owned tables in the per-repo
 `.genie/genie.db`, and the machine-wide `<GENIE_HOME>/tasks.jsonl` export usagemeter reads. Licensed
 Apache-2.0. It also owns the `start` and `push` verbs (below); the `genie-rs` binary dispatches
-`forge-sync`, `export --rebuild`, `status`, `list`, `start` and `push` over it.
+`forge-sync`, `export --rebuild`, `status`, `list`, `start`, `push`, `link` and `unlink` over it.
 
 ## State machine
 
@@ -36,9 +36,11 @@ in this repository to initialize .genie/genie.db`), and `<GENIE_HOME>/genie.db`.
 `sqlite-open.ts`'s (`busy_timeout` 5000, WAL, `foreign_keys`) with `synchronous=FULL`, and a contended
 lock is retried on the same schedule.
 
-Rust writes only the four `v7_` tables in `src/schema.sql`, created on first open when `v7_schema` has no
-version row. `PRAGMA user_version` and every TS table stay untouched, and TS names its tables when it
-exports, imports or deletes, so the `v7_` rows never reach `roadmap.json`. The TS tests seed the same
+Rust writes only the `v7_` tables in `src/schema.sql`, created on first write. Schema 2 adds
+`v7_link_events` and its current-link projection `v7_links` transactionally to schema 1, without
+rewriting any lifecycle row. Read commands accept schema 1 without migrating; older binaries refuse
+schema 2 rather than ignore its links. `PRAGMA user_version` and every TS table stay untouched. TS
+names its tables when it exports, imports or deletes, so the `v7_` rows never reach `roadmap.json`. The TS tests seed the same
 file with `readFileSync`.
 
 `record(store, store.project(), row)` runs one `BEGIN IMMEDIATE` transaction: skip an event whose
@@ -46,7 +48,7 @@ file with `readFileSync`.
 `v7_task_events`, upsert `v7_tasks`. It then appends one export row. A refusal writes nothing.
 
 - `task_key` is the task id, or `pr:<forge>:<url>` for a PR/MR whose branch carries none.
-- `dedupe_key` is the SHA-256 of `project, task, event, url, commit, worktree` joined with NUL, `''` for
+- `dedupe_key` for lifecycle events is the SHA-256 of `project, original task, event, url, commit, worktree` joined with NUL, `''` for
   an absent part; a NUL in any part is refused (exit 1). A `created` event of a later lifecycle adds a
   seventh part, its generation: the number of `closed` events the task already has, read inside the
   event's transaction (R1-32). Generation 0 adds nothing, so every first-lifecycle key is the six-part
@@ -61,7 +63,7 @@ anything else, external input included.
 
 ## Export
 
-One row per committed event: `{v, event, project, task, branch, forge, url, type, at, commit, lead,
+One row per committed event: `{v, seq, event, project, task, original_task, branch, forge, url, type, at, commit, lead,
 counted, exclude_reason, pushed_after_open, dedupe_key}`. `task` is JSON `null` for a PR with no task id, and
 `pushed_after_open` is JSON `null` when the forge cannot say (a known `0` stays `0`).
 Each append holds a shared lock on `tasks.jsonl.lock` and makes one `write(2)` on an `O_APPEND`
@@ -102,3 +104,42 @@ is retried a few times.
 pushes `HEAD:refs/heads/<recorded branch>` to each of the main checkout's
 `git remote get-url --push --all origin`, passed as argv. It refuses (exit 2) a requested or checked-out branch that is not the recorded one, or
 is `dev`, `main`, `master` or the recorded base.
+
+## Link and unlink
+
+`genie-rs link <gh-N|gl-N|gn-N> (--pr <url> | --branch <branch>) [--project <path>] [--json]`
+and the same arguments to `unlink` explicitly attribute existing PRs or branches. IDs are
+project-local: `gn-N` needs a successful `start` in that project; `gh-N` and `gl-N` require no
+network lookup. A conflicting link refuses with exit 2 and names the current owner to unlink.
+Linking the same target/id twice or unlinking an absent link succeeds without adding history.
+A read-only preflight handles refusals and no-ops before installing or migrating Rust tables.
+An unlink with the wrong owner refuses. Malformed requests refuse with 2; a committed event whose
+export fails returns 1 and names `export --rebuild` as its repair.
+
+Link/unlink events are append-only in `v7_link_events`; `v7_links` changes in the same transaction.
+They overlay the original task attribution, without changing lifecycle keys, timestamps or state.
+The PR retains its original `task_key`; its displayed `task` carries the linked id. Text list/status
+show that effective id, falling back to the stable key only when untracked.
+Unlink restores the original attribution. A started task's card joins its linked PR, retaining the
+creation/worktree/lead metadata. Forge sync continues to use the original lifecycle key, so a later
+sync cannot drop a link. An ambiguous branch used by multiple recorded PR URLs refuses a new branch
+link; if reuse appears after linking, branch attribution becomes unknown, including across a tracked
+task restart. Live reads, append and validation inspect historical URLs with covering-index seeks,
+so a current task row replacing its previous PR cannot erase that ambiguity. Use explicit PR links to
+resolve it. Contradictory PR and branch links also produce unknown attribution, never a guess.
+
+**tasks.jsonl v1 additive contract:** `event` now also accepts `link` and `unlink`. These use the
+same fields: non-null `task`, either `url` or `branch` (the other empty), empty forge/type/commit/lead,
+`counted: false`, `exclude_reason: "attribution"`, and null pushed-after-open. No field is repurposed.
+Lifecycle rows also gain `original_task` (id or null), preserving attribution before explicit links,
+including when a branch was linked before the first forge sync. Link events carry null there.
+All newly exported rows gain integer `seq`, the shared project-local replay order across lifecycle
+and link history; old v1 rows may lack it. Consumers dedupe by `dedupe_key`, order new rows by
+`(project, seq)` rather than append order or wall time, and replay link/unlink as an attribution
+overlay for the target, including lifecycle rows seen before the link. Use `original_task` for unlink
+restoration (old rows without that field use their `task`). Branch reuse must remain ambiguous unless
+a PR URL resolves it.
+Subsequent lifecycle export rows carry the effective linked task, while SQLite lifecycle rows stay
+unchanged. `export --rebuild` merges both histories in sequence order and reproduces these rows.
+Rebuild retains other projects' rows verbatim. `list` reads only the current-link projection, not
+link history; no forge calls, resident process or per-card subprocess is introduced.

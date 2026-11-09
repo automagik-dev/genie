@@ -602,7 +602,7 @@ describe('catalog CLI over isolated Git histories', () => {
     skill(home, 'genie-branch', 'Genie skill only an archived ref delivered.');
     expect(classify(home, 'genie-branch', ['demo'])?.kind).toBe('proven');
     skill(home, 'genie-branch', 'A user-owned replacement description.');
-    expect(classify(home, 'genie-branch', ['demo'])?.kind).toBe('unproven');
+    expect(classify(home, 'genie-branch', ['demo'])).toBeNull();
     expect(classify(home, 'genie-branch', ['genie-branch'])).toBeNull();
 
     const selfProof = runCheck(repo, '--ref-provenance', `${archive}:ref-provenance.json`);
