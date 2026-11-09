@@ -8,6 +8,12 @@ interface MikroImport {
   split: string;
 }
 
+interface GitHistoryGraph {
+  graph: ReadonlyMap<string, readonly string[]>;
+  raw: string;
+  rows: number;
+}
+
 /** Validate source-edge authority before either consumer interprets foreign history. */
 function mikroImports(git: ReadGitHistory, history: readonly string[]): MikroImport[] {
   const validated: MikroImport[] = [];
@@ -65,18 +71,21 @@ export function catalogGenieCommits(
     }
   }
   const imports = new Map(mikroImports(git, history).map((entry) => [entry.commit, entry]));
-  const graph = historyGraph(git, history);
+  const graphRead = historyGraph(git, history);
+  const { graph } = graphRead;
   const sourceTips = new Set<string>();
   for (const { split } of imports.values()) sourceTips.add(split);
   const roots = git('rev-list', '--no-walk', ...history)
     .trim()
     .split('\n')
     .filter(Boolean);
-  const head = historyClosure(graph, imports, [git('rev-parse', 'HEAD^{commit}').trim()]);
+  const headCommit = git('rev-parse', 'HEAD^{commit}').trim();
+  const readHead = () => headCommit;
+  const head = historyClosure(graphRead, imports, [headCommit], readHead);
   if (trustedGenieRoot !== undefined && !head.has(trustedGenieRoot)) {
     throw new Error('--trusted-genie-root must belong to validated-cut HEAD ancestry');
   }
-  const anchor = historyClosure(graph, imports, trustedGenieRoot === undefined ? [] : [trustedGenieRoot]);
+  const anchor = historyClosure(graphRead, imports, trustedGenieRoot === undefined ? [] : [trustedGenieRoot], readHead);
   const refs = referenceTips(git, graph);
   // Parse ALL negative roles before authentication; document Genie claims cannot authenticate themselves.
   const declared =
@@ -105,7 +114,7 @@ export function catalogGenieCommits(
     );
   }
   // Authority is frozen. Exact independently authenticated positive roots grant history, never reauthentication.
-  const proven = historyClosure(graph, imports, declared.genieRoots);
+  const proven = historyClosure(graphRead, imports, declared.genieRoots, readHead);
   const negative = new Set([...bootstrapNegative].filter((commit) => !proven.has(commit)));
   if ([...head].some((commit) => negative.has(commit))) {
     throw new Error(
@@ -135,7 +144,7 @@ export function catalogGenieCommits(
   for (const root of retirementRoots) {
     if (sourceTips.has(root) || sourceRefCommits.has(root)) continue;
     if (source.connected.has(root) && !known.has(root)) continue; // The all-ref gate below names the ambiguity.
-    const lineage = historyClosure(graph, imports, [root]);
+    const lineage = historyClosure(graphRead, imports, [root], readHead);
     if ([...lineage].some((commit) => negative.has(commit))) {
       throw new Error(
         `ambiguous shipped mixed history at ${root}; supply --trusted-genie-root or commit-bound --ref-provenance`,
@@ -174,12 +183,13 @@ export function catalogGenieCommits(
 }
 
 function historyClosure(
-  graph: ReadonlyMap<string, readonly string[]>,
+  graphRead: GitHistoryGraph,
   imports: ReadonlyMap<string, MikroImport>,
   roots: readonly string[],
+  readHead: () => string,
 ): Set<string> {
   const closure = new Set<string>();
-  visitHistory(graph, imports, [...roots], closure);
+  visitHistory(graphRead, imports, [...roots], closure, readHead);
   return closure;
 }
 
@@ -215,37 +225,55 @@ function sourceDescendants(
 /** Cut only validated import source edges; every ordinary merge parent remains Genie-owned. */
 export function foreignOnlyMikroCommits(git: ReadGitHistory, tip: string): Set<string> {
   const imports = new Map(mikroImports(git, [tip]).map((entry) => [entry.commit, entry]));
-  const graph = historyGraph(git, [tip]);
+  const graphRead = historyGraph(git, [tip]);
   const owned = new Set<string>();
-  visitHistory(graph, imports, [tip], owned);
-  return foreignHistory(graph, owned);
+  visitHistory(graphRead, imports, [tip], owned, () => git('rev-parse', 'HEAD^{commit}').trim());
+  return foreignHistory(graphRead.graph, owned);
 }
 
-function historyGraph(git: ReadGitHistory, history: readonly string[]): Map<string, string[]> {
+function historyGraph(git: ReadGitHistory, history: readonly string[]): GitHistoryGraph {
   const graph = new Map<string, string[]>();
-  for (const line of git('rev-list', '--parents', ...history)
-    .trim()
-    .split('\n')) {
+  const raw = git('rev-list', '--parents', ...history);
+  const rows = raw.trim().split('\n');
+  for (const line of rows) {
     const [commit, ...parents] = line.split(' ');
     if (!commit || !/^[0-9a-f]{40}$/.test(commit) || parents.some((parent) => !/^[0-9a-f]{40}$/.test(parent))) {
       throw new Error('invalid Git ancestry record');
     }
     graph.set(commit, parents);
   }
-  return graph;
+  return { graph, raw, rows: rows.length };
 }
 
 function visitHistory(
-  graph: ReadonlyMap<string, readonly string[]>,
+  graphRead: GitHistoryGraph,
   imports: ReadonlyMap<string, MikroImport>,
   pending: string[],
   owned: Set<string>,
+  readHead: () => string,
 ): void {
+  const roots = pending.slice(0, 3);
+  const rootCount = pending.length;
   while (pending.length) {
     const commit = pending.pop();
     if (!commit || owned.has(commit)) continue;
-    const parents = graph.get(commit);
-    if (!parents) throw new Error(`incomplete Git ancestry at ${commit}`);
+    const parents = graphRead.graph.get(commit);
+    if (!parents) {
+      let head = 'unavailable';
+      try {
+        const resolved = readHead();
+        if (/^[0-9a-f]{40}$/.test(resolved)) head = resolved;
+      } catch {
+        // Diagnostic reads must never replace the original ancestry refusal.
+      }
+      throw new Error(
+        `incomplete Git ancestry at ${commit}; revListRows=${graphRead.rows}; ` +
+          `graphCommits=${graphRead.graph.size}; revListBytes=${Buffer.byteLength(graphRead.raw)}; ` +
+          `head(HEAD^{commit})=${head}; walkRootCount=${rootCount}; ` +
+          `walkRoots=[${roots.filter((root) => /^[0-9a-f]{40}$/.test(root)).join(',')}]; ` +
+          `missingInRaw=${graphRead.raw.includes(commit)}`,
+      );
+    }
     owned.add(commit);
     const imported = imports.get(commit);
     if (imported) pending.push(imported.genieParent);
