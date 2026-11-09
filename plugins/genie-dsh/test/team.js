@@ -45,20 +45,22 @@ export const gitIn = (cwd, ...args) => execFileSync('git', args, { cwd, encoding
 /**
  * The team, in `dir`: `tasks` is the team's task record (rt.state.tasks) when given, `resumesDone`
  * its resume pass, `onTask(sessionId, state)` runs as a task starts (a first turn that ends
- * before the grant saves sets its status there).
+ * before the grant saves sets its status there). `uiLanguage` is what the team reports as the
+ * interface language until `browserAsks` reports another.
  */
 export function fakeTeam(dir, { bots = {}, readOnly, noModel = false, tasks, resumesDone, onTask, uiLanguage } = {}) {
   const model = noModel ? undefined : { provider: 'p', model: 'm' };
   const team = join(dir, 'team');
   mkdirSync(team, { recursive: true });
-  const record = { created: [], tasks: [], views: [], endpoints: new Map(), saves: 0 };
+  const record = { created: [], kickoffs: [], tasks: [], views: [], lives: [], endpoints: new Map(), saves: 0 };
   const state = { bots: { ...bots }, ...(tasks === undefined ? {} : { tasks }) };
+  let language = uiLanguage;
   const rt = {
     home: join(dir, 'home'),
     state,
     record,
     load: async () => {},
-    uiLanguage: () => uiLanguage,
+    uiLanguage: () => language,
     readOnly: () => readOnly,
     save: async () => {
       record.saves += 1;
@@ -67,9 +69,12 @@ export function fakeTeam(dir, { bots = {}, readOnly, noModel = false, tasks, res
     teamFolder: () => team,
     defaultModel: async () => model,
     findBot: (name) => Object.values(state.bots).find((bot) => bot.name === name),
+    // As bots-dsh roster.js: a Bot made with no model holds its greeting (`kickoff`) until it gets one.
     createBot: async (options) => {
       record.created.push(options);
       const bot = { id: `bot-${record.created.length}`, ...options };
+      if (options.pickModel) bot.kickoff = { text: 'The user just created you. Greet the user.' };
+      else bot.model = model;
       state.bots[bot.id] = bot;
       return bot;
     },
@@ -86,6 +91,10 @@ export function fakeTeam(dir, { bots = {}, readOnly, noModel = false, tasks, res
         record.views.push(fn);
         return () => {};
       },
+      live: (fn) => {
+        record.lives.push(fn);
+        return () => {};
+      },
       endpoint: (name, fn) => {
         record.endpoints.set(name, fn);
         return () => {};
@@ -93,6 +102,24 @@ export function fakeTeam(dir, { bots = {}, readOnly, noModel = false, tasks, res
     },
     warn: () => {},
     ...(resumesDone === undefined ? {} : { resumesDone }),
+    // The tests' own: a browser asks for the team and reports its locale, which the team takes
+    // before answering with every live hook (bots-dsh channel.js, the `state` endpoint).
+    browserAsks: (locale) => {
+      language = locale;
+      for (const fn of record.lives) fn();
+    },
+    // The tests' own: Connect AI gives a waiting Bot its model, and its held greeting goes out,
+    // read with the Bot's instructions as they are now (bots-dsh roster.js, prompt.js).
+    connectModel: (id) => {
+      const bot = state.bots[id];
+      bot.model = { provider: 'p', model: 'm' };
+      const held = bot.kickoff;
+      Reflect.deleteProperty(bot, 'kickoff');
+      if (held === undefined) return undefined;
+      const kickoff = { botId: id, text: held.text, instructions: bot.instructions };
+      record.kickoffs.push(kickoff);
+      return kickoff;
+    },
   };
   mkdirSync(rt.home, { recursive: true });
   return guarded(rt, 'rt', { tests: true });
