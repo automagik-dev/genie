@@ -33,6 +33,18 @@ can have many Genies, one per repository, each in its own color.
   branch and ends with a short report. A plain wish's copy has no push route: its `origin` (your
   checkout) has a push URL that goes nowhere and its credential helper is empty, and there is no
   `publish` remote. The real boundary against a URL an agent spells by hand is DSH's sandbox.
+- **When the wish does not start**: a clone or branch set-up that fails removes its own partial
+  clone, as it always did. After a failed `startTask` the clone is removed only for one failure:
+  the team's refusal of a start whose permission level did not hold (an error whose own
+  `levelNotSet` is exactly `true`), which the team throws before the first turn. After any other
+  failed start the clone is kept, since a turn may have run there, and Genie's answer says so.
+  The flag is taken on trust: nothing checks who set it. A removal is tried only on the folder
+  the grant made, recognised by the device, inode and real path it had when it was made; a file
+  system with no usable inode gets no removal at all. That narrows the chance of removing
+  something else and does not exclude it: another local process writing in the wishes folder at
+  the wrong instant (between the folder's creation and its first look, or after the last check)
+  or a reused inode can still mislead it, and only an OS-level handle on the folder would close
+  that, which Node does not offer here.
 - **A follow-up wish, scoped to branches**: a wish that must repair or publish branches an
   earlier wish made passes their names in `grant_wish`'s optional `branches` list. Those existing
   branches are created as local branches in the wish's copy, and the project's real remote becomes
