@@ -45,10 +45,15 @@ export const gitIn = (cwd, ...args) => execFileSync('git', args, { cwd, encoding
 /**
  * The team, in `dir`: `tasks` is the team's task record (rt.state.tasks) when given, `resumesDone`
  * its resume pass, `onTask(sessionId, state)` runs as a task starts (a first turn that ends
- * before the grant saves sets its status there). `uiLanguage` is what the team reports as the
+ * before the grant saves sets its status there). `groups` maps a group Session's id to
+ * `{ botId, roomId }` (rt.groupOwners) and `rooms` a group's id to its record (rt.roomOf);
+ * a team given neither has neither member, as an older Bot team. `uiLanguage` is what the team reports as the
  * interface language until `browserAsks` reports another.
  */
-export function fakeTeam(dir, { bots = {}, readOnly, noModel = false, tasks, resumesDone, onTask, uiLanguage } = {}) {
+export function fakeTeam(
+  dir,
+  { bots = {}, readOnly, noModel = false, tasks, resumesDone, onTask, uiLanguage, groups, rooms } = {},
+) {
   const model = noModel ? undefined : { provider: 'p', model: 'm' };
   const team = join(dir, 'team');
   mkdirSync(team, { recursive: true });
@@ -84,7 +89,9 @@ export function fakeTeam(dir, { bots = {}, readOnly, noModel = false, tasks, res
       onTask?.(sessionId, state);
       return sessionId;
     },
-    selfOf: (agentId) => agentId,
+    selfOf: (agentId) => groups?.[agentId]?.botId ?? agentId,
+    ...(groups === undefined ? {} : { groupOwners: new Map(Object.entries(groups)) }),
+    ...(rooms === undefined ? {} : { roomOf: (id) => (id === undefined ? undefined : rooms[id]) }),
     botOf: (id) => state.bots[id],
     hooks: {
       view: (fn) => {
@@ -125,13 +132,17 @@ export function fakeTeam(dir, { bots = {}, readOnly, noModel = false, tasks, res
   return guarded(rt, 'rt', { tests: true });
 }
 
-/** The plugin on `team`, with the DSH context it registers on. */
-export function compose(team) {
+/**
+ * The plugin on `team`, with the DSH context it registers on. `presets` is DSH's
+ * permissionPresets service (ctx.get); without one the context serves none.
+ */
+export function compose(team, { presets } = {}) {
   const tools = new Map();
   const listeners = [];
   const ctx = guarded(
     {
       effect: (run) => run(),
+      get: (name) => (name === 'permissionPresets' ? presets : undefined),
       on: (name, listener) => listeners.push([name, listener]),
       tools: { register: (tool) => tools.set(tool.name, tool) },
     },

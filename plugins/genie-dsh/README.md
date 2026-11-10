@@ -33,6 +33,22 @@ can have many Genies, one per repository, each in its own color.
   branch and ends with a short report. A plain wish's copy has no push route: its `origin` (your
   checkout) has a push URL that goes nowhere and its credential helper is empty, and there is no
   `publish` remote. The real boundary against a URL an agent spells by hand is DSH's sandbox.
+- **A wish asked in a group**: the Bot team already notes the group a `startTask` was called
+  from and narrows the task by it, and the report goes to Genie's chat. `grant_wish` passes the
+  group explicitly (`roomId`) only when, as it reads them at that moment, the group has no level
+  of its own or its level is proven to allow no more than Genie's. The team then runs the wish
+  at the group's level in place of Genie's and reports to the group. Otherwise, and from Genie's
+  own chat, nothing changes. This is not a guarantee:
+  - the comparison and the team's own apply are separate reads, so a level changed between them
+    can widen even the wish's first turn;
+  - an explicit group replaces the team's narrowing, so afterwards the wish can end wider than
+    it would have: the group is given a level or raised above Genie's; Genie is lowered below
+    the group; Genie has no level of its own and the catalog default is lowered; Genie is
+    deleted and the group is lowered later under a wider default; Auto becomes offered or the
+    presets change.
+  A report that goes to the group with no effect on the level needs a report-only field in the
+  team's `startTask`, which does not exist. The ranking in `src/host/level.js` is a copy of the
+  team's, with nothing that fails when the team changes its own.
 - **A follow-up wish, scoped to branches**: a wish that must repair or publish branches an
   earlier wish made passes their names in `grant_wish`'s optional `branches` list. Those existing
   branches are created as local branches in the wish's copy, and the project's real remote becomes
@@ -88,6 +104,8 @@ fake fails on any member that is not in this table, so a new use has to be added
 | `rt.findBot` | `src/host/store.js` | a free Genie name |
 | `rt.selfOf` | `src/host/store.js` | who called `grant_wish` |
 | `rt.botOf` | `src/host/store.js` | the caller's Bot |
+| `rt.groupOwners` | `src/host/store.js` | the group `grant_wish` was called in (not a documented API) |
+| `rt.roomOf` | `src/host/store.js` | that group's permission level |
 | `rt.createBot` | `src/host/roster.js` | making a Genie |
 | `rt.uiLanguage` | `src/host/channel.js` | the app's interface language, for the language a Genie's instructions name |
 | `rt.ensureWorkspace` | `src/host/roster.js` | the team workspace for Genie's first project |
@@ -102,6 +120,7 @@ fake fails on any member that is not in this table, so a new use has to be added
 | `rt.hooks.live` | `src/host/extend.js` | each browser state answer, the first moment the team knows the interface language |
 | `rt.hooks.endpoint` | `src/host/extend.js` | `genie-create` |
 | `ctx.on` | DSH (cordis `Context`) | `session/event`, for turn ends |
+| `ctx.get` | DSH (cordis `Context`) | the `permissionPresets` service, to rank a group's level against Genie's |
 | `ctx.effect` | DSH (cordis `Context`) | registrations that go with the plugin |
 | `ctx.tools.register` | DSH (`@deepseek-ai/dsh-tools`, the `tools` service) | `grant_wish` |
 

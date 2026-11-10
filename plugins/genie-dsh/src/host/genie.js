@@ -40,6 +40,7 @@ import {
   initRepo,
   topLevel,
 } from './git.js';
+import { groupNotWider } from './level.js';
 import { WISH_VERSION, awaitsEnd, endedState, newEvidence, noteCommand, taskOutcome, turnOutcome } from './wishes.js';
 
 export const GENIE_KIND = 'genie';
@@ -380,7 +381,33 @@ export function install(rt) {
     return scope;
   }
 
-  async function grantWish({ bot, title, wish, branches }) {
+  // The group a wish is asked in, to hand to startTask as an explicit `roomId`. Without one
+  // the team already notes the calling group by itself and only narrows the task by it
+  // (`levelRoomId`), reporting to Genie's chat. With one, that narrowing is replaced: the
+  // task takes the group's level in place of Genie's, and its report goes to the group. So it
+  // is given only when, as read here, the group has no level at all (the wish keeps Genie's)
+  // or its level is proven to allow no more than Genie's (level.js); otherwise, and from
+  // Genie's own chat, none is given.
+  // This is one look, not a guarantee. The team applies the level later, by its own read: a
+  // level changed in between can widen even the first turn. And after the start the task no
+  // longer follows the narrower of the two, so later changes can leave it wider than it would
+  // be without a `roomId` (the README lists them).
+  function groupOf(bot, sessionId) {
+    const roomId = rt.groupOwners?.get(sessionId)?.roomId;
+    if (typeof roomId !== 'string' || roomId === '') return undefined;
+    const room = rt.roomOf?.(roomId);
+    if (room === null || typeof room !== 'object') return undefined;
+    // No level at all (absent or null): the team falls through to Genie's own. Anything else
+    // that is not a level's name, an empty string included, is unknown: the team would take
+    // it in place of Genie's and then set nothing, leaving the default.
+    if (room.permission === undefined || room.permission === null) return roomId;
+    if (typeof room.permission !== 'string' || room.permission === '') return undefined;
+    const service = ctx.get?.('permissionPresets');
+    if (service === undefined || service === null) return undefined;
+    return groupNotWider(service, bot.permission, room.permission) ? roomId : undefined;
+  }
+
+  async function grantWish({ bot, title, wish, branches, roomId }) {
     const problem = await gitProblem();
     if (problem !== null) return problem;
     const where = await repositoryFor(bot);
@@ -458,6 +485,7 @@ export function install(rt) {
       from: bot.id,
       cwd: folder,
       agentPreset: 'standard',
+      ...(roomId === undefined ? {} : { roomId }),
     });
     const entry = {
       v: WISH_VERSION,
@@ -659,7 +687,8 @@ export function install(rt) {
         const wish = String(args.wish ?? '').trim();
         if (title === '' || wish === '') return 'A wish needs a title and the wish itself.';
         try {
-          return await grantWish({ bot, title, wish, branches: args.branches });
+          const roomId = groupOf(bot, exec.agent?.id);
+          return await grantWish({ bot, title, wish, branches: args.branches, roomId });
         } catch (error) {
           return `The wish did not start: ${error?.message ?? error}`;
         }
