@@ -6,12 +6,17 @@ long-lived public key to pin here: no private key in repo secrets, no
 hardware-backed offline key, no two-officer ceremony that ever populates
 this file. Ephemeral Fulcio certificates are minted per-release from the
 GitHub Actions OIDC identity and verification pins the certificate
-identity + OIDC issuer, not a key fingerprint.
+identity + OIDC issuer + GitHub's numeric ids for the repository and its
+owner, not a key fingerprint.
 
 Verification contract:
-  - certificate-identity-regexp: ^https://github\.com/automagik-dev/genie/\.github/workflows/sign-attest\.yml@refs/heads/main$
+  - certificate-identity-regexp: ^https://github\.com/automagik-si/genie/\.github/workflows/sign-attest\.yml@refs/heads/main$
+  - certificate-identity-regexp (pre-rename releases): ^https://github\.com/automagik-dev/genie/\.github/workflows/sign-attest\.yml@refs/heads/main$
   - certificate-oidc-issuer:     https://token.actions.githubusercontent.com
-  - provenance source-uri:       github.com/automagik-dev/genie
+  - provenance source-uri:       github.com/automagik-si/genie
+  - provenance source-uri (pre-rename releases): github.com/automagik-dev/genie
+  - source-repository-id:        1030039430
+  - source-repository-owner-id:  245047546
 
 Any tool that loads this file expecting a PEM-encoded public key MUST
 fail closed. The current CLI has no `genie sec` command; this sentinel

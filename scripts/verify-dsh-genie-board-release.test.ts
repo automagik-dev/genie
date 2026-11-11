@@ -20,6 +20,19 @@ afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 const version = '5.260907.99';
+// cosign and slsa-verifier are stand-ins in these tests, but verify-release.sh then reads
+// the release certificate out of the bundle and requires the pinned repository ids on it,
+// so each bundle is the real one of a published release.
+const RELEASE_BUNDLE = readFileSync(
+  join(
+    import.meta.dir,
+    '..',
+    'tests',
+    'fixtures',
+    'release-certificates',
+    'genie-6.261108.1-linux-x64-glibc.tar.gz.bundle',
+  ),
+);
 const platforms = ['linux-x64-glibc', 'linux-x64-musl', 'linux-arm64', 'darwin-arm64'];
 function fixture() {
   const root = mkdtempSync(join(tmpdir(), 'dsh-release-test-'));
@@ -47,7 +60,7 @@ function fixture() {
       const path = join(artifacts, `genie-${version}-${platform}.tar.gz`);
       const process = Bun.spawnSync(['tar', '-czf', path, '-C', payload, '.']);
       if (process.exitCode) throw new Error('tar failed');
-      writeFileSync(`${path}.bundle`, 'invalid signature');
+      writeFileSync(`${path}.bundle`, RELEASE_BUNDLE);
       writeFileSync(`${path}.intoto.jsonl`, 'invalid provenance');
       writeFileSync(
         `${path}.stable.delivery.json`,
@@ -57,7 +70,7 @@ function fixture() {
           channel: 'stable',
           releaseName: `genie-${version}-${platform}.tar.gz`,
           releaseTag: `v${version}`,
-          repository: 'automagik-dev/genie',
+          repository: DELIVERY_EVIDENCE_REPOSITORY,
           platformId: platform,
           sourceSha: 'a'.repeat(40),
           sourceBranch: 'main',

@@ -3,6 +3,7 @@ import { copyFileSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { LatestManifest } from '../../src/genie-commands/update.js';
 import { updateCommand } from '../../src/genie-commands/update.js';
+import { testDeliveryEvidenceSeam } from '../../src/lib/delivery-evidence-verify.test-support.js';
 
 function required(name: string): string {
   const value = process.env[name];
@@ -32,9 +33,7 @@ await updateCommand(
       copyFileSync(tarballSource, exactTarballPath);
       return { tarballPath: exactTarballPath, descriptorBytes, bundleBytes };
     },
-    evidenceVerification: {
-      verifyBundle: () => ({ integratedTime: '1753228800' }),
-    },
+    evidenceVerification: testDeliveryEvidenceSeam('1753228800'),
   },
 );
 

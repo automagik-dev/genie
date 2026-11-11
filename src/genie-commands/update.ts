@@ -21,8 +21,11 @@ import {
 import { homedir, tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import {
+  DELIVERY_EVIDENCE_REPOSITORY,
+  DELIVERY_EVIDENCE_REPOSITORY_ID,
   type DeliveryEvidenceChannel,
   type DeliveryEvidencePlatformId,
+  type DeliveryEvidenceRepository,
   type DeliveryEvidenceVerificationDependencies,
   verifyDeliveryEvidenceArtifact,
   verifyDownloadedDeliveryEvidence,
@@ -99,9 +102,22 @@ const UPDATE_DIAGNOSTIC_SCHEMA_VERSION = 3;
 
 const FETCH_LATEST_TIMEOUT_MS = 5_000;
 
-/** GitHub repo coordinates for the GH-Releases distribution cutover. */
-const RELEASES_OWNER = 'automagik-dev';
-const RELEASES_REPO = 'genie';
+/**
+ * Where releases are FETCHED: the repository's current name. The name is a
+ * location only; what `genie update` accepts is decided by the signed delivery
+ * evidence, whose certificate must carry the repository's numeric ids
+ * (`src/lib/delivery-evidence-verify.ts`).
+ */
+const RELEASES_SLUG = DELIVERY_EVIDENCE_REPOSITORY;
+/**
+ * Where the channel manifests live on the repository's `main`.
+ *
+ * `.well-known/latest.json` and `.well-known/dev.json`, one level up, are what
+ * every genie released before the 2026-11 repository rename reads. They are
+ * frozen on the last releases such a genie can verify, so the release pipeline
+ * writes this directory instead and this binary reads nothing else.
+ */
+const MANIFEST_DIRECTORY = '.well-known/v2';
 const RAW_BASE_URL = 'https://raw.githubusercontent.com';
 // The same published bytes, read through the public API. raw.githubusercontent.com
 // caches independently of the repository, so for minutes after a release publishes it
@@ -112,16 +128,25 @@ const RAW_BASE_URL = 'https://raw.githubusercontent.com';
 // NARROWS the stale window by about five times, it does not close it. A recurrence
 // inside a minute of a publish is still possible and is not evidence against this path.
 const API_BASE_URL = 'https://api.github.com';
-const RELEASES_SLUG = `${RELEASES_OWNER}/${RELEASES_REPO}`;
-const EXPECTED_COSIGN_IDENTITY = `^https://github\\.com/${RELEASES_SLUG}/\\.github/workflows/sign-attest\\.yml@refs/heads/main$`;
 const EXPECTED_COSIGN_ISSUER = 'https://token.actions.githubusercontent.com';
+/**
+ * The sign-attest.yml tarball attestation of `repository`, as the advisory
+ * cross-check names it. `repository` is always the one the VERIFIED descriptor
+ * carries, so a release published before the 2026-11-11 rename is compared
+ * against the names its own certificate holds.
+ */
+function tarballAttestationIdentityPattern(repository: DeliveryEvidenceRepository): string {
+  return `^https://github\\.com/${repository}/\\.github/workflows/sign-attest\\.yml@refs/heads/main$`;
+}
 // sign-attest.yml registers the GitHub-native attestation under a CUSTOM
 // predicate type (NOT https://slsa.dev/provenance/v1 — GitHub's persistence API
 // runs SLSA validation for that URI and rejects our custom buildType). The
 // verifier MUST pass the same --predicate-type or `gh attestation verify`
 // defaults to slsa.dev/provenance/v1, so the by-digest lookup 404s even though
 // the attestation exists. Keep in lockstep with scripts/release-native-predicate.sh.
-const EXPECTED_ATTESTATION_PREDICATE_TYPE = `https://github.com/${RELEASES_SLUG}/release-tarballs/v1`;
+function tarballAttestationPredicateType(repository: DeliveryEvidenceRepository): string {
+  return `https://github.com/${repository}/release-tarballs/v1`;
+}
 
 // ============================================================================
 // Verify decision shape. v5 is zero-daemon — the atomic binary swap IS the
@@ -319,7 +344,7 @@ export function decideDowngrade(args: {
 // GitHub Releases distribution layer (genie-distribution-cutover G5).
 //
 // Replaces the npm/bun-add code path entirely. Single canonical primitives:
-//   1. fetch .well-known/<channel>.json from raw.githubusercontent.com
+//   1. fetch .well-known/v2/<channel>.json from raw.githubusercontent.com
 //   2. resolve target version + tarball base URL
 //   3. gh release download to a staging directory
 //   4. verify the release's signed delivery evidence offline (credential-free),
@@ -365,10 +390,10 @@ export interface LatestManifest {
 /**
  * Build the URL for a channel's manifest file.
  * `stable` → `latest.json`, others → `<channel>.json`.
- * Lives at `.well-known/` on the repo's `main` branch — see release-publish.yml.
+ * Lives at `.well-known/v2/` on the repo's `main` branch — see release-publish.yml.
  */
 export function manifestUrlForChannel(channel: ReleaseChannel): string {
-  return `${RAW_BASE_URL}/${RELEASES_OWNER}/${RELEASES_REPO}/main/.well-known/${manifestFileName(channel)}`;
+  return `${RAW_BASE_URL}/${RELEASES_SLUG}/main/${MANIFEST_DIRECTORY}/${manifestFileName(channel)}`;
 }
 
 /**
@@ -376,9 +401,13 @@ export function manifestUrlForChannel(channel: ReleaseChannel): string {
  * rather than five. Requested with `Accept: application/vnd.github.raw`, so the
  * bytes this returns are the file's own bytes and `manifestSha256` still
  * describes the published manifest rather than an API envelope.
+ *
+ * Addressed by the repository's numeric id, not its name: this is the form the
+ * API itself redirects a renamed repository to, so it keeps answering across a
+ * rename. The CDN copy above has no id form and stays addressed by name.
  */
 export function manifestApiUrlForChannel(channel: ReleaseChannel): string {
-  return `${API_BASE_URL}/repos/${RELEASES_OWNER}/${RELEASES_REPO}/contents/.well-known/${manifestFileName(channel)}?ref=main`;
+  return `${API_BASE_URL}/repositories/${DELIVERY_EVIDENCE_REPOSITORY_ID}/contents/${MANIFEST_DIRECTORY}/${manifestFileName(channel)}?ref=main`;
 }
 
 function manifestFileName(channel: ReleaseChannel): string {
@@ -502,7 +531,7 @@ export function ensureCanonicalInstall(): string {
       `Live genie binary is at ${live}, not ${target}.`,
       '  This install pre-dates the GH-Releases cutover (wish G5). `genie update`',
       '  only manages binaries under ~/.genie/bin/. To migrate, re-run:',
-      '    curl -fsSL https://raw.githubusercontent.com/automagik-dev/genie/main/install.sh | bash',
+      `    curl -fsSL ${RAW_BASE_URL}/${RELEASES_SLUG}/main/install.sh | bash`,
       '  …which downloads the latest signed tarball, installs the canonical layout,',
       '  and points your $PATH at ~/.genie/bin/genie.',
     ].join('\n'),
@@ -523,7 +552,7 @@ interface FetchManifestOptions {
 }
 
 /**
- * Fetch + parse `.well-known/<channel>.json`. Returns `null` on any failure
+ * Fetch + parse `.well-known/v2/<channel>.json`. Returns `null` on any failure
  * (network, parse error, schema mismatch). Caller decides whether to proceed
  * defensively or surface the error.
  */
@@ -779,7 +808,7 @@ async function downloadReleaseAssetsFromPublicUrl(
   destDir: string,
   runner: (cmd: string, args: string[], timeoutMs?: number) => Promise<{ success: boolean; output: string }>,
 ): Promise<{ success: boolean; output: string }> {
-  const base = `https://github.com/${RELEASES_OWNER}/${RELEASES_REPO}/releases/download/v${manifest.version}`;
+  const base = `https://github.com/${RELEASES_SLUG}/releases/download/v${manifest.version}`;
   for (const asset of releaseAssetNames(manifest, platform)) {
     const url = `${base}/${asset.name}`;
     const result = await runner(
@@ -796,6 +825,7 @@ async function downloadReleaseAssetsFromPublicUrl(
 
 async function crossCheckTarballAttestation(
   tarballPath: string,
+  repository: DeliveryEvidenceRepository,
   runner: (cmd: string, args: string[], timeoutMs?: number) => Promise<{ success: boolean; output: string }>,
 ): Promise<AttestationCrossCheck> {
   const ghVerifyResult = await runner(
@@ -805,11 +835,11 @@ async function crossCheckTarballAttestation(
       'verify',
       tarballPath,
       '--repo',
-      RELEASES_SLUG,
+      repository,
       '--predicate-type',
-      EXPECTED_ATTESTATION_PREDICATE_TYPE,
+      tarballAttestationPredicateType(repository),
       '--cert-identity-regex',
-      EXPECTED_COSIGN_IDENTITY,
+      tarballAttestationIdentityPattern(repository),
       '--cert-oidc-issuer',
       EXPECTED_COSIGN_ISSUER,
     ],
@@ -824,7 +854,8 @@ async function crossCheckTarballAttestation(
  *  1. MANDATORY, offline, credential-free: the release's signed delivery
  *     evidence. `verifyDeliveryEvidenceArtifact` checks the Sigstore bundle
  *     against the embedded public-good trust root with the release workflow's
- *     certificate identity and OIDC issuer pinned, requires the custom
+ *     certificate identity, OIDC issuer and the repository's numeric ids (as
+ *     the verified certificate records them) pinned, requires the custom
  *     `delivery-evidence/v1` predicate type, requires the DSSE subject digest
  *     to equal the SHA-256 of the exact descriptor bytes, and binds the
  *     descriptor's `artifactSha256` to the SHA-256 of the tarball on disk.
@@ -850,8 +881,9 @@ async function verifyTarballSignature(
 ): Promise<void> {
   const artifactSha256 = hashFileSha256(tarballPath);
   if (artifactSha256 === null) throw new Error(`downloaded tarball ${tarballName} became unreadable before verifying`);
+  let signedRepository: DeliveryEvidenceRepository;
   try {
-    verifyDeliveryEvidenceArtifact(
+    signedRepository = verifyDeliveryEvidenceArtifact(
       {
         descriptorBytes: evidence.descriptorBytes,
         bundleBytes: evidence.bundleBytes,
@@ -865,12 +897,12 @@ async function verifyTarballSignature(
         artifactSha256,
       },
       opts.evidenceVerification,
-    );
+    ).descriptor.repository;
   } catch (cause) {
     throw new Error(`signature verification failed for ${tarballName}: ${errMsg(cause)}`);
   }
 
-  const crossCheck = await crossCheckTarballAttestation(tarballPath, runner);
+  const crossCheck = await crossCheckTarballAttestation(tarballPath, signedRepository, runner);
   if (crossCheck.kind === 'failed') {
     throw new Error(`signature verification failed for ${tarballName}: gh attestation verify: ${crossCheck.detail}`);
   }
@@ -937,7 +969,7 @@ export async function downloadAndVerifyTarball(
       'download',
       versionTag,
       '--repo',
-      `${RELEASES_OWNER}/${RELEASES_REPO}`,
+      RELEASES_SLUG,
       '--dir',
       destDir,
       '--pattern',
@@ -1766,12 +1798,12 @@ export async function persistChannel(channel: ReleaseChannel): Promise<void> {
 // ============================================================================
 
 export interface UpdateCommandOptions {
-  /** `--dev`. Switch to the dev/pre-release channel (.well-known/dev.json). */
+  /** `--dev`. Switch to the dev/pre-release channel (.well-known/v2/dev.json). */
   dev?: boolean;
   /** `--next`. Deprecated alias for `--dev`. Resolves to channel 'dev' and
    *  emits a single-line stderr deprecation notice. */
   next?: boolean;
-  /** `--stable`. Switch back to the stable channel (.well-known/latest.json). */
+  /** `--stable`. Switch back to the stable channel (.well-known/v2/latest.json). */
   stable?: boolean;
   /** `--skip-maintenance`. Retained for compatibility; v5 has no maintenance
    *  pass, so it now just skips the post-update binary verify probe. */
@@ -2038,7 +2070,9 @@ function announceUpdatePlanOrExit(
   log(`Channel: ${channel}${channel === 'stable' ? ' (stable)' : ` (${channel})`}`);
   log(`Platform: ${platform}`);
   if (!latestVersion) {
-    log(`Channel manifest unavailable (.well-known/${channel === 'stable' ? 'latest' : channel}.json missing)`);
+    log(
+      `Channel manifest unavailable (${MANIFEST_DIRECTORY}/${channel === 'stable' ? 'latest' : channel}.json missing)`,
+    );
     error(`Cannot resolve target version for channel "${channel}". Aborting.`);
     process.exit(1);
   }

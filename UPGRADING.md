@@ -30,6 +30,45 @@ prior configuration unchanged. `genie uninstall` removes only ownership-proven G
 Modified or unproven files are preserved, and local Genie history is never deleted. Review the command's
 backup/recovery output before removing any retained files manually.
 
+### Repository rename (2026-11)
+
+The repository was renamed from `automagik-dev/genie` to `automagik-si/genie`. GitHub signs each release with a
+certificate that names the repository, so releases are now signed under the new name. Every check compared that
+name with `automagik-dev/genie`: the release pipeline stopped at its own verification step, and no release was
+published under the new name. No published release was changed or withdrawn.
+
+**The fix on the project side.**
+
+- `genie update`, `install.sh` and `scripts/verify-release.sh` accept a release only when its verified signing
+  certificate carries GitHub's numeric ids for this repository (`1030039430`) and its owner (`245047546`). A rename
+  changes the name on a certificate and neither id, so the name may be either spelling, `automagik-si/genie` or
+  `automagik-dev/genie`, with the same workflow file and branch; any other name is refused, and so is a
+  certificate without both ids.
+- Releases carrying the fix read their channel from `.well-known/v2/latest.json` and `.well-known/v2/dev.json`, and
+  new releases are published there only.
+- `.well-known/latest.json` and `.well-known/dev.json` are frozen on `v6.261108.1` (stable) and `v6.261109.9` (dev),
+  the last releases from before the fix. No release changes them again.
+
+**Who is affected.** Every Genie installed from a release published before the fix: stable up to `6.261108.1`, dev
+up to `6.261109.9`. Such a binary reads the two frozen files and accepts only release evidence that names
+`automagik-dev/genie`, so it cannot verify a release signed under the new name.
+
+**How a host tells.** `genie --version` prints `6.261108.1` or lower on stable, `6.261109.9` or lower on dev, and
+`genie update` reports that the install is up to date while newer releases exist. The output is on stdout and the
+exit code is 0:
+
+```text
+✔ Already up to date (v6.261108.1, channel stable)
+```
+
+An install older than those versions updates to `6.261108.1` (stable) or `6.261109.9` (dev) first, and then reports
+the same. An affected host never sees an error from this, and nothing on it is broken; it stays on that version.
+
+**Moving to the releases after the fix.** A host follows the releases published after the fix once it runs a version
+that carries the fix.
+
+**What an affected host should do.** _PLACEHOLDER — this paragraph is to be written by the project owner._
+
 ### MCP retirement
 
 The legacy Genie MCP server is retired, and v6 removed the `genie mcp` stub that stood in for it — the verb no longer
@@ -182,7 +221,7 @@ deleted along with the verb. `genie task` and `genie board` retain their existin
 
 ## Coming from v4?
 
-v4 is preserved on the [`v4` branch](https://github.com/automagik-dev/genie/tree/v4), and its final npm release stays published for existing v4 users — nothing you're running today disappears.
+v4 is preserved on the [`v4` branch](https://github.com/automagik-si/genie/tree/v4), and its final npm release stays published for existing v4 users — nothing you're running today disappears.
 
 v5 was the deliberate cutover to a lightweight body. The v4 harness — a Postgres backend, pane-based process orchestration, executor registries, the telemetry spine, the full-screen console, and the desktop app — is gone. What remains is the part that always did the work: the skills, the documents, and one SQLite file of state.
 

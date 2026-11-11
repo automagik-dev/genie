@@ -3,8 +3,11 @@
 # across every channel in which @automagik/genie publishes it.
 #
 # @automagik/genie release signing is cosign KEYLESS ONLY. There is no
-# long-lived public key to pin — the "pin" is the three-value tuple below
-# (certificate-identity-regexp + OIDC issuer + provenance source-uri). The
+# long-lived public key to pin — the "pin" is the set of lines below: the
+# signing workflow's certificate identity under the repository's current name
+# and under the name it carried before the 2026-11 rename, the OIDC issuer, the
+# provenance source-uri under both names, and GitHub's numeric ids for the
+# repository and its owner, which every accepted certificate must carry. The
 # rotation procedure (docs/security/key-rotation.md) requires two Namastex
 # security officers to land any change; this script is the CI merge-gate
 # that blocks a single-channel edit from slipping through.
@@ -17,7 +20,7 @@
 #   5. scripts/verify-release.sh                              shipped verifier
 #   6. install.sh                                             shipped verifier
 #
-# The script greps each witness for three verbatim lines. Prefix characters
+# The script greps each witness for every canonical line, verbatim. Prefix characters
 # (`- `, `# `, ``` ` ```) are tolerated because grep uses substring matching;
 # the value strings themselves must match byte-for-byte. If any witness is
 # missing a line or carries a divergent value, the script exits 1 with a
@@ -44,15 +47,19 @@ cd "${REPO_ROOT}"
 
 # --- Canonical identity lines (byte-exact) -----------------------------------
 #
-# These three lines are the source of truth. They are duplicated verbatim in
+# These lines are the source of truth. They are duplicated verbatim in
 # this script on purpose: if the script itself drifts, CI catches it against
 # the witnesses below. To rotate the pin, follow docs/security/key-rotation.md
 # and update this constant list in the same two-officer PR that updates the
 # witnesses.
 CANONICAL=(
-  "certificate-identity-regexp: ^https://github\\.com/automagik-dev/genie/\\.github/workflows/sign-attest\\.yml@refs/heads/main$"
+  "certificate-identity-regexp: ^https://github\\.com/automagik-si/genie/\\.github/workflows/sign-attest\\.yml@refs/heads/main$"
+  "certificate-identity-regexp (pre-rename releases): ^https://github\\.com/automagik-dev/genie/\\.github/workflows/sign-attest\\.yml@refs/heads/main$"
   "certificate-oidc-issuer:     https://token.actions.githubusercontent.com"
-  "provenance source-uri:       github.com/automagik-dev/genie"
+  "provenance source-uri:       github.com/automagik-si/genie"
+  "provenance source-uri (pre-rename releases): github.com/automagik-dev/genie"
+  "source-repository-id:        1030039430"
+  "source-repository-owner-id:  245047546"
 )
 
 WITNESSES=(
