@@ -34,9 +34,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          PREVIOUS_TAG="v$(jq -r '.version' .well-known/latest.json 2>/dev/null || true)"
+          PREVIOUS_TAG="v$(jq -r '.version' .well-known/v2/latest.json 2>/dev/null || true)"
           if [[ "$PREVIOUS_TAG" == "v" || "$PREVIOUS_TAG" == "vnull" ]]; then
-            echo "::error::could not resolve the previous stable version from .well-known/latest.json"
+            echo "::error::could not resolve the previous stable version from .well-known/v2/latest.json"
             exit 1
           fi
           gh release download "$PREVIOUS_TAG" --repo "$GITHUB_REPOSITORY" \

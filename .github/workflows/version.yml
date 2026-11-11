@@ -149,7 +149,9 @@ jobs:
             git fetch origin dev --quiet
             if git diff --quiet origin/dev HEAD -- . \
                 ':(exclude).well-known/latest.json' \
-                ':(exclude).well-known/dev.json'; then
+                ':(exclude).well-known/dev.json' \
+                ':(exclude).well-known/v2/latest.json' \
+                ':(exclude).well-known/v2/dev.json'; then
               PROMOTED=true
               REASON="content matches dev tip (rebase/squash promotion)"
             fi

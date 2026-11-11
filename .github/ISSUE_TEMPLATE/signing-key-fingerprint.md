@@ -26,15 +26,20 @@ assignees: []
   Note: release signing is cosign KEYLESS ONLY. There is NO long-lived
   fallback key, NO hardware-backed offline key, NO public-key fingerprint
   to pin. The pinning anchors are the certificate identity + OIDC issuer
-  below.
+  below, together with GitHub's numeric ids for the repository and its
+  owner, which every accepted certificate must carry.
 -->
 
 ## Current Certificate-Identity Pin
 
 ```
-certificate-identity-regexp: ^https://github\.com/automagik-dev/genie/\.github/workflows/sign-attest\.yml@refs/heads/main$
+certificate-identity-regexp: ^https://github\.com/automagik-si/genie/\.github/workflows/sign-attest\.yml@refs/heads/main$
+certificate-identity-regexp (pre-rename releases): ^https://github\.com/automagik-dev/genie/\.github/workflows/sign-attest\.yml@refs/heads/main$
 certificate-oidc-issuer:     https://token.actions.githubusercontent.com
-provenance source-uri:       github.com/automagik-dev/genie
+provenance source-uri:       github.com/automagik-si/genie
+provenance source-uri (pre-rename releases): github.com/automagik-dev/genie
+source-repository-id:        1030039430
+source-repository-owner-id:  245047546
 ```
 
 ## Contract Metadata
@@ -50,7 +55,7 @@ provenance source-uri:       github.com/automagik-dev/genie
 Operators MUST verify the values above match every published copy:
 
 - [ ] `SECURITY.md` at repo root
-- [ ] `.well-known/security.txt` — raw: `https://raw.githubusercontent.com/automagik-dev/genie/main/.well-known/security.txt`
+- [ ] `.well-known/security.txt` — raw: `https://raw.githubusercontent.com/automagik-si/genie/main/.well-known/security.txt`
 - [ ] The other in-repo witnesses: `.github/cosign.pub`, `scripts/verify-release.sh`, `install.sh`
 
 If any channel diverges, treat the release as unverified, do not install or run
@@ -66,7 +71,7 @@ it, preserve the evidence, and contact the security address in `SECURITY.md`.
 ```bash
 # Cosign keyless verification (sole verification path)
 cosign verify-blob \
-  --certificate-identity-regexp "^https://github\.com/automagik-dev/genie/\.github/workflows/sign-attest\.yml@refs/heads/main$" \
+  --certificate-identity-regexp "^https://github\.com/automagik-si/genie/\.github/workflows/sign-attest\.yml@refs/heads/main$" \
   --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
   --bundle genie-5.260715.1-darwin-arm64.tar.gz.bundle \
   genie-5.260715.1-darwin-arm64.tar.gz
@@ -74,7 +79,7 @@ cosign verify-blob \
 # SLSA provenance verification
 slsa-verifier verify-artifact genie-5.260715.1-darwin-arm64.tar.gz \
   --provenance-path genie-5.260715.1-darwin-arm64.tar.gz.intoto.jsonl \
-  --source-uri github.com/automagik-dev/genie
+  --source-uri github.com/automagik-si/genie
 
 # Canonical end-to-end wrapper (download by tag or verify local sidecars)
 scripts/verify-release.sh v5.260715.1

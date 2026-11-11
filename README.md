@@ -10,7 +10,7 @@
 Give `/wish` one decided task. It checks that the task fits, builds it in its own worktree, runs your repository's own check, has an agent that did not write the code review the exact commit, and opens a pull request. Merging stays with you.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/automagik-dev/genie/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/automagik-si/genie/main/install.sh | bash
 ```
 
 Claude Code runs it as `/wish`, Codex as `$wish`, and other agents by name. [Docs](https://docs.automagik.dev/genie) · [Skills](https://docs.automagik.dev/genie/skills) · [Discord](https://discord.gg/xcW8c7fF3R)
@@ -134,12 +134,12 @@ Genie ships exactly two surfaces:
 The installer hands its arguments to `genie install`. `--integrations auto|codex|claude|all|none` (or `--skip-integrations`) is the consent scope for the skills channel: any value other than `none` installs to every detected agent skill home, because the skills CLI already installs per agent; `none` skips the channel, writes no record, and reports `skills: skipped (consent: none)`. To install the binary and skip the skills channel:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/automagik-dev/genie/main/install.sh | bash -s -- --integrations none
+curl -fsSL https://raw.githubusercontent.com/automagik-si/genie/main/install.sh | bash -s -- --integrations none
 ```
 
 Each detected agent gets the skills in its own skills home: `~/.claude/skills` for Claude Code, and the shared `~/.agents/skills` for Codex and the other agents that read it. `genie install` and `genie update` install the skills from the tree the signed release delivered, never from a GitHub ref. The public `npx skills add automagik-dev/genie` command serves the repository's default branch instead, so it can be ahead of or behind any release.
 
-Every release is cosign-signed with SLSA provenance, and `genie update` verifies it offline, with no GitHub credential. The repository-hosted `.well-known/latest.json` and `dev.json` manifests are the authoritative channel pointers. GitHub's `/releases/latest` route and prerelease badge are deliberately not channel authority: a promotion advances only a monotonic manifest and never rewrites already-published assets or channel-significant draft/prerelease/latest metadata. [Security and releases](https://docs.automagik.dev/genie/security) has the details.
+Every release is cosign-signed with SLSA provenance, and `genie update` verifies it offline, with no GitHub credential. The repository-hosted `.well-known/v2/latest.json` and `dev.json` manifests are the authoritative channel pointers. GitHub's `/releases/latest` route and prerelease badge are deliberately not channel authority: a promotion advances only a monotonic manifest and never rewrites already-published assets or channel-significant draft/prerelease/latest metadata. [Security and releases](https://docs.automagik.dev/genie/security) has the details.
 </details>
 
 ## Commands

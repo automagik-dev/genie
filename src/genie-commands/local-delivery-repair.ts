@@ -24,7 +24,12 @@ import {
   writeSync,
 } from 'node:fs';
 import { basename, isAbsolute, join } from 'node:path';
-import type { DeliveryEvidenceChannel, DeliveryEvidencePlatformId } from '../lib/delivery-evidence-verify.js';
+import {
+  DELIVERY_EVIDENCE_ACCEPTED_REPOSITORIES,
+  type DeliveryEvidenceChannel,
+  type DeliveryEvidencePlatformId,
+  deliveryEvidenceTarballBase,
+} from '../lib/delivery-evidence-verify.js';
 import { parseReleaseVersion } from '../lib/release-payload-proof.js';
 
 export const LOCAL_DELIVERY_REPAIR_ENABLE_ENV = 'GENIE_RELEASE_DOGFOOD';
@@ -211,7 +216,13 @@ function parsePinnedManifest(bytes: Buffer, platformId: DeliveryEvidencePlatform
     throw new Error('local delivery manifest released_at is invalid');
   }
   const releaseTag = `v${parsed.version}`;
-  if (parsed.tarball_base !== `https://github.com/automagik-dev/genie/releases/download/${releaseTag}`) {
+  // One of the accepted literal bases; the verifier then requires the one that
+  // belongs to the repository the signed descriptor names.
+  if (
+    !DELIVERY_EVIDENCE_ACCEPTED_REPOSITORIES.some(
+      (repository) => parsed.tarball_base === deliveryEvidenceTarballBase(repository, releaseTag),
+    )
+  ) {
     throw new Error('local delivery manifest tarball_base is invalid');
   }
   if (

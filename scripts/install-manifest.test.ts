@@ -92,7 +92,7 @@ const manifest = (version: string, channel = 'dev'): string =>
 const envelope = (inner: string): string =>
   JSON.stringify({
     name: 'dev.json',
-    path: '.well-known/dev.json',
+    path: '.well-known/v2/dev.json',
     type: 'file',
     encoding: 'base64',
     content: Buffer.from(inner).toString('base64'),
@@ -184,10 +184,10 @@ describe('install.sh fetch_latest dual-source manifest edges (#2950)', () => {
       const apiCall = lines.find((l) => l.includes('api.github.com')) ?? '';
       const cdnCall = lines.find((l) => l.includes('raw.githubusercontent.com')) ?? '';
       expect(apiCall).toContain('Accept: application/vnd.github.raw');
-      expect(apiCall).toContain('/contents/.well-known/dev.json?ref=main');
+      expect(apiCall).toContain('/contents/.well-known/v2/dev.json?ref=main');
       // Without the header the API answers with the envelope the test above rejects.
       expect(cdnCall).not.toContain('Accept:');
-      expect(cdnCall).toContain('/main/.well-known/dev.json');
+      expect(cdnCall).toContain('/main/.well-known/v2/dev.json');
     },
   );
 });
