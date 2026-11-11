@@ -8,6 +8,6 @@
     "noEmit": true,
     "baseUrl": "."
   },
-  "include": ["src/**/*.ts", "build.mjs"],
+  "include": ["src/**/*.ts", "build.mjs", "build.test.ts"],
   "exclude": ["dist", ".test-tmp"]
 }

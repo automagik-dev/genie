@@ -1,5 +1,5 @@
 import { afterAll, expect, test } from 'bun:test';
-import { cp, mkdir, mkdtemp, readFile, readdir, rename, rm, stat, symlink } from 'node:fs/promises';
+import { copyFile, cp, mkdir, mkdtemp, readFile, readdir, rename, rm, stat, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
@@ -13,6 +13,10 @@ import { join, resolve } from 'node:path';
  * version), otherwise the official tarball, fetched once into the temp dir and checked
  * against the checksum pinned below on every use. A floor that cannot be resolved FAILS
  * these tests: a skip would read as "the claim holds" on a host that never ran it.
+ *
+ * Because that fallback is a download, this file is excluded from the default `bun test`
+ * (bunfig.toml), which stays network-free. Run it with `bun run test:node-floor`; CI runs
+ * it in its own `node-floor` job, on a Node 22.12.0 that setup-node installed.
  */
 const NODE_FLOOR = '22.12.0';
 
@@ -48,7 +52,10 @@ async function sha256Of(path: string): Promise<string | undefined> {
   return new Bun.CryptoHasher('sha256').update(await file.arrayBuffer()).digest('hex');
 }
 
-/** The verified floor tarball: the temp-dir cache when its checksum holds, else a fresh download. */
+/**
+ * The verified floor tarball, always a file inside this run's private scratch directory:
+ * a copy of the temp-dir cache when that copy's checksum holds, else a fresh download.
+ */
 async function floorTarball(scratch: string): Promise<string> {
   const target = `${process.platform}-${process.arch}`;
   const pinned = NODE_FLOOR_SHA256[target];
@@ -56,10 +63,15 @@ async function floorTarball(scratch: string): Promise<string> {
   const name = `node-v${NODE_FLOOR}-${target}.tar.gz`;
   const cache = join(tmpdir(), 'genie-node-floor');
   const cached = join(cache, name);
-  if ((await sha256Of(cached)) === pinned) return cached;
-  // Downloaded into this run's private directory and only then offered to the shared cache:
-  // nothing is ever written through a path another user of the temp dir could have planted.
   const fresh = join(scratch, name);
+  // The cache sits in a temp dir other users can write to, so it is never hashed or
+  // extracted in place: another user could swap the file between the check and the use.
+  // It is copied into the private scratch first, and only that copy is hashed and used.
+  const copied = await copyFile(cached, fresh).then(
+    () => true,
+    () => false,
+  );
+  if (copied && (await sha256Of(fresh)) === pinned) return fresh;
   const response = await fetch(`https://nodejs.org/dist/v${NODE_FLOOR}/${name}`, {
     signal: AbortSignal.timeout(150_000),
   });
