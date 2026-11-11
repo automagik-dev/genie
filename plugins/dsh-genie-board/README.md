@@ -199,6 +199,17 @@ installers and loaders do not enforce `dsh.manifestVersion` or `engines.dsh`" �
 so the range records what was proven; it does not gate an install. The
 ceiling is the next minor that has not been exercised yet.
 
+**Node floor: 22.12.** A git install has no `dist/` (it is not committed), so the
+package builds itself in its `prepare` script, `node build.mjs`, under the host's
+own node. `build.mjs` is plain JavaScript on purpose: node strips types unflagged
+only from 22.18, and a `.ts` entry failed with `ERR_UNKNOWN_FILE_EXTENSION` on
+22.12–22.17 before `dist/` existed. `engines.node` reads `>=22.12.0` — the
+oldest Node the prepare was actually run under, not a floor on anything older.
+`plugins/dsh-prepare-node-floor.test.ts` runs the real prepare under 22.12.0 on
+every test run and fails, never skips, when that Node cannot be resolved (point
+`GENIE_NODE_FLOOR_BIN` at a 22.12.0 binary to keep it offline). Bun is needed only
+for the checkout build below, which runs the same file.
+
 ```sh
 bun run build:plugin
 dsh plugin --profile web add link:/absolute/path/to/genie/plugins/dsh-genie-board

@@ -3,9 +3,11 @@
   "compilerOptions": {
     "lib": ["ES2022"],
     "resolveJsonModule": true,
+    "allowJs": true,
+    "checkJs": true,
     "noEmit": true,
     "baseUrl": "."
   },
-  "include": ["src/**/*.ts", "build.ts"],
+  "include": ["src/**/*.ts", "build.mjs"],
   "exclude": ["dist", ".test-tmp"]
 }

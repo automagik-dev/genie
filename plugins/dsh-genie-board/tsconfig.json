@@ -3,6 +3,8 @@
   "compilerOptions": {
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "resolveJsonModule": true,
+    "allowJs": true,
+    "checkJs": true,
     "noEmit": true,
     "jsx": "react-jsx",
     "baseUrl": ".",
@@ -10,6 +12,6 @@
       "@deepseek-ai/dsh-client-ui-primitives": ["./types/primitives.d.ts"]
     }
   },
-  "include": ["src/**/*.ts", "src/**/*.tsx", "types/**/*.d.ts", "build.ts", "build.test.ts"],
+  "include": ["src/**/*.ts", "src/**/*.tsx", "types/**/*.d.ts", "build.mjs", "build.test.ts"],
   "exclude": ["dist"]
 }
