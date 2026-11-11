@@ -65,11 +65,7 @@ An install older than those versions updates to `6.261108.1` (stable) or `6.2611
 the same. An affected host never sees an error from this, and nothing on it is broken; it stays on that version.
 
 **Moving to the releases after the fix.** A host follows the releases published after the fix once it runs a version
-that carries the fix, installed from the current address:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/automagik-si/genie/main/install.sh | bash
-```
+that carries the fix.
 
 **What an affected host should do.** _PLACEHOLDER — this paragraph is to be written by the project owner._
 
