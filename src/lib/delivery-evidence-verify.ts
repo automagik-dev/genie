@@ -5,9 +5,10 @@
  * in-toto DSSE statement. This module is the only runtime minter of
  * `VerifiedDeliveryEvidence`: callers provide selected/downloaded/candidate
  * facts, but cannot provide trusted provenance strings. The production verifier
- * always uses the embedded public-good Sigstore root and the exact release
- * workflow identity. Tests may inject only the cryptographic verification step;
- * descriptor, manifest, statement, and caller-observation bindings remain live.
+ * always uses the embedded public-good Sigstore root, the exact release workflow
+ * identity, and the repository's numeric ids as the verified certificate records
+ * them. Tests may inject only the cryptographic verification step; descriptor,
+ * manifest, statement, caller-observation and signer-policy bindings remain live.
  *
  * Moved verbatim out of the retired Codex delivery-evidence module (whose content-addressed
  * on-disk pack store belonged to the retired Codex activation protocol) because
@@ -19,13 +20,73 @@
 import { createHash } from 'node:crypto';
 import { parseReleaseVersion } from './release-payload-proof.js';
 
-export const DELIVERY_EVIDENCE_REPOSITORY = 'automagik-dev/genie';
-export const DELIVERY_EVIDENCE_PREDICATE_TYPE = 'https://github.com/automagik-dev/genie/delivery-evidence/v1';
-export const DELIVERY_EVIDENCE_WORKFLOW_IDENTITY =
-  'https://github.com/automagik-dev/genie/.github/workflows/release-publish.yml@refs/heads/main';
-export const DELIVERY_EVIDENCE_WORKFLOW_IDENTITY_PATTERN = `^${escapeRegexLiteral(
-  DELIVERY_EVIDENCE_WORKFLOW_IDENTITY,
-)}$`;
+/**
+ * The release repository as GitHub names it today: where the pipeline publishes
+ * and where clients fetch.
+ */
+export const DELIVERY_EVIDENCE_REPOSITORY = 'automagik-si/genie';
+/**
+ * TRANSITIONAL. The same repository's name before the organization was renamed
+ * on 2026-11-11. Every release published before that day names it in its
+ * descriptor, its manifest and its certificate, so those releases keep
+ * verifying. Delete this constant and its one entry in
+ * `DELIVERY_EVIDENCE_ACCEPTED_REPOSITORIES` when no release signed under it has
+ * to verify any more; nothing else refers to the old name.
+ */
+export const DELIVERY_EVIDENCE_PRE_RENAME_REPOSITORY = 'automagik-dev/genie';
+/**
+ * Every name a descriptor may carry: exactly these literals, compared with `===`.
+ * A name only selects which literal workflow identity the certificate must
+ * carry. What identifies the repository is the pair of numeric ids below.
+ */
+export const DELIVERY_EVIDENCE_ACCEPTED_REPOSITORIES = [
+  DELIVERY_EVIDENCE_REPOSITORY,
+  DELIVERY_EVIDENCE_PRE_RENAME_REPOSITORY,
+] as const;
+export type DeliveryEvidenceRepository = (typeof DELIVERY_EVIDENCE_ACCEPTED_REPOSITORIES)[number];
+
+/**
+ * GitHub's numeric ids for the release repository and for the organization that
+ * owns it. A rename changes neither. Fulcio copies both from the workflow's OIDC
+ * token into every certificate it issues, as the extensions named below, and the
+ * verifier requires both on the verified leaf certificate.
+ */
+export const DELIVERY_EVIDENCE_REPOSITORY_ID = '1030039430';
+export const DELIVERY_EVIDENCE_REPOSITORY_OWNER_ID = '245047546';
+/** Fulcio "Source Repository Identifier": a DER UTF8String holding the decimal id. */
+export const FULCIO_SOURCE_REPOSITORY_ID_OID = '1.3.6.1.4.1.57264.1.15';
+/** Fulcio "Source Repository Owner Identifier": a DER UTF8String holding the decimal id. */
+export const FULCIO_SOURCE_REPOSITORY_OWNER_ID_OID = '1.3.6.1.4.1.57264.1.17';
+
+/** The custom in-toto predicate type the release workflow of `repository` signs. */
+export function deliveryEvidencePredicateType(repository: DeliveryEvidenceRepository): string {
+  return `https://github.com/${repository}/delivery-evidence/v1`;
+}
+
+/** The one certificate identity (SAN) the release workflow of `repository` signs with. */
+export function deliveryEvidenceWorkflowIdentity(repository: DeliveryEvidenceRepository): string {
+  return `https://github.com/${repository}/.github/workflows/release-publish.yml@refs/heads/main`;
+}
+
+/** That identity as a fully anchored, fully escaped pattern: one literal, no alternation. */
+export function deliveryEvidenceWorkflowIdentityPattern(repository: DeliveryEvidenceRepository): string {
+  return `^${escapeRegexLiteral(deliveryEvidenceWorkflowIdentity(repository))}$`;
+}
+
+/** Where the release tagged `releaseTag` keeps its assets under `repository`. */
+export function deliveryEvidenceTarballBase(repository: DeliveryEvidenceRepository, releaseTag: string): string {
+  return `https://github.com/${repository}/releases/download/${releaseTag}`;
+}
+
+export function isDeliveryEvidenceRepository(value: unknown): value is DeliveryEvidenceRepository {
+  return (DELIVERY_EVIDENCE_ACCEPTED_REPOSITORIES as readonly unknown[]).includes(value);
+}
+
+/** What the pipeline emits today (the current repository name). */
+export const DELIVERY_EVIDENCE_PREDICATE_TYPE = deliveryEvidencePredicateType(DELIVERY_EVIDENCE_REPOSITORY);
+export const DELIVERY_EVIDENCE_WORKFLOW_IDENTITY = deliveryEvidenceWorkflowIdentity(DELIVERY_EVIDENCE_REPOSITORY);
+export const DELIVERY_EVIDENCE_WORKFLOW_IDENTITY_PATTERN =
+  deliveryEvidenceWorkflowIdentityPattern(DELIVERY_EVIDENCE_REPOSITORY);
 export const DELIVERY_EVIDENCE_OIDC_ISSUER = 'https://token.actions.githubusercontent.com';
 export const DELIVERY_EVIDENCE_DIGEST_ALGORITHM = 'genie-physical-tree-v1';
 
@@ -48,7 +109,7 @@ export type DeliveryEvidencePlatformId = (typeof PLATFORM_IDS)[number];
 
 export interface DeliveryEvidenceDescriptor {
   schemaVersion: 1;
-  repository: typeof DELIVERY_EVIDENCE_REPOSITORY;
+  repository: DeliveryEvidenceRepository;
   version: string;
   channel: DeliveryEvidenceChannel;
   platformId: DeliveryEvidencePlatformId;
@@ -123,12 +184,33 @@ export interface DeliveryEvidenceBundleVerificationInput {
   descriptorBytes: Uint8Array;
 }
 
+/**
+ * What the cryptographic step establishes about who signed: the identity and
+ * every extension of the leaf certificate, read only after that certificate
+ * chained to the trust root and the signature verified.
+ */
+export interface DeliveryEvidenceSigner {
+  /** The certificate's subject alternative name. */
+  subjectAlternativeName?: string;
+  /** The certificate's OIDC issuer extension. */
+  issuer?: string;
+  /** Every certificate extension: dotted OID and the raw bytes of its value. */
+  extensions: ReadonlyArray<{ oid: string; value: Uint8Array }>;
+}
+
+export interface DeliveryEvidenceBundleVerification {
+  integratedTime: string | number;
+  signer: DeliveryEvidenceSigner;
+}
+
 export interface DeliveryEvidenceVerificationDependencies {
   /**
    * Deterministic test seam for the cryptographic verification step only.
    * Production callers omit this. There is deliberately no env or CLI bypass.
+   * The signer it reports is still held to the pinned identity, issuer and
+   * repository ids by `assertPinnedDeliveryEvidenceSigner`.
    */
-  verifyBundle?: (input: DeliveryEvidenceBundleVerificationInput) => { integratedTime: string | number };
+  verifyBundle?: (input: DeliveryEvidenceBundleVerificationInput) => DeliveryEvidenceBundleVerification;
 }
 
 declare const VERIFIED_DELIVERY_EVIDENCE: unique symbol;
@@ -234,15 +316,19 @@ function verifyEvidenceCore(
   verifyManifestBytes(descriptor, manifestBytes);
 
   const bundleJson = parseJson(bundleBytes, 'bundle');
-  const statement = parseDsseStatement(bundleJson);
+  const statement = parseDsseStatement(bundleJson, descriptor.repository);
   if (statement.subjectSha256 !== sha256(descriptorBytes)) {
     throw new Error('delivery evidence DSSE subject does not bind the exact descriptor bytes');
   }
-  const integratedTime =
-    dependencies.verifyBundle?.({ bundleJson, descriptorBytes }) ?? verifyBundleWithEmbeddedTrustRoot(bundleJson);
+  const verification =
+    dependencies.verifyBundle?.({ bundleJson, descriptorBytes }) ??
+    verifyBundleWithEmbeddedTrustRoot(bundleJson, descriptor.repository);
+  // Never skipped: an injected cryptographic step still answers to the same
+  // identity, issuer and repository-id rules as the embedded trust root.
+  assertPinnedDeliveryEvidenceSigner(verification?.signer, descriptor.repository);
   return {
     descriptor: Object.freeze({ ...descriptor }),
-    deliveredAt: deliveredAtFromIntegratedTime(integratedTime.integratedTime),
+    deliveredAt: deliveredAtFromIntegratedTime(verification.integratedTime),
     descriptorBytes,
     bundleBytes,
     manifestBytes,
@@ -301,7 +387,7 @@ function parseDescriptor(bytes: Buffer): DeliveryEvidenceDescriptor {
     throw new Error('delivery evidence descriptor does not have the exact schema-v1 fields');
   }
   if (parsed.schemaVersion !== 1) throw new Error('delivery evidence schemaVersion is invalid');
-  if (parsed.repository !== DELIVERY_EVIDENCE_REPOSITORY) throw new Error('delivery evidence repository is invalid');
+  if (!isDeliveryEvidenceRepository(parsed.repository)) throw new Error('delivery evidence repository is invalid');
   if (typeof parsed.version !== 'string' || parseReleaseVersion(parsed.version) === null) {
     throw new Error('delivery evidence version is invalid');
   }
@@ -363,7 +449,8 @@ function verifyManifestBytes(descriptor: DeliveryEvidenceDescriptor, bytes: Buff
   if (typeof manifest.released_at !== 'string' || !Number.isFinite(Date.parse(manifest.released_at))) {
     throw new Error('delivery evidence manifest released_at is invalid');
   }
-  const expectedBase = `https://github.com/${DELIVERY_EVIDENCE_REPOSITORY}/releases/download/${descriptor.releaseTag}`;
+  // The manifest must point at the release of the repository the descriptor names.
+  const expectedBase = deliveryEvidenceTarballBase(descriptor.repository, descriptor.releaseTag);
   if (manifest.tarball_base !== expectedBase) throw new Error('delivery evidence manifest tarball_base mismatch');
   if (
     !Array.isArray(manifest.platforms) ||
@@ -375,7 +462,7 @@ function verifyManifestBytes(descriptor: DeliveryEvidenceDescriptor, bytes: Buff
   }
 }
 
-function parseDsseStatement(bundleJson: unknown): { subjectSha256: string } {
+function parseDsseStatement(bundleJson: unknown, repository: DeliveryEvidenceRepository): { subjectSha256: string } {
   if (!isPlainObject(bundleJson)) throw new Error('delivery evidence bundle is not an object');
   const envelope = bundleJson.dsseEnvelope;
   if (!isPlainObject(envelope)) throw new Error('delivery evidence bundle is not a DSSE bundle');
@@ -393,7 +480,7 @@ function parseDsseStatement(bundleJson: unknown): { subjectSha256: string } {
   }
   if (!isPlainObject(statement)) throw new Error('delivery evidence DSSE statement is not an object');
   if (statement._type !== IN_TOTO_STATEMENT_TYPE) throw new Error('delivery evidence statement type is invalid');
-  if (statement.predicateType !== DELIVERY_EVIDENCE_PREDICATE_TYPE) {
+  if (statement.predicateType !== deliveryEvidencePredicateType(repository)) {
     throw new Error('delivery evidence predicate type is invalid');
   }
   if (!Array.isArray(statement.subject) || statement.subject.length !== 1) {
@@ -409,7 +496,10 @@ function parseDsseStatement(bundleJson: unknown): { subjectSha256: string } {
   return { subjectSha256: subject.digest.sha256 as string };
 }
 
-function verifyBundleWithEmbeddedTrustRoot(bundleJson: unknown): { integratedTime: string } {
+function verifyBundleWithEmbeddedTrustRoot(
+  bundleJson: unknown,
+  repository: DeliveryEvidenceRepository,
+): DeliveryEvidenceBundleVerification {
   const {
     bundleFromJSON,
     isBundleWithDsseEnvelope,
@@ -427,12 +517,19 @@ function verifyBundleWithEmbeddedTrustRoot(bundleJson: unknown): { integratedTim
     ctlogThreshold: 1,
     timestampThreshold: 1,
   });
-  verifier.verify(toSignedEntity(bundle), {
+  const verified = verifier.verify(toSignedEntity(bundle), {
     // @sigstore/verify interprets this field as a JavaScript regular
-    // expression. Escape and anchor the literal identity so sibling workflow
-    // names and branches such as `main-evil` cannot satisfy the policy.
-    subjectAlternativeName: DELIVERY_EVIDENCE_WORKFLOW_IDENTITY_PATTERN,
+    // expression. Escape and anchor the ONE literal identity of the repository
+    // the descriptor names so sibling workflow names and branches such as
+    // `main-evil` cannot satisfy the policy.
+    subjectAlternativeName: deliveryEvidenceWorkflowIdentityPattern(repository),
     extensions: { issuer: DELIVERY_EVIDENCE_OIDC_ISSUER },
+    // The library matches these against the leaf certificate it has just
+    // chained to the trust root: same OID, byte-identical value.
+    oids: PINNED_REPOSITORY_ID_EXTENSIONS.map(({ oid, value }) => ({
+      oid: { id: oid.split('.').map(Number) },
+      value: derUtf8String(value),
+    })),
   });
   const integratedTimes = bundle.verificationMaterial.tlogEntries
     .map((entry) => entry.integratedTime)
@@ -440,7 +537,78 @@ function verifyBundleWithEmbeddedTrustRoot(bundleJson: unknown): { integratedTim
   if (integratedTimes.length === 0) throw new Error('delivery evidence bundle has no integrated transparency-log time');
   return {
     integratedTime: integratedTimes.reduce((earliest, value) => (BigInt(value) < BigInt(earliest) ? value : earliest)),
+    // `verify()` returned, so this identity is the verified leaf certificate's.
+    signer: {
+      subjectAlternativeName: verified.identity?.subjectAlternativeName,
+      issuer: verified.identity?.extensions?.issuer,
+      extensions: (verified.identity?.oids ?? []).map((pair) => ({
+        oid: pair.oid?.id.join('.') ?? '',
+        value: pair.value,
+      })),
+    },
   };
+}
+
+const PINNED_REPOSITORY_ID_EXTENSIONS = [
+  {
+    oid: FULCIO_SOURCE_REPOSITORY_ID_OID,
+    label: 'source repository identifier',
+    value: DELIVERY_EVIDENCE_REPOSITORY_ID,
+  },
+  {
+    oid: FULCIO_SOURCE_REPOSITORY_OWNER_ID_OID,
+    label: 'source repository owner identifier',
+    value: DELIVERY_EVIDENCE_REPOSITORY_OWNER_ID,
+  },
+] as const;
+
+/**
+ * The signer policy, applied to the verified leaf certificate on every path.
+ *
+ * Checked, each by exact equality and each a refusal when absent:
+ *   - the subject alternative name is the release workflow identity of the
+ *     repository the descriptor names (one literal: same workflow file, same ref);
+ *   - the OIDC issuer is GitHub Actions';
+ *   - the certificate carries exactly one Source Repository Identifier and
+ *     exactly one Source Repository Owner Identifier, each a DER UTF8String
+ *     whose bytes are the pinned decimal id.
+ *
+ * The ids come from the certificate alone. Nothing the signed payload says
+ * (descriptor, manifest, predicate) can supply or replace them.
+ */
+export function assertPinnedDeliveryEvidenceSigner(
+  signer: DeliveryEvidenceSigner | undefined,
+  repository: DeliveryEvidenceRepository,
+): void {
+  if (signer === undefined || signer === null || !Array.isArray(signer.extensions)) {
+    throw new Error('delivery evidence signer certificate was not reported by the verification step');
+  }
+  if (signer.subjectAlternativeName !== deliveryEvidenceWorkflowIdentity(repository)) {
+    throw new Error(`delivery evidence certificate identity is not the release workflow of ${repository}`);
+  }
+  if (signer.issuer !== DELIVERY_EVIDENCE_OIDC_ISSUER) {
+    throw new Error('delivery evidence certificate issuer is not the pinned OIDC issuer');
+  }
+  for (const pinned of PINNED_REPOSITORY_ID_EXTENSIONS) {
+    const found = signer.extensions.filter((extension) => extension.oid === pinned.oid);
+    if (found.length === 0) {
+      throw new Error(`delivery evidence certificate has no ${pinned.label} (${pinned.oid})`);
+    }
+    if (found.length !== 1) {
+      throw new Error(`delivery evidence certificate repeats its ${pinned.label} (${pinned.oid})`);
+    }
+    if (!Buffer.from(found[0].value).equals(derUtf8String(pinned.value))) {
+      throw new Error(`delivery evidence certificate ${pinned.label} (${pinned.oid}) is not the pinned id`);
+    }
+  }
+}
+
+/** DER UTF8String (tag 0x0C, short-form length) of an ASCII value shorter than 128 bytes. */
+function derUtf8String(value: string): Buffer {
+  const bytes = Buffer.from(value, 'ascii');
+  if (bytes.length === 0 || bytes.length > 127)
+    throw new Error('delivery evidence pinned id has an unsupported length');
+  return Buffer.concat([Buffer.from([0x0c, bytes.length]), bytes]);
 }
 
 type SigstoreVerifierModules = {
