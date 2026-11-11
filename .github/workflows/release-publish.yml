@@ -17,12 +17,12 @@ name: Release Publish
 # external run-id recovery path.
 #
 # Verification by consumers:
-#   gh release download v<version> --repo automagik-dev/genie --pattern '*.tar.gz'
-#   gh attestation verify genie-<version>-<platform>.tar.gz --owner automagik-dev
+#   gh release download v<version> --repo automagik-si/genie --pattern '*.tar.gz'
+#   gh attestation verify genie-<version>-<platform>.tar.gz --owner automagik-si
 #   # OR via cosign:
 #   cosign verify-blob \
 #     --bundle genie-<version>-<platform>.tar.gz.bundle \
-#     --certificate-identity-regexp "^https://github\\.com/automagik-dev/genie/\\.github/workflows/sign-attest\\.yml@refs/heads/main$" \
+#     --certificate-identity-regexp "^https://github\\.com/automagik-si/genie/\\.github/workflows/sign-attest\\.yml@refs/heads/main$" \
 #     --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
 #     genie-<version>-<platform>.tar.gz
 
@@ -102,7 +102,7 @@ jobs:
           # timestamps already committed to main. Both failures land AFTER the
           # release is published and locked, so refuse the run here instead.
           # Always allocate a fresh version (version.yml allocates max-plus-one
-          # and pushes a fresh tag). See automagik-dev/genie#2674.
+          # and pushes a fresh tag). See automagik-si/genie#2674.
           # Drafts stay admissible on purpose: an interrupted run must still be
           # able to finish the release it already opened.
           # The probe retries transient API failures (this step runs before the
@@ -134,7 +134,7 @@ jobs:
           case "$release_probe" in
             found)
               if [[ "$(jq -r '.draft' "$RELEASE_JSON")" != true ]]; then
-                echo "::error ::release-replay.published v${INPUT_VERSION} already has a published GitHub Release — published releases are non-replayable (immutable asset inventory + deterministic released_at); allocate a fresh version instead. See automagik-dev/genie#2674"
+                echo "::error ::release-replay.published v${INPUT_VERSION} already has a published GitHub Release — published releases are non-replayable (immutable asset inventory + deterministic released_at); allocate a fresh version instead. See automagik-si/genie#2674"
                 exit 1
               fi
               echo "v${INPUT_VERSION} exists only as a draft release; admitting so the interrupted publish can complete"
@@ -144,7 +144,7 @@ jobs:
               ;;
             *)
               cat "$RELEASE_ERROR" >&2
-              echo "::error ::release-replay.unknown could not determine whether v${INPUT_VERSION} already has a published release; failing closed. See automagik-dev/genie#2674"
+              echo "::error ::release-replay.unknown could not determine whether v${INPUT_VERSION} already has a published release; failing closed. See automagik-si/genie#2674"
               exit 1
               ;;
           esac
@@ -551,7 +551,7 @@ jobs:
     # HUMAN SETUP (one-time) — the manifest push authenticates as a GitHub
     # App, NOT a PAT and NOT a deploy key.
     #
-    # History: deploy keys are DISABLED org-wide (repos/automagik-dev/genie/keys
+    # History: deploy keys are DISABLED org-wide (repos/automagik-si/genie/keys
     # POST → 422 "Deploy keys are disabled"), so the ssh-key model silently fell
     # back to github-actions[bot], whose push to protected main 403s. Replacing
     # it with a fine-grained PAT did not help either: the `main` ruleset
@@ -565,12 +565,12 @@ jobs:
     #   1. Create an org-owned GitHub App (suggested name: genie-release-bot)
     #      with Repository permissions → Contents: Read and write (nothing
     #      else). Generate a private key.
-    #   2. Install it on automagik-dev/genie ONLY (no other repositories).
+    #   2. Install it on automagik-si/genie ONLY (no other repositories).
     #   3. Store its credentials as environment secrets in the
     #      `release-manifests` environment (Settings → Environments):
     #      RELEASE_MANIFESTS_APP_ID and RELEASE_MANIFESTS_APP_PRIVATE_KEY.
     #   4. Add the App as a bypass actor on the `main` ruleset:
-    #      gh api repos/automagik-dev/genie/rulesets/9203218 -X PUT \
+    #      gh api repos/automagik-si/genie/rulesets/9203218 -X PUT \
     #        -f 'bypass_actors[][actor_type=Integration]' \
     #        -F 'bypass_actors[][actor_id]=<APP_ID>' \
     #        -f 'bypass_actors[][bypass_mode]=always'
@@ -602,7 +602,7 @@ jobs:
           fi
           if [[ "${missing}" -ne 0 ]]; then
             echo "::error::Without App credentials actions/checkout silently falls back to github-actions[bot], whose push to protected main is rejected (misreported below as a CAS race)." >&2
-            echo "::error::Fix: create an org-owned App with contents:read+write on automagik-dev/genie only, store its id/private key as the RELEASE_MANIFESTS_APP_ID and RELEASE_MANIFESTS_APP_PRIVATE_KEY environment secrets, and add the App as an Integration bypass actor on the 'main' ruleset. See this job's HUMAN SETUP header." >&2
+            echo "::error::Fix: create an org-owned App with contents:read+write on automagik-si/genie only, store its id/private key as the RELEASE_MANIFESTS_APP_ID and RELEASE_MANIFESTS_APP_PRIVATE_KEY environment secrets, and add the App as an Integration bypass actor on the 'main' ruleset. See this job's HUMAN SETUP header." >&2
             exit 1
           fi
 
@@ -629,7 +629,7 @@ jobs:
       # ---------------------------------------------------------------------
       # Per-channel manifest pointers — committed to main so install.sh +
       # `genie update` can resolve the current version for each channel via:
-      #   curl -fsSL https://raw.githubusercontent.com/automagik-dev/genie/main/.well-known/<channel>.json
+      #   curl -fsSL https://raw.githubusercontent.com/automagik-si/genie/main/.well-known/<channel>.json
       #
       # Filename map (per wish release-channel-dev, 2026-05-11):
       #   stable → latest.json     (kept for back-compat with v1 manifest layout)

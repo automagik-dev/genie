@@ -62,6 +62,11 @@ case "$CHANNEL" in
   *) echo "unknown channel: ${CHANNEL} (valid: stable, dev)" >&2; exit 2 ;;
 esac
 
+# The one rename this repository has had: the name it carries now, and the name
+# its manifests were committed under before.
+RENAMED_REPOSITORY="automagik-si/genie"
+PRE_RENAME_REPOSITORY="automagik-dev/genie"
+
 validate_candidate() {
   local path="$1" manifest_channel="$2"
   local expected_tarball_base="https://github.com/${RELEASE_REPOSITORY}/releases/download/v${VERSION}"
@@ -112,17 +117,27 @@ for target in "${TARGETS[@]}"; do
       exit 3
     }
     expected_tarball_base="https://github.com/${RELEASE_REPOSITORY}/releases/download/v${current_version}"
+    # A manifest committed before the 2026-11 rename names its release under
+    # the repository's previous spelling. Its bytes are bound by that release's
+    # signed delivery descriptors, so it is validated as written and never
+    # rewritten; the candidate that replaces it always carries the current name.
+    pre_rename_tarball_base=""
+    if [[ "$RELEASE_REPOSITORY" == "$RENAMED_REPOSITORY" ]]; then
+      pre_rename_tarball_base="https://github.com/${PRE_RENAME_REPOSITORY}/releases/download/v${current_version}"
+    fi
     if ! jq -e \
       --arg channel "$manifest_channel" \
       --arg version "$current_version" \
       --arg tarball_base "$expected_tarball_base" \
+      --arg pre_rename_tarball_base "$pre_rename_tarball_base" \
       '
         type == "object" and
         (keys == ["channel", "platforms", "released_at", "schema_version", "tarball_base", "version"]) and
         .schema_version == 1 and
         .channel == $channel and
         .version == $version and
-        .tarball_base == $tarball_base and
+        (.tarball_base == $tarball_base or
+          ($pre_rename_tarball_base != "" and .tarball_base == $pre_rename_tarball_base)) and
         .platforms == ["linux-x64-glibc", "linux-x64-musl", "linux-arm64", "darwin-arm64"] and
         (.released_at | type == "string") and
         (.released_at | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$")) and

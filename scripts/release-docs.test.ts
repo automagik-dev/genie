@@ -45,7 +45,7 @@ function read(relativePath: string): string {
   return readFileSync(join(ROOT, relativePath), 'utf8');
 }
 
-const RAW_MAIN = 'https://raw.githubusercontent.com/automagik-dev/genie/main';
+const RAW_MAIN = 'https://raw.githubusercontent.com/automagik-si/genie/main';
 
 /** The operator one-liner in SECURITY.md that compares the two published pin copies. */
 function pinCrossCheckScript(): string {
@@ -182,7 +182,7 @@ describe('Group E release and documentation contracts', () => {
     expect(prepare).toContain(`jq -r '.draft'`);
     expect(prepare).toContain('release-replay.published');
     expect(prepare).toContain('allocate a fresh version');
-    expect(prepare).toContain('automagik-dev/genie#2674');
+    expect(prepare).toContain('automagik-si/genie#2674');
     // ambiguous API failures fail closed rather than silently admitting
     expect(prepare).toContain('release-replay.unknown');
     expect(prepare).toContain(`grep -q 'HTTP 404'`);
@@ -843,7 +843,7 @@ describe('Group E release and documentation contracts', () => {
     ]) {
       expect(security).not.toContain(gone);
     }
-    expect(security).toContain('https://raw.githubusercontent.com/automagik-dev/genie/main/.well-known/security.txt');
+    expect(security).toContain('https://raw.githubusercontent.com/automagik-si/genie/main/.well-known/security.txt');
     for (const gone of ['automagik.dev/.well-known/security.txt', 'label%3Apinned', 'SIGNING_CERT_IDENTITY']) {
       expect(mirror).not.toContain(gone);
     }
@@ -855,11 +855,17 @@ describe('Group E release and documentation contracts', () => {
     for (const source of [security, mirror]) {
       expect(source).toContain('BEGIN SIGNING_IDENTITY_PIN');
       expect(source).toContain('END SIGNING_IDENTITY_PIN');
-      expect(source).toContain(
-        'certificate-identity-regexp: ^https://github\\.com/automagik-dev/genie/\\.github/workflows/sign-attest\\.yml@refs/heads/main$',
-      );
-      expect(source).toContain('certificate-oidc-issuer:     https://token.actions.githubusercontent.com');
-      expect(source).toContain('provenance source-uri:       github.com/automagik-dev/genie');
+      for (const line of [
+        'certificate-identity-regexp: ^https://github\\.com/automagik-si/genie/\\.github/workflows/sign-attest\\.yml@refs/heads/main$',
+        'certificate-identity-regexp (pre-rename releases): ^https://github\\.com/automagik-dev/genie/\\.github/workflows/sign-attest\\.yml@refs/heads/main$',
+        'certificate-oidc-issuer:     https://token.actions.githubusercontent.com',
+        'provenance source-uri:       github.com/automagik-si/genie',
+        'provenance source-uri (pre-rename releases): github.com/automagik-dev/genie',
+        'source-repository-id:        1030039430',
+        'source-repository-owner-id:  245047546',
+      ]) {
+        expect(source).toContain(line);
+      }
     }
   });
 

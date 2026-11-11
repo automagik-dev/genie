@@ -14,7 +14,7 @@ Send private reports to one of the following channels:
 |---------|---------|----------|
 | Security email | `privacidade@namastex.ai` | Anything security-related, including coordinated disclosure |
 | DPO (privacy + security officer) | `dpo@namastex.ai` | Privacy, LGPD, data protection concerns |
-| Private GitHub advisory | [Report via GitHub](https://github.com/automagik-dev/genie/security/advisories/new) | Preferred for CVE assignment and coordinated release |
+| Private GitHub advisory | [Report via GitHub](https://github.com/automagik-si/genie/security/advisories/new) | Preferred for CVE assignment and coordinated release |
 
 **PGP** available on request.
 
@@ -66,7 +66,7 @@ Between 2026-04-21 (~22:14 UTC) and 2026-04-22 (~14:00 UTC), versions `4.260421.
 
 - 🌐 [Public advisory (English)](https://automagik.dev/security)
 - 🌐 [Aviso público (Português)](https://automagik.dev/seguranca)
-- 🛡️ [GitHub Security Advisories](https://github.com/automagik-dev/genie/security/advisories) for this repository
+- 🛡️ [GitHub Security Advisories](https://github.com/automagik-si/genie/security/advisories) for this repository
 
 A full public post-mortem will be published within 30 days of containment.
 
@@ -101,7 +101,7 @@ The current Genie CLI does not ship a `genie sec` command. Do not treat older ro
 
 ## Release Signing — Pinned Identity (cosign keyless)
 
-`@automagik/genie` releases are signed with **cosign keyless** via GitHub Actions OIDC. There is no long-lived public key to pin — no private key in repo secrets, no hardware-backed offline key, no two-officer key-custody ceremony. What operators pin instead is the **certificate identity + OIDC issuer + provenance source-uri** tuple that `cosign verify-blob` and `slsa-verifier` must accept. If all three values match across every channel that publishes them, the release was signed by the repo's own Actions workflow and by nothing else.
+`@automagik/genie` releases are signed with **cosign keyless** via GitHub Actions OIDC. There is no long-lived public key to pin — no private key in repo secrets, no hardware-backed offline key, no two-officer key-custody ceremony. What operators pin instead is the **certificate identity + OIDC issuer + provenance source-uri** that `cosign verify-blob` and `slsa-verifier` must accept, together with **GitHub's numeric ids for this repository and its owner**, which Fulcio writes into every signing certificate. The repository was renamed from `automagik-dev/genie` to `automagik-si/genie` in 2026-11: a rename changes the name in a certificate and neither id, so a release is accepted under either spelling of the name only when its certificate carries both ids. If every value matches across every channel that publishes them, the release was signed by this repository's own Actions workflow and by nothing else.
 
 Release-channel authority comes from the repository-hosted `.well-known/latest.json` and `dev.json` manifests. Every dev or stable promotion creates a fresh monotonic version and immutable tag from its CI-approved channel source. The exact release becomes public and immutable before the eligible manifest advances; published release bytes and state are never edited. GitHub's release metadata remains a non-authoritative convenience: stable releases are non-prerelease and marked Latest, while dev releases are prereleases and never Latest. A fixed migration caveat may be appended to human-authored release notes.
 
@@ -110,19 +110,23 @@ Immutable-release cutover order is security-critical. Seal the candidate and dra
 <!-- BEGIN SIGNING_IDENTITY_PIN -->
 
 ```
-certificate-identity-regexp: ^https://github\.com/automagik-dev/genie/\.github/workflows/sign-attest\.yml@refs/heads/main$
+certificate-identity-regexp: ^https://github\.com/automagik-si/genie/\.github/workflows/sign-attest\.yml@refs/heads/main$
+certificate-identity-regexp (pre-rename releases): ^https://github\.com/automagik-dev/genie/\.github/workflows/sign-attest\.yml@refs/heads/main$
 certificate-oidc-issuer:     https://token.actions.githubusercontent.com
-provenance source-uri:       github.com/automagik-dev/genie
+provenance source-uri:       github.com/automagik-si/genie
+provenance source-uri (pre-rename releases): github.com/automagik-dev/genie
+source-repository-id:        1030039430
+source-repository-owner-id:  245047546
 ```
 
 <!-- END SIGNING_IDENTITY_PIN -->
 
-**These three values agree across every channel that publishes them.** If any channel drifts, treat the three values as compromised and escalate per the runbook.
+**These values agree across every channel that publishes them.** If any channel drifts, treat all of them as compromised and escalate per the runbook.
 
 | Channel | Path / URL | Purpose |
 |---------|------------|---------|
 | In-repo canonical | [`SECURITY.md`](./SECURITY.md) (this file) | Ships with every release tarball; read-only after tag |
-| In-repo mirror, readable without a clone | [`.well-known/security.txt`](./.well-known/security.txt) — `https://raw.githubusercontent.com/automagik-dev/genie/main/.well-known/security.txt` | RFC 9116 discovery document carried by this repository |
+| In-repo mirror, readable without a clone | [`.well-known/security.txt`](./.well-known/security.txt) — `https://raw.githubusercontent.com/automagik-si/genie/main/.well-known/security.txt` | RFC 9116 discovery document carried by this repository |
 
 A fourth in-repo witness — [`.github/cosign.pub`](./.github/cosign.pub) — carries the same values inside a NO-PINNED-KEY sentinel so tooling that naively reads a PEM file fails closed rather than trusting a fabricated key. The shipped verifier and installer are the fifth and sixth required in-repo witnesses. The CI gate (`scripts/check-fingerprint-pinning.sh`) asserts all six required in-repo witnesses agree on every PR that touches any of them.
 
@@ -144,10 +148,11 @@ If you cannot run the wrapper — for example, a locked-down incident-response h
 
 ```bash
 # Cosign keyless signature verification (sole verification path).
-# Paste the three pinned lines above into your check; never accept a
-# value from any other source.
+# Paste the pinned lines above into your check; never accept a value from
+# any other source. A release published before the 2026-11 rename verifies
+# with the two "pre-rename releases" lines instead.
 cosign verify-blob \
-  --certificate-identity-regexp "^https://github\.com/automagik-dev/genie/\.github/workflows/sign-attest\.yml@refs/heads/main$" \
+  --certificate-identity-regexp "^https://github\.com/automagik-si/genie/\.github/workflows/sign-attest\.yml@refs/heads/main$" \
   --certificate-oidc-issuer     "https://token.actions.githubusercontent.com" \
   --bundle genie-5.260715.1-darwin-arm64.tar.gz.bundle \
   genie-5.260715.1-darwin-arm64.tar.gz
@@ -155,7 +160,11 @@ cosign verify-blob \
 # SLSA provenance verification.
 slsa-verifier verify-artifact genie-5.260715.1-darwin-arm64.tar.gz \
   --provenance-path genie-5.260715.1-darwin-arm64.tar.gz.intoto.jsonl \
-  --source-uri github.com/automagik-dev/genie
+  --source-uri github.com/automagik-si/genie
+
+# The two repository ids on the certificate cosign just verified
+# (exit 0 only when it carries both).
+scripts/release-certificate-ids.sh genie-5.260715.1-darwin-arm64.tar.gz.bundle
 ```
 
 Exit codes:
@@ -172,20 +181,20 @@ Exit codes:
 Before trusting a release during incident response, confirm the pin has not drifted:
 
 ```bash
-# Run from a clone of automagik-dev/genie on a trusted host.
+# Run from a clone of automagik-si/genie on a trusted host.
 scripts/check-fingerprint-pinning.sh
 ```
 
-The script greps each of the six required in-repo witnesses (`SECURITY.md`, `.well-known/security.txt`, `.github/ISSUE_TEMPLATE/signing-key-fingerprint.md`, `.github/cosign.pub`, `scripts/verify-release.sh`, and `install.sh`) for the three canonical lines above and exits non-zero if any witness is missing a line or carries a divergent value. The same script runs as a GitHub Actions gate (`.github/workflows/signing-identity-pin.yml`) on every PR that touches any of the pinning channels.
+The script greps each of the six required in-repo witnesses (`SECURITY.md`, `.well-known/security.txt`, `.github/ISSUE_TEMPLATE/signing-key-fingerprint.md`, `.github/cosign.pub`, `scripts/verify-release.sh`, and `install.sh`) for every canonical line above and exits non-zero if any witness is missing a line or carries a divergent value. The same script runs as a GitHub Actions gate (`.github/workflows/signing-identity-pin.yml`) on every PR that touches any of the pinning channels.
 
 One-liner for operators without the repo cloned (checks the two published copies, both from `main`). It fails closed: a fetch that fails, a copy with no pin block, or copies that differ all end in a non-zero exit, and only a fetched, non-empty, identical pin prints the `agree` line.
 
 ```bash
 (
   set -o pipefail
-  u=https://raw.githubusercontent.com/automagik-dev/genie/main
+  u=https://raw.githubusercontent.com/automagik-si/genie/main
   pin() { awk '/BEGIN SIGNING_IDENTITY_PIN/,/END SIGNING_IDENTITY_PIN/' \
-            | grep -E 'certificate-identity-regexp|certificate-oidc-issuer|provenance source-uri'; }
+            | grep -E 'certificate-identity-regexp|certificate-oidc-issuer|provenance source-uri|source-repository-(owner-)?id'; }
   a=$(curl -fsSL "$u/SECURITY.md" | pin) && [ -n "$a" ] &&
   b=$(curl -fsSL "$u/.well-known/security.txt" | pin | sed 's/^# //') && [ -n "$b" ] &&
   diff <(printf '%s\n' "$a") <(printf '%s\n' "$b") && echo "OK: the two published copies agree"

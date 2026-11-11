@@ -34,14 +34,14 @@ function manifest(
   })}\n`;
 }
 
-function run(cwd: string, version: string, channel: string) {
+function run(cwd: string, version: string, channel: string, repository = 'automagik-dev/genie') {
   return Bun.spawnSync(['bash', SCRIPT], {
     cwd,
     env: {
       ...process.env,
       VERSION: version,
       CHANNEL: channel,
-      RELEASE_REPOSITORY: 'automagik-dev/genie',
+      RELEASE_REPOSITORY: repository,
       RELEASED_AT: '2026-07-14T12:00:00Z',
     },
     stdout: 'pipe',
@@ -201,6 +201,75 @@ describe('channel manifest monotonic reconciliation', () => {
       const cwd = root();
       writeFileSync(join(cwd, '.well-known', 'dev.json'), manifest('dev', '5.260714.1', undefined, corruption));
       const result = run(cwd, '5.260714.1', 'dev');
+      expect(result.exitCode).toBe(3);
+      expect(result.stderr.toString()).toContain('manifest schema is invalid');
+    }
+  });
+
+  // The repository was renamed while both committed manifests named releases
+  // published under the previous name. Those bytes are bound by signed
+  // descriptors, so the first release under the new name has to accept them as
+  // they are and write its own manifest with the current name.
+  test('the first release after the rename advances a manifest committed under the previous name', () => {
+    const cwd = root();
+    const latest = join(cwd, '.well-known', 'latest.json');
+    const dev = join(cwd, '.well-known', 'dev.json');
+    writeFileSync(latest, manifest('stable', '6.261108.1'));
+    writeFileSync(dev, manifest('dev', '6.261109.9'));
+    const latestBefore = readFileSync(latest, 'utf8');
+
+    const result = run(cwd, '6.261111.2', 'dev', 'automagik-si/genie');
+    expect(result.stderr.toString()).toBe('');
+    expect(result.exitCode).toBe(0);
+    const updated = JSON.parse(readFileSync(dev, 'utf8')) as { version: string; tarball_base: string };
+    expect(updated.version).toBe('6.261111.2');
+    expect(updated.tarball_base).toBe('https://github.com/automagik-si/genie/releases/download/v6.261111.2');
+    expect(readFileSync(latest, 'utf8')).toBe(latestBefore);
+  });
+
+  test('the committed manifests of this repository validate under its current name, byte for byte', () => {
+    const cwd = root();
+    const wellKnown = join(import.meta.dir, '..', '.well-known');
+    const committed = {
+      latest: readFileSync(join(wellKnown, 'latest.json')),
+      dev: readFileSync(join(wellKnown, 'dev.json')),
+    };
+    writeFileSync(join(cwd, '.well-known', 'latest.json'), committed.latest);
+    writeFileSync(join(cwd, '.well-known', 'dev.json'), committed.dev);
+    const version = (JSON.parse(committed.dev.toString()) as { version: string }).version;
+
+    // An equal-version replay changes nothing and must not be refused.
+    const result = run(cwd, version, 'dev', 'automagik-si/genie');
+    expect(result.exitCode).toBe(0);
+    expect(readFileSync(join(cwd, '.well-known', 'dev.json'))).toEqual(committed.dev);
+    expect(readFileSync(join(cwd, '.well-known', 'latest.json'))).toEqual(committed.latest);
+  });
+
+  test('a manifest naming the current repository is not accepted under the previous name', () => {
+    const cwd = root();
+    writeFileSync(
+      join(cwd, '.well-known', 'dev.json'),
+      manifest('dev', '6.261111.2', undefined, {
+        tarball_base: 'https://github.com/automagik-si/genie/releases/download/v6.261111.2',
+      }),
+    );
+    const result = run(cwd, '6.261111.3', 'dev', 'automagik-dev/genie');
+    expect(result.exitCode).toBe(3);
+    expect(result.stderr.toString()).toContain('manifest schema is invalid');
+  });
+
+  test('the previous name is accepted for this repository only, and only with the manifest version', () => {
+    for (const [repository, base] of [
+      ['another-owner/genie', 'https://github.com/automagik-dev/genie/releases/download/v6.261109.9'],
+      ['automagik-si/genie', 'https://github.com/automagik-dev/genie/releases/download/v6.261109.8'],
+      ['automagik-si/genie', 'https://github.com/automagik-dev/other/releases/download/v6.261109.9'],
+    ]) {
+      const cwd = root();
+      writeFileSync(
+        join(cwd, '.well-known', 'dev.json'),
+        manifest('dev', '6.261109.9', undefined, { tarball_base: base }),
+      );
+      const result = run(cwd, '6.261111.2', 'dev', repository);
       expect(result.exitCode).toBe(3);
       expect(result.stderr.toString()).toContain('manifest schema is invalid');
     }

@@ -19,6 +19,28 @@ function sha256(path: string): string {
   return createHash('sha256').update(readFileSync(path)).digest('hex');
 }
 
+// cosign is a stand-in in these tests, but verify-release.sh then reads the release
+// certificate out of the bundle and requires the pinned repository ids on it. So each
+// bundle is a real one — the certificate of a published release — with one extra member
+// that keeps the remote and the current-run bytes distinguishable.
+const RELEASE_BUNDLE = JSON.parse(
+  readFileSync(
+    join(
+      import.meta.dir,
+      '..',
+      'tests',
+      'fixtures',
+      'release-certificates',
+      'genie-6.261108.1-linux-x64-glibc.tar.gz.bundle',
+    ),
+    'utf8',
+  ),
+) as Record<string, unknown>;
+
+function releaseBundle(marker: string): string {
+  return JSON.stringify({ ...RELEASE_BUNDLE, fixture: marker });
+}
+
 function createTarball(root: string, platform: string, marker: string): { tarball: string; payload: string } {
   const payload = join(root, `${marker}-${platform}`);
   mkdirSync(join(payload, 'plugins', 'genie'), { recursive: true });
@@ -27,7 +49,7 @@ function createTarball(root: string, platform: string, marker: string): { tarbal
   writeFileSync(join(payload, 'plugins', 'genie', 'plugin.txt'), `${marker} plugin ${platform}`);
   const tarball = join(root, `genie-${VERSION}-${platform}.tar.gz`);
   expect(Bun.spawnSync(['tar', '-czf', tarball, '-C', payload, '.']).exitCode).toBe(0);
-  writeFileSync(`${tarball}.bundle`, `${marker} bundle`);
+  writeFileSync(`${tarball}.bundle`, releaseBundle(marker));
   writeFileSync(`${tarball}.intoto.jsonl`, `${marker} provenance`);
   return { tarball, payload };
 }
