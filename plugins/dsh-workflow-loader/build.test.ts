@@ -16,14 +16,14 @@ test('a git install builds the loader: prepare runs this build under plain node'
     scripts: Record<string, string>;
     devDependencies: Record<string, string>;
   };
-  expect(pkg.scripts.build).toBe('bun run build.ts');
-  expect(pkg.scripts.prepare).toBe('node build.ts');
+  expect(pkg.scripts.build).toBe('bun run build.mjs');
+  expect(pkg.scripts.prepare).toBe('node build.mjs');
   expect(pkg.files).toContain('dist');
   // The one thing the bundle resolves at build time; a bare git checkout has nothing.
   expect(pkg.devDependencies.esbuild).toBeString();
   const output = await mkdtemp(join(tmpdir(), 'genie-prepare-loader-'));
   try {
-    const proc = Bun.spawn(['node', 'build.ts', pkg.version, output], {
+    const proc = Bun.spawn(['node', 'build.mjs', pkg.version, output], {
       cwd: root,
       stdout: 'pipe',
       stderr: 'pipe',

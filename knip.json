@@ -5,7 +5,7 @@
     "plugins/dsh-genie-board/src/board.ts",
     "plugins/dsh-genie-board/src/workflows.ts",
     "plugins/dsh-genie-board/src/client/index.ts",
-    "plugins/dsh-genie-board/build.ts",
+    "plugins/dsh-genie-board/build.mjs",
     "plugins/dsh-genie-board/src/*.test.ts",
     "plugins/dsh-genie-board/build.test.ts"
   ],

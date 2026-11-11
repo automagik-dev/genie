@@ -1,3 +1,7 @@
+// Plain JavaScript on purpose (#3275): a git install runs `prepare` — `node build.mjs` —
+// under the host's own node, and node strips types unflagged only from 22.18. A `.ts` entry
+// failed on 22.12–22.17 with ERR_UNKNOWN_FILE_EXTENSION before `dist/` existed, so the
+// plugin installed with no code. Keep type syntax out of this file; tsc still checks it (checkJs).
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { build } from 'esbuild';
@@ -13,7 +17,7 @@ const outdir = resolve(output);
  * One host bundle, one cordis row. There is no client half: the catalog panel
  * belongs to `plugins/dsh-genie-board`, and this row only adds the run path.
  */
-export const HOST_ROWS = ['index'] as const;
+export const HOST_ROWS = ['index'];
 
 for (const row of HOST_ROWS) {
   await build({
