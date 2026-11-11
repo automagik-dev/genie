@@ -2,25 +2,179 @@
 #
 # Genie CLI installer — GitHub Releases consumer (post genie-distribution-cutover G4).
 #
-# Audit: curl -fsSL https://raw.githubusercontent.com/automagik-dev/genie/main/install.sh > install.sh; less install.sh; bash install.sh
+# Audit: curl -fsSL https://raw.githubusercontent.com/automagik-si/genie/main/install.sh > install.sh; less install.sh; bash install.sh
 #
-# Trust anchor (cosign keyless OIDC). Verification pins the certificate
-# identity + OIDC issuer — there is no long-lived public key to pin.
-# certificate-identity-regexp: ^https://github\.com/automagik-dev/genie/\.github/workflows/sign-attest\.yml@refs/heads/main$
+# Trust anchor (cosign keyless OIDC). There is no long-lived public key to pin.
+# A release is installed only when its verified certificate carries the OIDC
+# issuer below, the signing workflow at refs/heads/main under one of the two
+# spellings of this repository's name, AND both of GitHub's numeric ids for this
+# repository and for its owner. A rename changes the name and neither id.
+# certificate-identity-regexp: ^https://github\.com/automagik-si/genie/\.github/workflows/sign-attest\.yml@refs/heads/main$
+# certificate-identity-regexp (pre-rename releases): ^https://github\.com/automagik-dev/genie/\.github/workflows/sign-attest\.yml@refs/heads/main$
 # certificate-oidc-issuer:     https://token.actions.githubusercontent.com
-# provenance source-uri:       github.com/automagik-dev/genie
+# provenance source-uri:       github.com/automagik-si/genie
+# provenance source-uri (pre-rename releases): github.com/automagik-dev/genie
+# source-repository-id:        1030039430
+# source-repository-owner-id:  245047546
 #
 # Default flow (gh attestation verify, falls back to cosign verify-blob):
-#   curl -fsSL https://raw.githubusercontent.com/automagik-dev/genie/main/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/automagik-si/genie/main/install.sh | bash
 #
 # INSECURE=1 (audit-logged bypass; SHA256 floor only — DO NOT USE in production):
-#   INSECURE=1 curl -fsSL https://raw.githubusercontent.com/automagik-dev/genie/main/install.sh | bash
+#   INSECURE=1 curl -fsSL https://raw.githubusercontent.com/automagik-si/genie/main/install.sh | bash
 #
 # Exit codes: 0 ok | 1 generic | 2 unsupported platform | 3 missing prereq | 4 verification failed | 5 download failed
 #
 set -euo pipefail
 
-REPO="automagik-dev/genie"
+REPO="automagik-si/genie"
+# The name this repository carried until the 2026-11 rename. Every release
+# published before it is signed under this spelling, so it stays an accepted
+# spelling of the signing workflow. Nothing is fetched from it.
+PRE_RENAME_REPO="automagik-dev/genie"
+ACCEPTED_REPOS=("$REPO" "$PRE_RENAME_REPO")
+
+# >>> release-certificate-ids (kept byte-identical in install.sh and scripts/release-certificate-ids.sh)
+# GitHub's numeric ids for the release repository and for the organization that
+# owns it. A rename changes neither. Fulcio copies both from the workflow's OIDC
+# token into every certificate it issues, as two extensions:
+#   1.3.6.1.4.1.57264.1.15  Source Repository Identifier
+#   1.3.6.1.4.1.57264.1.17  Source Repository Owner Identifier
+# each a DER UTF8String holding the decimal id.
+EXPECTED_REPOSITORY_ID="1030039430"
+EXPECTED_REPOSITORY_OWNER_ID="245047546"
+FULCIO_REPOSITORY_ID_OID_HEX="2B0601040183BF30010F"
+FULCIO_REPOSITORY_OWNER_ID_OID_HEX="2B0601040183BF300111"
+
+certificate_ids_note() { printf '!! release certificate: %s\n' "$*" >&2; }
+
+# Decode base64 from file $1 into file $2 (GNU, BusyBox and macOS spellings).
+certificate_b64_decode() {
+  base64 -d <"$1" >"$2" 2>/dev/null && return 0
+  base64 -D <"$1" >"$2" 2>/dev/null && return 0
+  base64 --decode <"$1" >"$2" 2>/dev/null
+}
+
+# Print the leaf certificate of a cosign bundle as uppercase DER hex. The bundle
+# is the `cosign sign-blob --bundle` file: one "cert" member holding the base64
+# of the PEM certificate. The file must name that member exactly once, in that
+# exact spelling, and carry no escape sequence, so the certificate read here is
+# the one any JSON reader takes from the same bytes.
+certificate_der_hex_from_bundle() {
+  local bundle="$1" work="$2" matches
+  [ -s "$bundle" ] || return 1
+  if grep -q '\\' "$bundle"; then return 1; fi
+  [ "$(grep -oi '"cert"[[:space:]]*:' "$bundle" | wc -l | tr -d ' ')" = "1" ] || return 1
+  matches="$(grep -o '"cert":"[A-Za-z0-9+/=]*"' "$bundle" 2>/dev/null)" || return 1
+  [ "$(printf '%s\n' "$matches" | wc -l | tr -d ' ')" = "1" ] || return 1
+  matches="${matches#\"cert\":\"}"
+  printf '%s' "${matches%\"}" >"$work/cert.pem.b64"
+  certificate_b64_decode "$work/cert.pem.b64" "$work/cert.pem" || return 1
+  [ "$(grep -c -- '-----BEGIN CERTIFICATE-----' "$work/cert.pem")" = "1" ] || return 1
+  grep -v -- '-----' "$work/cert.pem" | tr -d '\r\n' >"$work/cert.der.b64"
+  certificate_b64_decode "$work/cert.der.b64" "$work/cert.der" || return 1
+  [ -s "$work/cert.der" ] || return 1
+  od -An -v -tx1 "$work/cert.der" | tr -d ' \n' | tr 'a-f' 'A-F'
+}
+
+# Read one DER element of hex string $1 at hex offset $2. Sets DER_TAG, DER_VALUE
+# (hex offset of the content) and DER_END (hex offset just past it). Fails on a
+# truncated element or a length that is not plain definite form.
+der_element() {
+  local hex="$1" pos="$2" first count
+  [ $((pos + 4)) -le ${#hex} ] || return 1
+  DER_TAG="${hex:pos:2}"
+  first=$((16#${hex:pos+2:2}))
+  pos=$((pos + 4))
+  if [ "$first" -lt 128 ]; then
+    count="$first"
+  else
+    first=$((first - 128))
+    [ "$first" -ge 1 ] && [ "$first" -le 3 ] || return 1
+    [ $((pos + 2 * first)) -le ${#hex} ] || return 1
+    count=$((16#${hex:pos:2*first}))
+    pos=$((pos + 2 * first))
+  fi
+  DER_VALUE="$pos"
+  DER_END=$((pos + 2 * count))
+  [ "$DER_END" -le ${#hex} ]
+}
+
+# Print the value (hex) of the extension whose OID content is $2, from the
+# certificate DER hex $1. Walks Certificate -> tbsCertificate -> [3] extensions
+# and fails unless the certificate carries that extension exactly once.
+certificate_extension_value_hex() {
+  local hex="$1" want="$2" tbs_end ext_end item_end pos oid found="" count=0
+  der_element "$hex" 0 && [ "$DER_TAG" = "30" ] && [ "$DER_END" -eq ${#hex} ] || return 1
+  der_element "$hex" "$DER_VALUE" && [ "$DER_TAG" = "30" ] || return 1
+  pos="$DER_VALUE"; tbs_end="$DER_END"
+  while :; do
+    [ "$pos" -lt "$tbs_end" ] || return 1
+    der_element "$hex" "$pos" && [ "$DER_END" -le "$tbs_end" ] || return 1
+    [ "$DER_TAG" = "A3" ] && break
+    pos="$DER_END"
+  done
+  der_element "$hex" "$DER_VALUE" && [ "$DER_TAG" = "30" ] || return 1
+  pos="$DER_VALUE"; ext_end="$DER_END"
+  while [ "$pos" -lt "$ext_end" ]; do
+    der_element "$hex" "$pos" && [ "$DER_TAG" = "30" ] && [ "$DER_END" -le "$ext_end" ] || return 1
+    item_end="$DER_END"
+    der_element "$hex" "$DER_VALUE" && [ "$DER_TAG" = "06" ] && [ "$DER_END" -le "$item_end" ] || return 1
+    oid="${hex:DER_VALUE:DER_END-DER_VALUE}"
+    der_element "$hex" "$DER_END" && [ "$DER_END" -le "$item_end" ] || return 1
+    if [ "$DER_TAG" = "01" ]; then
+      der_element "$hex" "$DER_END" && [ "$DER_END" -le "$item_end" ] || return 1
+    fi
+    [ "$DER_TAG" = "04" ] && [ "$DER_END" -eq "$item_end" ] || return 1
+    if [ "$oid" = "$want" ]; then
+      count=$((count + 1))
+      found="${hex:DER_VALUE:DER_END-DER_VALUE}"
+    fi
+    pos="$item_end"
+  done
+  [ "$pos" -eq "$ext_end" ] && [ "$count" -eq 1 ] || return 1
+  printf '%s\n' "$found"
+}
+
+# The DER UTF8String (hex) of a decimal id: tag 0C, one length byte, the digits.
+certificate_expected_id_hex() {
+  local id="$1"
+  case "$id" in ''|*[!0-9]*) return 1 ;; esac
+  [ "${#id}" -le 127 ] || return 1
+  printf '0C%02X%s\n' "${#id}" "$(printf '%s' "$id" | od -An -v -tx1 | tr -d ' \n' | tr 'a-f' 'A-F')"
+}
+
+# Succeeds only when the certificate in cosign bundle $1 carries BOTH pinned
+# ids, each exactly once and each exactly the expected encoding. Call it only
+# after cosign has verified that bundle: the ids are read from the certificate
+# cosign just accepted, never from anything else. Any doubt is a refusal.
+release_certificate_carries_pinned_ids() {
+  local bundle="$1" work hex value expected status=1 tool
+  for tool in base64 od tr grep wc mktemp; do
+    command -v "$tool" >/dev/null 2>&1 || {
+      certificate_ids_note "cannot check the repository ids without '$tool' on PATH — refusing"
+      return 1
+    }
+  done
+  work="$(umask 077; mktemp -d "${TMPDIR:-/tmp}/genie-certificate-ids.XXXXXX")" || return 1
+  if ! hex="$(certificate_der_hex_from_bundle "$bundle" "$work")" || [ -z "$hex" ]; then
+    certificate_ids_note "could not read the certificate from ${bundle##*/} — refusing"
+  elif ! value="$(certificate_extension_value_hex "$hex" "$FULCIO_REPOSITORY_ID_OID_HEX")"; then
+    certificate_ids_note "no single Source Repository Identifier (1.3.6.1.4.1.57264.1.15) — refusing"
+  elif ! expected="$(certificate_expected_id_hex "$EXPECTED_REPOSITORY_ID")" || [ "$value" != "$expected" ]; then
+    certificate_ids_note "Source Repository Identifier is not ${EXPECTED_REPOSITORY_ID} — refusing"
+  elif ! value="$(certificate_extension_value_hex "$hex" "$FULCIO_REPOSITORY_OWNER_ID_OID_HEX")"; then
+    certificate_ids_note "no single Source Repository Owner Identifier (1.3.6.1.4.1.57264.1.17) — refusing"
+  elif ! expected="$(certificate_expected_id_hex "$EXPECTED_REPOSITORY_OWNER_ID")" || [ "$value" != "$expected" ]; then
+    certificate_ids_note "Source Repository Owner Identifier is not ${EXPECTED_REPOSITORY_OWNER_ID} — refusing"
+  else
+    status=0
+  fi
+  rm -rf "$work"
+  return "$status"
+}
+# <<< release-certificate-ids
+
 # Per-channel manifest URL: stable → latest.json, others → <channel>.json.
 # Resolved at runtime in resolve_manifest_url after the channel is known so
 # `GENIE_CHANNEL=dev curl ... | bash` reads .well-known/dev.json. See wish
@@ -29,17 +183,31 @@ MANIFEST_BASE="https://raw.githubusercontent.com/${REPO}/main/.well-known"
 # The same manifest through the public, credential-free contents API. The CDN
 # copy above caches for ~5 minutes, so a fresh install inside that window used to
 # land the PREVIOUS release (issue #2950); the API copy is roughly a minute deep.
-# Host, owner and repo are pinned literals — never derived from manifest content.
-MANIFEST_API_BASE="https://api.github.com/repos/${REPO}/contents/.well-known"
-EXPECTED_COSIGN_IDENTITY="^https://github\\.com/${REPO}/\\.github/workflows/sign-attest\\.yml@refs/heads/main$"
+# The host is a pinned literal and the repository is addressed by its numeric id
+# — never derived from manifest content.
+MANIFEST_API_BASE="https://api.github.com/repositories/${EXPECTED_REPOSITORY_ID}/contents/.well-known"
 EXPECTED_COSIGN_ISSUER="https://token.actions.githubusercontent.com"
+
+# The signing workflow's certificate identity under one spelling of the
+# repository name, as an anchored regular expression.
+cosign_identity_for_repo() {
+  printf '^https://github\\.com/%s/\\.github/workflows/sign-attest\\.yml@refs/heads/main$\n' "$1"
+}
+EXPECTED_COSIGN_IDENTITY="$(cosign_identity_for_repo "$REPO")"
+
 # sign-attest.yml registers the GitHub-native attestation under a CUSTOM
 # predicate type (NOT https://slsa.dev/provenance/v1 — GitHub's persistence API
 # runs SLSA validation for that URI and rejects our custom buildType). The
 # verifier MUST pass the same --predicate-type or `gh attestation verify`
-# defaults to slsa.dev/provenance/v1 and 404s the lookup. Keep this in lockstep
-# with scripts/release-native-predicate.sh + sign-attest.yml.
-EXPECTED_ATTESTATION_PREDICATE_TYPE="https://github.com/${REPO}/release-tarballs/v1"
+# defaults to slsa.dev/provenance/v1 and 404s the lookup. The type names the
+# repository as it was spelled when the release was signed. Keep this in
+# lockstep with scripts/release-native-predicate.sh + sign-attest.yml.
+attestation_predicate_type_for_repo() {
+  printf 'https://github.com/%s/release-tarballs/v1\n' "$1"
+}
+# What `gh attestation verify --format json` must show for EVERY attestation it
+# verified: both pinned ids, read from the certificate gh just checked.
+GH_ATTESTATION_IDS_JQ="if (length > 0) and all(.[]; .verificationResult.signature.certificate.sourceRepositoryIdentifier == \"${EXPECTED_REPOSITORY_ID}\" and .verificationResult.signature.certificate.sourceRepositoryOwnerIdentifier == \"${EXPECTED_REPOSITORY_OWNER_ID}\") then \"ok\" else \"refused\" end"
 COSIGN_VERSION="v2.4.1"
 # `gh attestation verify` is the PRIMARY provenance verifier (cosign verify-blob
 # is the fallback). gh is therefore a verification prerequisite: when the system
@@ -468,6 +636,17 @@ api_source_usable() {
   command -v jq >/dev/null 2>&1
 }
 
+# A manifest published before the rename names its release under the old
+# spelling. The same release is served under the current name, and that is where
+# it is fetched from. Any other base is returned unchanged.
+current_name_tarball_base() {
+  local base="$1" prefix="https://github.com/${PRE_RENAME_REPO}/"
+  case "$base" in
+    "$prefix"*) printf 'https://github.com/%s/%s\n' "$REPO" "${base#"$prefix"}" ;;
+    *) printf '%s\n' "$base" ;;
+  esac
+}
+
 # Read the channel manifest from BOTH published sources and return the NEWER
 # answer. The raw CDN stays the authority: it is the only source that can fail
 # the install, and a tie or an unparsable API version keeps its bytes. The API
@@ -617,15 +796,22 @@ ensure_gh_verifier() {
 }
 
 verify_with_gh_attestation() {
-  local tarball="$1" platform="$2"
+  local tarball="$1" platform="$2" repo answer
   ensure_gh_verifier "$platform" || return 1
-  log "verifying via gh attestation (repo=${REPO}, identity pinned)"
-  "$GH_BIN" attestation verify "$tarball" \
-    --repo "$REPO" \
-    --predicate-type "$EXPECTED_ATTESTATION_PREDICATE_TYPE" \
-    --cert-identity-regex "$EXPECTED_COSIGN_IDENTITY" \
-    --cert-oidc-issuer "$EXPECTED_COSIGN_ISSUER" \
-    >/dev/null 2>&1
+  for repo in "${ACCEPTED_REPOS[@]}"; do
+    log "verifying via gh attestation (repo=${repo}, identity and repository ids pinned)"
+    answer="$("$GH_BIN" attestation verify "$tarball" \
+      --repo "$repo" \
+      --predicate-type "$(attestation_predicate_type_for_repo "$repo")" \
+      --cert-identity-regex "$(cosign_identity_for_repo "$repo")" \
+      --cert-oidc-issuer "$EXPECTED_COSIGN_ISSUER" \
+      --format json --jq "$GH_ATTESTATION_IDS_JQ" 2>/dev/null)" || continue
+    if [[ "$answer" == "ok" ]]; then
+      return 0
+    fi
+    warn "gh attestation: the certificate under ${repo} does not carry the pinned repository ids"
+  done
+  return 1
 }
 
 cosign_asset_for_platform() {
@@ -679,16 +865,27 @@ ensure_cosign_verifier() {
   bootstrap_cosign "$platform"
 }
 
+# cosign verifies the signature, the certificate chain, the transparency-log
+# entry, the OIDC issuer and the workflow identity; the two repository ids are
+# then read from the certificate inside the bundle cosign just accepted. cosign
+# has no flag for them, so the reading is done here with base64 and od — no
+# further tool is downloaded, and a host missing either refuses the install.
 verify_with_cosign() {
-  local tarball="$1" bundle="$2"
+  local tarball="$1" bundle="$2" repo
   [[ -n "$COSIGN_BIN" ]] || return 1
   [[ -s "$bundle" ]] || return 1
-  log "verifying via cosign verify-blob (bundle=${bundle##*/})"
-  "$COSIGN_BIN" verify-blob \
-    --bundle "$bundle" \
-    --certificate-identity-regexp "$EXPECTED_COSIGN_IDENTITY" \
-    --certificate-oidc-issuer "$EXPECTED_COSIGN_ISSUER" \
-    "$tarball" >/dev/null 2>&1
+  log "verifying via cosign verify-blob (bundle=${bundle##*/}, identity and repository ids pinned)"
+  for repo in "${ACCEPTED_REPOS[@]}"; do
+    if "$COSIGN_BIN" verify-blob \
+      --bundle "$bundle" \
+      --certificate-identity-regexp "$(cosign_identity_for_repo "$repo")" \
+      --certificate-oidc-issuer "$EXPECTED_COSIGN_ISSUER" \
+      "$tarball" >/dev/null 2>&1; then
+      release_certificate_carries_pinned_ids "$bundle"
+      return $?
+    fi
+  done
+  return 1
 }
 
 emit_insecure_banner() {
@@ -726,11 +923,11 @@ download_and_verify() {
       if [[ "$tried_bootstrap" != "1" ]] && bootstrap_cosign "$platform" && verify_with_cosign "$tarball" "$bundle"; then
         log "cosign verify-blob: OK (sha256=${sha:0:12}...)"
       else
-        die "verification failed for ${fname} — refuse to install. Expected identity: ${EXPECTED_COSIGN_IDENTITY}" 4
+        die "verification failed for ${fname} — refuse to install. Expected identity: ${EXPECTED_COSIGN_IDENTITY} with repository id ${EXPECTED_REPOSITORY_ID} and owner id ${EXPECTED_REPOSITORY_OWNER_ID}" 4
       fi
     fi
   else
-    die "verification failed for ${fname} — refuse to install. Expected identity: ${EXPECTED_COSIGN_IDENTITY}" 4
+    die "verification failed for ${fname} — refuse to install. Expected identity: ${EXPECTED_COSIGN_IDENTITY} with repository id ${EXPECTED_REPOSITORY_ID} and owner id ${EXPECTED_REPOSITORY_OWNER_ID}" 4
   fi
   printf '%s\n' "$tarball"
 }
@@ -1017,6 +1214,7 @@ main() {
   tarball_base="$(manifest_get "$payload" tarball_base)"
   [[ -n "$version"      && "$version"      != "null" ]] || die "latest.json missing .version" 1
   [[ -n "$tarball_base" && "$tarball_base" != "null" ]] || die "latest.json missing .tarball_base" 1
+  tarball_base="$(current_name_tarball_base "$tarball_base")"
   log "installing genie v${version}"
   # The home is materialized first so a relocated GENIE_HOME on a fresh host is
   # an ordinary install rather than a refusal (dogfood r2 §3.3 #1).
