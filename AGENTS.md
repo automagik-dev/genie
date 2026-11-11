@@ -65,6 +65,7 @@ The full incident narratives are path-scoped for Claude Code in `.claude/rules/*
 - Pre-record genie leftovers are proven by retired skill descriptions (`legacy-skills-catalog.ts`), never by name alone. `~/.agents/skills` is also the DSH body's skill source, so no DSH-side skills provider is ever added (`.claude/rules/dsh-skills-source.md`).
 - A `state-backups/` root is an archive: nothing genie writes there is removed by a later run.
 - `genie update` verifies a public release from its signed delivery evidence with NO GitHub credential (`gh attestation verify` is advisory only); a dev release that failed after its tag was pushed is republished only by the next merge to dev; post-delivery convergence is an argv-only handoff (`update --post-delivery-converge`), never an environment variable (`.claude/rules/release-pipeline.md`).
+- Since the 2026-11 repository rename a release is accepted only when its verified certificate carries repository id `1030039430` and owner id `245047546`, under either spelling of the name. Fixed binaries read `.well-known/v2/{latest,dev}.json`; the pair one directory up is frozen on `v6.261108.1` / `v6.261109.9` for binaries from before the fix, and nothing in the pipeline writes it again (`.claude/rules/release-pipeline.md`).
 
 ## Release contract
 

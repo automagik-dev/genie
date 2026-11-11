@@ -29,18 +29,37 @@
 set -euo pipefail
 
 # Canonical signing-identity pin — verified by scripts/check-fingerprint-pinning.sh.
-# The three comment lines below mirror the substring-grep contract in that
-# script. Rotating the pin requires editing this block AND every witness
-# listed in scripts/check-fingerprint-pinning.sh WITNESSES array.
+# The comment lines below mirror the substring-grep contract in that script.
+# Rotating the pin requires editing this block AND every witness listed in
+# scripts/check-fingerprint-pinning.sh WITNESSES array.
 #
-# certificate-identity-regexp: ^https://github\.com/automagik-dev/genie/\.github/workflows/sign-attest\.yml@refs/heads/main$
+# A release verifies only when its certificate carries the OIDC issuer, the
+# signing workflow at refs/heads/main under one of the two spellings of this
+# repository's name, AND both of GitHub's numeric ids for this repository and
+# for its owner. A rename changes the name and neither id.
+#
+# certificate-identity-regexp: ^https://github\.com/automagik-si/genie/\.github/workflows/sign-attest\.yml@refs/heads/main$
+# certificate-identity-regexp (pre-rename releases): ^https://github\.com/automagik-dev/genie/\.github/workflows/sign-attest\.yml@refs/heads/main$
 # certificate-oidc-issuer:     https://token.actions.githubusercontent.com
-# provenance source-uri:       github.com/automagik-dev/genie
-REPO="automagik-dev/genie"
-OWNER="${REPO%%/*}"
-WORKFLOW_IDENTITY_REGEXP="^https://github\\.com/${REPO}/\\.github/workflows/sign-attest\\.yml@refs/heads/main$"
+# provenance source-uri:       github.com/automagik-si/genie
+# provenance source-uri (pre-rename releases): github.com/automagik-dev/genie
+# source-repository-id:        1030039430
+# source-repository-owner-id:  245047546
+REPO="automagik-si/genie"
+# The name this repository carried until the 2026-11 rename. Releases published
+# before it are signed under this spelling. Nothing is downloaded from it.
+PRE_RENAME_REPO="automagik-dev/genie"
+ACCEPTED_REPOS=("$REPO" "$PRE_RENAME_REPO")
 OIDC_ISSUER="https://token.actions.githubusercontent.com"
-SOURCE_URI="github.com/${REPO}"
+
+workflow_identity_regexp() {
+  printf '^https://github\\.com/%s/\\.github/workflows/sign-attest\\.yml@refs/heads/main$\n' "$1"
+}
+
+# release_certificate_carries_pinned_ids: reads the two ids from the certificate
+# inside a bundle cosign has verified.
+# shellcheck source=scripts/release-certificate-ids.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/release-certificate-ids.sh"
 
 need() {
   if ! command -v "$1" >/dev/null 2>&1; then
@@ -90,21 +109,37 @@ verify_one() {
   done
 
   echo "-> cosign verify-blob --bundle (certificate identity + OIDC issuer pinned)"
-  if ! cosign verify-blob \
-      --bundle "${bundle}" \
-      --certificate-identity-regexp "${WORKFLOW_IDENTITY_REGEXP}" \
-      --certificate-oidc-issuer "${OIDC_ISSUER}" \
-      "${tarball}"; then
+  local repo signed_as=""
+  for repo in "${ACCEPTED_REPOS[@]}"; do
+    if cosign verify-blob \
+        --bundle "${bundle}" \
+        --certificate-identity-regexp "$(workflow_identity_regexp "${repo}")" \
+        --certificate-oidc-issuer "${OIDC_ISSUER}" \
+        "${tarball}"; then
+      signed_as="${repo}"
+      break
+    fi
+  done
+  if [ -z "${signed_as}" ]; then
     echo "error: cosign signature verification failed — exit 2" >&2
+    exit 2
+  fi
+
+  echo "-> repository ids on the verified certificate (${EXPECTED_REPOSITORY_ID}, owner ${EXPECTED_REPOSITORY_OWNER_ID})"
+  if ! release_certificate_carries_pinned_ids "${bundle}"; then
+    echo "error: cosign signature verification failed — the certificate does not carry the pinned repository ids — exit 2" >&2
     exit 2
   fi
 
   echo "-> slsa-verifier verify-artifact"
   # --source-branch main matches reconcile-release-assets.sh: provenance
   # generated from any other branch of the repo must not satisfy this leg.
+  # The source is the repository under the spelling the release was signed
+  # with; slsa-verifier compares names and has no option for the numeric ids,
+  # which the step above already checked for this same tarball.
   if ! slsa-verifier verify-artifact "${tarball}" \
       --provenance-path "${provenance}" \
-      --source-uri "${SOURCE_URI}" \
+      --source-uri "github.com/${signed_as}" \
       --source-branch main; then
     echo "error: SLSA provenance verification failed — exit 4" >&2
     exit 4
@@ -115,12 +150,12 @@ verify_one() {
   # gh is installed and its attestation subsystem is reachable.
   if command -v gh >/dev/null 2>&1 && gh attestation verify --help >/dev/null 2>&1; then
     echo "-> gh attestation verify (GitHub-native cross-check)"
-    if ! gh attestation verify "${tarball}" --owner "${OWNER}" >/dev/null 2>&1; then
+    if ! gh attestation verify "${tarball}" --owner "${signed_as%%/*}" >/dev/null 2>&1; then
       echo "warning: gh attestation verify could not confirm ${tarball##*/} (cosign + SLSA already passed)" >&2
     fi
   fi
 
-  echo "OK: $(basename "${tarball}") is cosign-signed AND SLSA-attested by ${REPO}"
+  echo "OK: $(basename "${tarball}") is cosign-signed AND SLSA-attested by ${signed_as} (repository id ${EXPECTED_REPOSITORY_ID})"
 }
 
 main() {

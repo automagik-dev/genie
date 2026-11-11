@@ -1,0 +1,33 @@
+[
+  {
+    "verificationResult": {
+      "signature": {
+        "certificate": {
+          "buildConfigDigest": "fb8bcbca184dfc96b8a5c3ec7be8e40faf71295d",
+          "buildConfigURI": "https://github.com/automagik-dev/genie/.github/workflows/release.yml@refs/heads/main",
+          "buildSignerDigest": "fb8bcbca184dfc96b8a5c3ec7be8e40faf71295d",
+          "buildSignerURI": "https://github.com/automagik-dev/genie/.github/workflows/sign-attest.yml@refs/heads/main",
+          "buildTrigger": "workflow_dispatch",
+          "certificateIssuer": "CN=sigstore-intermediate,O=sigstore.dev",
+          "githubWorkflowName": "Release",
+          "githubWorkflowRef": "refs/heads/main",
+          "githubWorkflowRepository": "automagik-dev/genie",
+          "githubWorkflowSHA": "fb8bcbca184dfc96b8a5c3ec7be8e40faf71295d",
+          "githubWorkflowTrigger": "workflow_dispatch",
+          "issuer": "https://token.actions.githubusercontent.com",
+          "runInvocationURI": "https://github.com/automagik-dev/genie/actions/runs/42437123309/attempts/1",
+          "runnerEnvironment": "github-hosted",
+          "sourceRepositoryDigest": "fb8bcbca184dfc96b8a5c3ec7be8e40faf71295d",
+          "sourceRepositoryIdentifier": "1030039430",
+          "sourceRepositoryOwnerIdentifier": "245047546",
+          "sourceRepositoryOwnerURI": "https://github.com/automagik-dev",
+          "sourceRepositoryRef": "refs/heads/main",
+          "sourceRepositoryURI": "https://github.com/automagik-dev/genie",
+          "sourceRepositoryVisibilityAtSigning": "public",
+          "subjectAlternativeName": "https://github.com/automagik-dev/genie/.github/workflows/sign-attest.yml@refs/heads/main"
+        }
+      },
+      "statement": { "predicateType": "https://github.com/automagik-dev/genie/release-tarballs/v1" }
+    }
+  }
+]

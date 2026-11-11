@@ -28,6 +28,12 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { DELIVERY_EVIDENCE_REPOSITORY, type DeliveryEvidenceRepository } from '../../lib/delivery-evidence-verify.js';
+import {
+  testCertificateExtension,
+  testDeliveryEvidenceSeam,
+  testDeliveryEvidenceSigner,
+} from '../../lib/delivery-evidence-verify.test-support.js';
 import type { HerdrModChannelConvergenceResult } from '../../lib/herdr-mod-installer.js';
 import { acquireLifecycleLease, currentSyncLockHostId, lifecycleLockPath } from '../../lib/lifecycle-lease';
 import { SKILLS_CLI_VERSION, type SkillsChannelConvergenceResult, releaseTag } from '../../lib/skills-installer.js';
@@ -703,16 +709,18 @@ describe('formatVerifyBanner', () => {
 // ============================================================================
 
 describe('manifestUrlForChannel (G5)', () => {
-  test('stable maps to .well-known/latest.json', () => {
+  test('stable maps to .well-known/v2/latest.json', () => {
     expect(manifestUrlForChannel('stable')).toBe(
-      'https://raw.githubusercontent.com/automagik-dev/genie/main/.well-known/latest.json',
+      'https://raw.githubusercontent.com/automagik-si/genie/main/.well-known/v2/latest.json',
     );
   });
 
   test('dev gets its own per-channel file', () => {
     // Canonical taxonomy: stable / dev. beta + canary + homolog retired —
     // no longer accepted by the ReleaseChannel type.
-    expect(manifestUrlForChannel('dev')).toContain('.well-known/dev.json');
+    expect(manifestUrlForChannel('dev')).toBe(
+      'https://raw.githubusercontent.com/automagik-si/genie/main/.well-known/v2/dev.json',
+    );
   });
 });
 
@@ -1063,7 +1071,7 @@ describe('fetchLatestManifest (G5)', () => {
     // manifest's, so if it ever won, manifestSha256 would describe the envelope.
     const envelope = JSON.stringify({
       name: 'latest.json',
-      path: '.well-known/latest.json',
+      path: '.well-known/v2/latest.json',
       sha: 'd015d2a4',
       size: 312,
       type: 'file',
@@ -1109,12 +1117,15 @@ describe('fetchLatestManifest (G5)', () => {
     expect(notes).toEqual([]);
   });
 
-  test('the API URL names the same file on main, and the fetcher asks for its raw bytes', () => {
+  test('the API URL names the same file on main by repository id, and the fetcher asks for its raw bytes', () => {
+    // The numeric-id form is what the API redirects a renamed repository to
+    // (observed 2026-11-11: /repos/<old name>/contents/... answers 301 to it),
+    // so this source keeps answering whatever the repository is called.
     expect(manifestApiUrlForChannel('stable')).toBe(
-      'https://api.github.com/repos/automagik-dev/genie/contents/.well-known/latest.json?ref=main',
+      'https://api.github.com/repositories/1030039430/contents/.well-known/v2/latest.json?ref=main',
     );
     expect(manifestApiUrlForChannel('dev')).toBe(
-      'https://api.github.com/repos/automagik-dev/genie/contents/.well-known/dev.json?ref=main',
+      'https://api.github.com/repositories/1030039430/contents/.well-known/v2/dev.json?ref=main',
     );
     // Without the raw Accept header the API answers with a JSON envelope whose
     // digest is not the manifest's, which would break the byte binding above.
@@ -1265,7 +1276,7 @@ const HOST_PLATFORM_ID =
 const FOREIGN_PLATFORM_ID = HOST_PLATFORM_ID === 'darwin-arm64' ? 'linux-x64-glibc' : 'darwin-arm64';
 
 /** Signature-math seam only — never a binding seam. */
-const EVIDENCE_SEAM = { verifyBundle: () => ({ integratedTime: '1758000000' }) };
+const EVIDENCE_SEAM = testDeliveryEvidenceSeam('1758000000');
 
 function sha256Hex(value: string): string {
   return createHash('sha256').update(value).digest('hex');
@@ -1279,8 +1290,16 @@ interface ReleaseFixture {
 }
 
 function buildReleaseFixture(
-  opts: { version?: string; channel?: 'stable' | 'dev'; platformId?: string; tarballBytes?: string } = {},
+  opts: {
+    version?: string;
+    channel?: 'stable' | 'dev';
+    platformId?: string;
+    tarballBytes?: string;
+    /** The name the release was published under; defaults to the current one. */
+    repository?: DeliveryEvidenceRepository;
+  } = {},
 ): ReleaseFixture {
+  const repository = opts.repository ?? DELIVERY_EVIDENCE_REPOSITORY;
   const version = opts.version ?? '5.260916.1';
   const channel = opts.channel ?? 'stable';
   const platformId = opts.platformId ?? HOST_PLATFORM_ID;
@@ -1292,7 +1311,7 @@ function buildReleaseFixture(
     channel,
     version,
     released_at: '2026-09-16T00:00:00Z',
-    tarball_base: `https://github.com/automagik-dev/genie/releases/download/${releaseTag}`,
+    tarball_base: `https://github.com/${repository}/releases/download/${releaseTag}`,
     platforms: [platformId],
   };
   const manifestBytes = `${JSON.stringify(manifestObject, null, 2)}\n`;
@@ -1307,7 +1326,7 @@ function buildReleaseFixture(
     tarballBytes,
     descriptor: {
       schemaVersion: 1,
-      repository: 'automagik-dev/genie',
+      repository,
       version,
       channel,
       platformId,
@@ -1349,7 +1368,8 @@ function writeReleaseAssets(
         digest: { sha256: overrides.subjectSha256 ?? sha256Hex(descriptorBytes) },
       },
     ],
-    predicateType: overrides.predicateType ?? 'https://github.com/automagik-dev/genie/delivery-evidence/v1',
+    predicateType:
+      overrides.predicateType ?? `https://github.com/${fixture.descriptor.repository}/delivery-evidence/v1`,
     predicate: { schemaVersion: 1 },
   };
   const descriptorPath = join(dir, `${fixture.tarballName}.${fixture.manifest.channel}.delivery.json`);
@@ -1508,14 +1528,14 @@ describe('downloadAndVerifyTarball (G5)', () => {
       'verify',
       tarballPath,
       '--repo',
-      'automagik-dev/genie',
+      'automagik-si/genie',
       // Must match the custom predicate type registered by sign-attest.yml,
       // else `gh attestation verify` defaults to slsa.dev/provenance/v1 and
       // 404s the by-digest lookup (the shipped-tarball regression).
       '--predicate-type',
-      'https://github.com/automagik-dev/genie/release-tarballs/v1',
+      'https://github.com/automagik-si/genie/release-tarballs/v1',
       '--cert-identity-regex',
-      '^https://github\\.com/automagik-dev/genie/\\.github/workflows/sign-attest\\.yml@refs/heads/main$',
+      '^https://github\\.com/automagik-si/genie/\\.github/workflows/sign-attest\\.yml@refs/heads/main$',
       '--cert-oidc-issuer',
       'https://token.actions.githubusercontent.com',
     ]);
@@ -1578,14 +1598,14 @@ describe('downloadAndVerifyTarball (G5)', () => {
       const urls = curlCalls.map((call) => call.args[call.args.length - 1]);
       for (const url of urls) {
         expect(
-          url.startsWith(`https://github.com/automagik-dev/genie/releases/download/v${fixture.manifest.version}/`),
+          url.startsWith(`https://github.com/automagik-si/genie/releases/download/v${fixture.manifest.version}/`),
         ).toBe(true);
       }
       expect(urls).toContain(
-        `https://github.com/automagik-dev/genie/releases/download/v${fixture.manifest.version}/${fixture.tarballName}.${fixture.manifest.channel}.delivery.json`,
+        `https://github.com/automagik-si/genie/releases/download/v${fixture.manifest.version}/${fixture.tarballName}.${fixture.manifest.channel}.delivery.json`,
       );
       expect(urls).toContain(
-        `https://github.com/automagik-dev/genie/releases/download/v${fixture.manifest.version}/${fixture.tarballName}.${fixture.manifest.channel}.delivery.json.sigstore.json`,
+        `https://github.com/automagik-si/genie/releases/download/v${fixture.manifest.version}/${fixture.tarballName}.${fixture.manifest.channel}.delivery.json.sigstore.json`,
       );
       expect(notices.some((line) => line.includes('gh release download unavailable'))).toBe(true);
       expect(notices.some((line) => line.includes('gh attestation cross-check unavailable'))).toBe(true);
@@ -1625,6 +1645,90 @@ describe('downloadAndVerifyTarball (G5)', () => {
       /gh attestation verify: no matching attestation/,
     );
     expect(notices).toEqual([]);
+  });
+
+  // --- 2026-11-11 rename: fetch by the current name, compare by the signed one ---
+
+  test('a release published before the rename verifies, and its cross-check uses the names it was signed under', async () => {
+    const repository: DeliveryEvidenceRepository = 'automagik-dev/genie';
+    const fixture = buildReleaseFixture({ repository });
+    const { runner, calls } = stubGh(tmp, fixture, { success: true, output: '' });
+
+    const tarballPath = await downloadAndVerifyTarball(fixture.manifest, HOST_PLATFORM_ID, tmp, {
+      ...opts(runner),
+      evidenceVerification: testDeliveryEvidenceSeam('1758000000', testDeliveryEvidenceSigner(repository)),
+    });
+
+    expect(tarballPath).toBe(join(tmp, fixture.tarballName));
+    // Assets are FETCHED from the repository's current name, whatever the release says.
+    expect(calls[0].args.slice(0, 5)).toEqual([
+      'release',
+      'download',
+      `v${fixture.manifest.version}`,
+      '--repo',
+      'automagik-si/genie',
+    ]);
+    // The advisory cross-check COMPARES against the names in that release's own certificate.
+    expect(calls[1].args).toEqual([
+      'attestation',
+      'verify',
+      tarballPath,
+      '--repo',
+      'automagik-dev/genie',
+      '--predicate-type',
+      'https://github.com/automagik-dev/genie/release-tarballs/v1',
+      '--cert-identity-regex',
+      '^https://github\\.com/automagik-dev/genie/\\.github/workflows/sign-attest\\.yml@refs/heads/main$',
+      '--cert-oidc-issuer',
+      'https://token.actions.githubusercontent.com',
+    ]);
+  });
+
+  test.each([
+    [
+      'another repository id',
+      { repositoryId: '1030039431', ownerId: '245047546' },
+      /1\.3\.6\.1\.4\.1\.57264\.1\.15\) is not the pinned id/,
+    ],
+    [
+      'another owner id',
+      { repositoryId: '1030039430', ownerId: '245047547' },
+      /1\.3\.6\.1\.4\.1\.57264\.1\.17\) is not the pinned id/,
+    ],
+    ['no id extension at all', null, /has no source repository identifier/],
+  ])('aborts before the cross-check when the certificate carries %s', async (_label, ids, expected) => {
+    for (const repository of ['automagik-si/genie', 'automagik-dev/genie'] as const) {
+      const fixture = buildReleaseFixture({ repository });
+      const { runner, calls } = stubGh(tmp, fixture, { success: true, output: '' });
+      const signer = testDeliveryEvidenceSigner(repository, {
+        extensions:
+          ids === null
+            ? []
+            : [
+                testCertificateExtension('1.3.6.1.4.1.57264.1.15', ids.repositoryId),
+                testCertificateExtension('1.3.6.1.4.1.57264.1.17', ids.ownerId),
+              ],
+      });
+
+      await expect(
+        downloadAndVerifyTarball(fixture.manifest, HOST_PLATFORM_ID, tmp, {
+          ...opts(runner),
+          evidenceVerification: testDeliveryEvidenceSeam('1758000000', signer),
+        }),
+      ).rejects.toThrow(expected);
+      // Every name matched; only the ids differ, and that alone stops the update.
+      expect(calls.map((call) => call.cmd)).toEqual(['gh']);
+    }
+  });
+
+  test('aborts when the release names a repository outside the two accepted names', async () => {
+    const fixture = buildReleaseFixture({ repository: 'automagik-evil/genie' as DeliveryEvidenceRepository });
+    const { runner, calls } = stubGh(tmp, fixture, { success: true, output: '' });
+
+    await expect(downloadAndVerifyTarball(fixture.manifest, HOST_PLATFORM_ID, tmp, opts(runner))).rejects.toThrow(
+      /delivery evidence repository is invalid/,
+    );
+    expect(calls.map((call) => call.cmd)).toEqual(['gh']);
   });
 
   test('aborts when the signed delivery evidence is absent', async () => {

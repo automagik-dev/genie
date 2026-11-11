@@ -10,22 +10,26 @@
 
 Contact: mailto:privacidade@namastex.ai
 Contact: mailto:dpo@namastex.ai
-Contact: https://github.com/automagik-dev/genie/security/advisories/new
+Contact: https://github.com/automagik-si/genie/security/advisories/new
 Expires: 2027-04-23T00:00:00.000Z
 Preferred-Languages: en, pt-BR
-Canonical: https://raw.githubusercontent.com/automagik-dev/genie/main/.well-known/security.txt
-Policy: https://github.com/automagik-dev/genie/blob/main/SECURITY.md
-Acknowledgments: https://github.com/automagik-dev/genie/blob/main/SECURITY.md#acknowledgments
+Canonical: https://raw.githubusercontent.com/automagik-si/genie/main/.well-known/security.txt
+Policy: https://github.com/automagik-si/genie/blob/main/SECURITY.md
+Acknowledgments: https://github.com/automagik-si/genie/blob/main/SECURITY.md#acknowledgments
 
 # Release signing is cosign KEYLESS ONLY. There is no public-key fingerprint
-# to pin — operators cross-check the three lines below against SECURITY.md and
+# to pin — operators cross-check the lines below against SECURITY.md and
 # run the pin gate. See:
-#   - https://github.com/automagik-dev/genie/blob/main/SECURITY.md#release-signing--pinned-identity-cosign-keyless
+#   - https://github.com/automagik-si/genie/blob/main/SECURITY.md#release-signing--pinned-identity-cosign-keyless
 
 # BEGIN SIGNING_IDENTITY_PIN
-# certificate-identity-regexp: ^https://github\.com/automagik-dev/genie/\.github/workflows/sign-attest\.yml@refs/heads/main$
+# certificate-identity-regexp: ^https://github\.com/automagik-si/genie/\.github/workflows/sign-attest\.yml@refs/heads/main$
+# certificate-identity-regexp (pre-rename releases): ^https://github\.com/automagik-dev/genie/\.github/workflows/sign-attest\.yml@refs/heads/main$
 # certificate-oidc-issuer:     https://token.actions.githubusercontent.com
-# provenance source-uri:       github.com/automagik-dev/genie
+# provenance source-uri:       github.com/automagik-si/genie
+# provenance source-uri (pre-rename releases): github.com/automagik-dev/genie
+# source-repository-id:        1030039430
+# source-repository-owner-id:  245047546
 # END SIGNING_IDENTITY_PIN
 
 # Incident response for the 2026-04 CanisterWorm compromise:
