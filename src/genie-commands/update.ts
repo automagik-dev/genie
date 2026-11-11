@@ -109,6 +109,15 @@ const FETCH_LATEST_TIMEOUT_MS = 5_000;
  * (`src/lib/delivery-evidence-verify.ts`).
  */
 const RELEASES_SLUG = DELIVERY_EVIDENCE_REPOSITORY;
+/**
+ * Where the channel manifests live on the repository's `main`.
+ *
+ * `.well-known/latest.json` and `.well-known/dev.json`, one level up, are what
+ * every genie released before the 2026-11 repository rename reads. They are
+ * frozen on the last releases such a genie can verify, so the release pipeline
+ * writes this directory instead and this binary reads nothing else.
+ */
+const MANIFEST_DIRECTORY = '.well-known/v2';
 const RAW_BASE_URL = 'https://raw.githubusercontent.com';
 // The same published bytes, read through the public API. raw.githubusercontent.com
 // caches independently of the repository, so for minutes after a release publishes it
@@ -335,7 +344,7 @@ export function decideDowngrade(args: {
 // GitHub Releases distribution layer (genie-distribution-cutover G5).
 //
 // Replaces the npm/bun-add code path entirely. Single canonical primitives:
-//   1. fetch .well-known/<channel>.json from raw.githubusercontent.com
+//   1. fetch .well-known/v2/<channel>.json from raw.githubusercontent.com
 //   2. resolve target version + tarball base URL
 //   3. gh release download to a staging directory
 //   4. verify the release's signed delivery evidence offline (credential-free),
@@ -381,10 +390,10 @@ export interface LatestManifest {
 /**
  * Build the URL for a channel's manifest file.
  * `stable` → `latest.json`, others → `<channel>.json`.
- * Lives at `.well-known/` on the repo's `main` branch — see release-publish.yml.
+ * Lives at `.well-known/v2/` on the repo's `main` branch — see release-publish.yml.
  */
 export function manifestUrlForChannel(channel: ReleaseChannel): string {
-  return `${RAW_BASE_URL}/${RELEASES_SLUG}/main/.well-known/${manifestFileName(channel)}`;
+  return `${RAW_BASE_URL}/${RELEASES_SLUG}/main/${MANIFEST_DIRECTORY}/${manifestFileName(channel)}`;
 }
 
 /**
@@ -398,7 +407,7 @@ export function manifestUrlForChannel(channel: ReleaseChannel): string {
  * rename. The CDN copy above has no id form and stays addressed by name.
  */
 export function manifestApiUrlForChannel(channel: ReleaseChannel): string {
-  return `${API_BASE_URL}/repositories/${DELIVERY_EVIDENCE_REPOSITORY_ID}/contents/.well-known/${manifestFileName(channel)}?ref=main`;
+  return `${API_BASE_URL}/repositories/${DELIVERY_EVIDENCE_REPOSITORY_ID}/contents/${MANIFEST_DIRECTORY}/${manifestFileName(channel)}?ref=main`;
 }
 
 function manifestFileName(channel: ReleaseChannel): string {
@@ -543,7 +552,7 @@ interface FetchManifestOptions {
 }
 
 /**
- * Fetch + parse `.well-known/<channel>.json`. Returns `null` on any failure
+ * Fetch + parse `.well-known/v2/<channel>.json`. Returns `null` on any failure
  * (network, parse error, schema mismatch). Caller decides whether to proceed
  * defensively or surface the error.
  */
@@ -1789,12 +1798,12 @@ export async function persistChannel(channel: ReleaseChannel): Promise<void> {
 // ============================================================================
 
 export interface UpdateCommandOptions {
-  /** `--dev`. Switch to the dev/pre-release channel (.well-known/dev.json). */
+  /** `--dev`. Switch to the dev/pre-release channel (.well-known/v2/dev.json). */
   dev?: boolean;
   /** `--next`. Deprecated alias for `--dev`. Resolves to channel 'dev' and
    *  emits a single-line stderr deprecation notice. */
   next?: boolean;
-  /** `--stable`. Switch back to the stable channel (.well-known/latest.json). */
+  /** `--stable`. Switch back to the stable channel (.well-known/v2/latest.json). */
   stable?: boolean;
   /** `--skip-maintenance`. Retained for compatibility; v5 has no maintenance
    *  pass, so it now just skips the post-update binary verify probe. */
@@ -2061,7 +2070,9 @@ function announceUpdatePlanOrExit(
   log(`Channel: ${channel}${channel === 'stable' ? ' (stable)' : ` (${channel})`}`);
   log(`Platform: ${platform}`);
   if (!latestVersion) {
-    log(`Channel manifest unavailable (.well-known/${channel === 'stable' ? 'latest' : channel}.json missing)`);
+    log(
+      `Channel manifest unavailable (${MANIFEST_DIRECTORY}/${channel === 'stable' ? 'latest' : channel}.json missing)`,
+    );
     error(`Cannot resolve target version for channel "${channel}". Aborting.`);
     process.exit(1);
   }

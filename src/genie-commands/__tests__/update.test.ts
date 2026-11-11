@@ -709,16 +709,18 @@ describe('formatVerifyBanner', () => {
 // ============================================================================
 
 describe('manifestUrlForChannel (G5)', () => {
-  test('stable maps to .well-known/latest.json', () => {
+  test('stable maps to .well-known/v2/latest.json', () => {
     expect(manifestUrlForChannel('stable')).toBe(
-      'https://raw.githubusercontent.com/automagik-si/genie/main/.well-known/latest.json',
+      'https://raw.githubusercontent.com/automagik-si/genie/main/.well-known/v2/latest.json',
     );
   });
 
   test('dev gets its own per-channel file', () => {
     // Canonical taxonomy: stable / dev. beta + canary + homolog retired —
     // no longer accepted by the ReleaseChannel type.
-    expect(manifestUrlForChannel('dev')).toContain('.well-known/dev.json');
+    expect(manifestUrlForChannel('dev')).toBe(
+      'https://raw.githubusercontent.com/automagik-si/genie/main/.well-known/v2/dev.json',
+    );
   });
 });
 
@@ -1069,7 +1071,7 @@ describe('fetchLatestManifest (G5)', () => {
     // manifest's, so if it ever won, manifestSha256 would describe the envelope.
     const envelope = JSON.stringify({
       name: 'latest.json',
-      path: '.well-known/latest.json',
+      path: '.well-known/v2/latest.json',
       sha: 'd015d2a4',
       size: 312,
       type: 'file',
@@ -1120,10 +1122,10 @@ describe('fetchLatestManifest (G5)', () => {
     // (observed 2026-11-11: /repos/<old name>/contents/... answers 301 to it),
     // so this source keeps answering whatever the repository is called.
     expect(manifestApiUrlForChannel('stable')).toBe(
-      'https://api.github.com/repositories/1030039430/contents/.well-known/latest.json?ref=main',
+      'https://api.github.com/repositories/1030039430/contents/.well-known/v2/latest.json?ref=main',
     );
     expect(manifestApiUrlForChannel('dev')).toBe(
-      'https://api.github.com/repositories/1030039430/contents/.well-known/dev.json?ref=main',
+      'https://api.github.com/repositories/1030039430/contents/.well-known/v2/dev.json?ref=main',
     );
     // Without the raw Accept header the API answers with a JSON envelope whose
     // digest is not the manifest's, which would break the byte binding above.

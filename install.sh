@@ -175,17 +175,20 @@ release_certificate_carries_pinned_ids() {
 }
 # <<< release-certificate-ids
 
-# Per-channel manifest URL: stable → latest.json, others → <channel>.json.
+# Per-channel manifest URL: stable → latest.json, others → <channel>.json, in
+# .well-known/v2/. The pair one level up (.well-known/latest.json, dev.json) is
+# what a genie released before the 2026-11 repository rename reads; it is frozen
+# on the last releases such a genie can verify and is not read here.
 # Resolved at runtime in resolve_manifest_url after the channel is known so
-# `GENIE_CHANNEL=dev curl ... | bash` reads .well-known/dev.json. See wish
+# `GENIE_CHANNEL=dev curl ... | bash` reads .well-known/v2/dev.json. See wish
 # release-channel-dev (2026-05-11) for the producer-side wiring.
-MANIFEST_BASE="https://raw.githubusercontent.com/${REPO}/main/.well-known"
+MANIFEST_BASE="https://raw.githubusercontent.com/${REPO}/main/.well-known/v2"
 # The same manifest through the public, credential-free contents API. The CDN
 # copy above caches for ~5 minutes, so a fresh install inside that window used to
 # land the PREVIOUS release (issue #2950); the API copy is roughly a minute deep.
 # The host is a pinned literal and the repository is addressed by its numeric id
 # — never derived from manifest content.
-MANIFEST_API_BASE="https://api.github.com/repositories/${EXPECTED_REPOSITORY_ID}/contents/.well-known"
+MANIFEST_API_BASE="https://api.github.com/repositories/${EXPECTED_REPOSITORY_ID}/contents/.well-known/v2"
 EXPECTED_COSIGN_ISSUER="https://token.actions.githubusercontent.com"
 
 # The signing workflow's certificate identity under one spelling of the
@@ -587,7 +590,7 @@ resolve_channel() {
   esac
 }
 
-# Resolve the .well-known manifest URL for the given channel.
+# Resolve the .well-known/v2 manifest URL for the given channel.
 # stable → latest.json (kept for back-compat with the v1 manifest layout).
 # Everything else → <channel>.json. The producer side
 # (release-publish.yml) writes whichever filename matches the channel passed

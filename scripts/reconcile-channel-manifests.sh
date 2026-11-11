@@ -8,6 +8,17 @@ RELEASE_REPOSITORY="${RELEASE_REPOSITORY:-${GITHUB_REPOSITORY:-}}"
 : "${RELEASE_REPOSITORY:?RELEASE_REPOSITORY or GITHUB_REPOSITORY is required}"
 CANDIDATE_MANIFEST_DIR="${CANDIDATE_MANIFEST_DIR:-}"
 
+# Where the channel manifests live, relative to the working directory. It is a
+# constant, not an input.
+#
+# .well-known/latest.json and .well-known/dev.json, one level up, are the
+# location every genie released before the 2026-11 repository rename reads.
+# Those two files are frozen on the last releases signed under the previous
+# name (v6.261108.1 and v6.261109.9), because such a genie accepts no later
+# one. This script never reads, writes, moves or deletes them, whatever the
+# repository, channel or version.
+MANIFEST_DIR=".well-known/v2"
+
 VERSION_RE='^[0-9]+\.[0-9]+\.[0-9]+$'
 [[ "$VERSION" =~ $VERSION_RE ]] || {
   echo "invalid release manifest version: ${VERSION}" >&2
@@ -88,19 +99,21 @@ validate_candidate() {
     ' "$path" >/dev/null
 }
 
-if [[ -e .well-known || -L .well-known ]]; then
-  [[ -d .well-known && ! -L .well-known ]] || {
-    echo '.well-known must be a physical directory' >&2
-    exit 3
-  }
-else
-  mkdir .well-known
-fi
+for directory in .well-known "$MANIFEST_DIR"; do
+  if [[ -e "$directory" || -L "$directory" ]]; then
+    [[ -d "$directory" && ! -L "$directory" ]] || {
+      echo "${directory} must be a physical directory" >&2
+      exit 3
+    }
+  else
+    mkdir "$directory"
+  fi
+done
 
 for target in "${TARGETS[@]}"; do
   manifest_channel="${target%%:*}"
   file="${target#*:}"
-  path=".well-known/${file}"
+  path="${MANIFEST_DIR}/${file}"
   advance=true
 
   if [[ -e "$path" || -L "$path" ]]; then
@@ -117,10 +130,10 @@ for target in "${TARGETS[@]}"; do
       exit 3
     }
     expected_tarball_base="https://github.com/${RELEASE_REPOSITORY}/releases/download/v${current_version}"
-    # A manifest committed before the 2026-11 rename names its release under
-    # the repository's previous spelling. Its bytes are bound by that release's
-    # signed delivery descriptors, so it is validated as written and never
-    # rewritten; the candidate that replaces it always carries the current name.
+    # A manifest for a release published before the 2026-11 rename names it
+    # under the repository's previous spelling. Its bytes are bound by that
+    # release's signed delivery descriptors, so it is validated as written; the
+    # candidate that replaces it always carries the current name.
     pre_rename_tarball_base=""
     if [[ "$RELEASE_REPOSITORY" == "$RENAMED_REPOSITORY" ]]; then
       pre_rename_tarball_base="https://github.com/${PRE_RENAME_REPOSITORY}/releases/download/v${current_version}"
@@ -172,7 +185,7 @@ for target in "${TARGETS[@]}"; do
   fi
 
   if [[ "$advance" == true ]]; then
-    temporary="$(mktemp ".well-known/.${file}.XXXXXX")"
+    temporary="$(mktemp "${MANIFEST_DIR}/.${file}.XXXXXX")"
     if [[ -n "$CANDIDATE_MANIFEST_DIR" ]]; then
       candidate="${CANDIDATE_MANIFEST_DIR}/${file}"
       if ! validate_candidate "$candidate" "$manifest_channel"; then

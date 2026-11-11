@@ -3,7 +3,7 @@ name: Release Publish
 # Group 3 of genie-distribution-cutover — attaches the signed tarballs +
 # cosign bundles + SLSA attestations produced by sign-attest.yml to the
 # v<version> GitHub Release, and (for non-draft trusted releases) writes
-# .well-known/latest.json into the repo so install.sh + `genie update` can
+# .well-known/v2/latest.json into the repo so install.sh + `genie update` can
 # resolve the latest version per channel without a CDN.
 #
 # This replaces the cutover G9 cdn.automagik.dev pipeline. GitHub Releases
@@ -199,11 +199,11 @@ jobs:
           )
           case "$CHANNEL" in
             stable)
-              SELECTED_MANIFEST=candidate-manifests/.well-known/latest.json
+              SELECTED_MANIFEST=candidate-manifests/.well-known/v2/latest.json
               EVIDENCE_CHANNELS=(stable dev)
               ;;
             dev)
-              SELECTED_MANIFEST=candidate-manifests/.well-known/dev.json
+              SELECTED_MANIFEST=candidate-manifests/.well-known/v2/dev.json
               EVIDENCE_CHANNELS=(dev)
               ;;
             *) exit 1 ;;
@@ -222,12 +222,12 @@ jobs:
           # it is the only check that stops publish from creating a non-draft
           # release below the current stable: reconcile-channel-manifests.sh
           # refuses a downgrade of the manifests, not of the GitHub release.
-          [[ -f .well-known/latest.json && ! -L .well-known/latest.json && -s .well-known/latest.json ]] || {
+          [[ -f .well-known/v2/latest.json && ! -L .well-known/v2/latest.json && -s .well-known/v2/latest.json ]] || {
             echo "::error::release.previous_stable_missing committed stable manifest must be a non-empty regular file, not a symlink"
             exit 1
           }
           PREVIOUS_VERSION="$(jq -er '.version | strings | select(test("^[0-9]+\\.[0-9]+\\.[0-9]+$"))' \
-            .well-known/latest.json)" || {
+            .well-known/v2/latest.json)" || {
             echo "::error::release.previous_stable_unreadable committed stable manifest must contain a readable semver version"
             exit 1
           }
@@ -249,8 +249,8 @@ jobs:
             }
             for evidence_channel in "${EVIDENCE_CHANNELS[@]}"; do
               case "$evidence_channel" in
-                stable) manifest=candidate-manifests/.well-known/latest.json ;;
-                dev) manifest=candidate-manifests/.well-known/dev.json ;;
+                stable) manifest=candidate-manifests/.well-known/v2/latest.json ;;
+                dev) manifest=candidate-manifests/.well-known/v2/dev.json ;;
               esac
               descriptor="descriptors/genie-${VERSION}-${platform}.tar.gz.${evidence_channel}.delivery.json"
               bun scripts/build-delivery-evidence.ts \
@@ -286,7 +286,7 @@ jobs:
           # basename matches /^\./), so the manifests the previous step just
           # wrote resolve to zero matches and `if-no-files-found: error` fires.
           include-hidden-files: true
-          path: candidate-manifests/.well-known/*.json
+          path: candidate-manifests/.well-known/v2/*.json
           if-no-files-found: error
           retention-days: 1
 
@@ -629,7 +629,7 @@ jobs:
       # ---------------------------------------------------------------------
       # Per-channel manifest pointers — committed to main so install.sh +
       # `genie update` can resolve the current version for each channel via:
-      #   curl -fsSL https://raw.githubusercontent.com/automagik-si/genie/main/.well-known/<channel>.json
+      #   curl -fsSL https://raw.githubusercontent.com/automagik-si/genie/main/.well-known/v2/<channel>.json
       #
       # Filename map (per wish release-channel-dev, 2026-05-11):
       #   stable → latest.json     (kept for back-compat with v1 manifest layout)
@@ -642,7 +642,7 @@ jobs:
       # of both channels). When a dev-only pipeline lands later, channel=dev
       # writes ONLY dev.json and latest.json stays at the prior stable.
       # ---------------------------------------------------------------------
-      - name: Update channel manifests (.well-known/*.json — non-draft only)
+      - name: Update channel manifests (.well-known/v2/*.json — non-draft only)
         env:
           VERSION: ${{ inputs.version }}
           CHANNEL: ${{ inputs.channel }}
@@ -669,11 +669,22 @@ jobs:
             RELEASE_REPOSITORY="${{ github.repository }}" CANDIDATE_MANIFEST_DIR="$CANDIDATE_MANIFEST_DIR" \
               bash "$MANIFEST_RECONCILER"
 
+            # .well-known/latest.json and .well-known/dev.json are frozen: they
+            # are what a genie released before the repository rename reads, and
+            # they stay on the last releases it can verify. This job writes
+            # .well-known/v2/ only, and stops if the frozen pair differs from
+            # the main it just fetched.
+            if ! git diff --quiet HEAD -- .well-known/latest.json .well-known/dev.json ||
+              [[ -n "$(git status --porcelain -- .well-known/latest.json .well-known/dev.json)" ]]; then
+              echo "::error::release-manifest.frozen .well-known/latest.json and .well-known/dev.json must not change"
+              exit 1
+            fi
+
             # Stage the complete fixed allowlist. Staging before diff handles
             # both modified and bootstrap/untracked manifests.
             MANIFEST_PATHS=()
             for f in latest.json dev.json; do
-              [[ -f ".well-known/${f}" && ! -L ".well-known/${f}" ]] && MANIFEST_PATHS+=(".well-known/${f}")
+              [[ -f ".well-known/v2/${f}" && ! -L ".well-known/v2/${f}" ]] && MANIFEST_PATHS+=(".well-known/v2/${f}")
             done
             git add -- "${MANIFEST_PATHS[@]}"
             if git diff --cached --quiet HEAD -- "${MANIFEST_PATHS[@]}"; then

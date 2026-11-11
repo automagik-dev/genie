@@ -139,7 +139,7 @@ curl -fsSL https://raw.githubusercontent.com/automagik-si/genie/main/install.sh 
 
 Each detected agent gets the skills in its own skills home: `~/.claude/skills` for Claude Code, and the shared `~/.agents/skills` for Codex and the other agents that read it. `genie install` and `genie update` install the skills from the tree the signed release delivered, never from a GitHub ref. The public `npx skills add automagik-dev/genie` command serves the repository's default branch instead, so it can be ahead of or behind any release.
 
-Every release is cosign-signed with SLSA provenance, and `genie update` verifies it offline, with no GitHub credential. The repository-hosted `.well-known/latest.json` and `dev.json` manifests are the authoritative channel pointers. GitHub's `/releases/latest` route and prerelease badge are deliberately not channel authority: a promotion advances only a monotonic manifest and never rewrites already-published assets or channel-significant draft/prerelease/latest metadata. [Security and releases](https://docs.automagik.dev/genie/security) has the details.
+Every release is cosign-signed with SLSA provenance, and `genie update` verifies it offline, with no GitHub credential. The repository-hosted `.well-known/v2/latest.json` and `dev.json` manifests are the authoritative channel pointers. GitHub's `/releases/latest` route and prerelease badge are deliberately not channel authority: a promotion advances only a monotonic manifest and never rewrites already-published assets or channel-significant draft/prerelease/latest metadata. [Security and releases](https://docs.automagik.dev/genie/security) has the details.
 </details>
 
 ## Commands

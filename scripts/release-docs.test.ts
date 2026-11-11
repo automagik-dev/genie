@@ -458,7 +458,7 @@ describe('Group E release and documentation contracts', () => {
     // was deleted with the trusted-release guard (2026-11-05).
     const source = read('.github/workflows/version.yml');
     expect(source).not.toContain("':(exclude).well-known'");
-    for (const manifest of ['latest.json', 'dev.json']) {
+    for (const manifest of ['latest.json', 'dev.json', 'v2/latest.json', 'v2/dev.json']) {
       expect(source).toContain(`':(exclude).well-known/${manifest}'`);
     }
   });
