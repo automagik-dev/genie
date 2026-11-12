@@ -16,10 +16,10 @@ bun test src/lib/v5/task-state.test.ts  # Single file
 
 ## Docs
 
-`docs/` is a symlink to `.docs-vendor/genie/` where `.docs-vendor` is a git submodule of `automagik-dev/docs` (Mintlify, public site at automagik.dev). Engineers see and edit `docs/` as if it were a regular subfolder of the genie repo — the submodule machinery is mostly invisible.
+`docs/` is a symlink to `.docs-vendor/genie/` where `.docs-vendor` is a git submodule of `automagik-si/docs` (Mintlify, public site at automagik.dev). Engineers see and edit `docs/` as if it were a regular subfolder of the genie repo — the submodule machinery is mostly invisible.
 
 - **Operator-facing pages** (e.g., `docs/installation.mdx`, `docs/security/key-rotation.mdx`, `docs/incident-response/canisterworm.mdx`) appear on the public Mintlify site at `automagik.dev/genie/...`.
-- **Engineering-internal pages** live under `docs/_internal/` (architecture deep-dives, observability internals, agent-frontmatter contracts, CLI reference dumps, spawn-flow runbooks, detector specs). These are excluded from the public Mintlify build via `**/_internal/` in `automagik-dev/docs/.mintignore` — visible inside the genie repo, hidden from public docs.
+- **Engineering-internal pages** live under `docs/_internal/` (architecture deep-dives, observability internals, agent-frontmatter contracts, CLI reference dumps, spawn-flow runbooks, detector specs). These are excluded from the public Mintlify build via `**/_internal/` in `automagik-si/docs/.mintignore` — visible inside the genie repo, hidden from public docs.
 
 **Workflow when editing docs:**
 
@@ -27,7 +27,7 @@ bun test src/lib/v5/task-state.test.ts  # Single file
 # Make changes (the symlink follows into .docs-vendor/genie/)
 $EDITOR docs/installation.mdx
 
-# Commit + push the docs change to automagik-dev/docs
+# Commit + push the docs change to automagik-si/docs
 cd .docs-vendor
 git checkout -b feat/<topic>
 git add genie/installation.mdx

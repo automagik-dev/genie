@@ -1,6 +1,6 @@
 # Genie Hacks Catalog
 
-The local registry powering `genie-hacks list|search|show|help`. Canonical published page: https://docs.automagik.dev/genie/hacks (source `genie/hacks.mdx` in automagik-dev/docs). Every entry is grounded on the live CLI (`genie --help` is the source of truth).
+The local registry powering `genie-hacks list|search|show|help`. Canonical published page: https://docs.automagik.dev/genie/hacks (source `genie/hacks.mdx` in automagik-si/docs). Every entry is grounded on the live CLI (`genie --help` is the source of truth).
 
 ## Categories
 

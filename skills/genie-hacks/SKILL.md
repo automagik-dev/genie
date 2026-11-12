@@ -13,7 +13,7 @@ Browse real-world Genie patterns contributed by the community: search by problem
 
 - **Registry:** read `references/catalog.md` (relative to this skill directory) before answering any list, search, show or help request. It holds every hack (problem, solution, code, benefit, when to use) and the category table. Never invent a hack that is not in it.
 - **Contribute mechanics:** read `references/contributing.md` when running `contribute`; it has the exact fork, branch and PR commands and the offline fallback.
-- Published page: https://docs.automagik.dev/genie/hacks (source `genie/hacks.mdx` in automagik-dev/docs).
+- Published page: https://docs.automagik.dev/genie/hacks (source `genie/hacks.mdx` in automagik-si/docs).
 
 ## Commands
 
@@ -23,7 +23,7 @@ Browse real-world Genie patterns contributed by the community: search by problem
 | `search <keyword>` | Case-insensitive match over title, problem, solution and code; per match show ID, title, category and a problem snippet. No matches: suggest broader terms or `list`. |
 | `show <hack-id>` | Full entry. Unknown ID: suggest the closest IDs. |
 | `help <problem>` | The top three relevant hacks with a one-line why and a quick tip each; prefer a loose match to "no matches". |
-| `contribute` | Guided submission that opens a PR to automagik-dev/docs. |
+| `contribute` | Guided submission that opens a PR to automagik-si/docs. |
 
 Keep output concise: tables for `list`, the full format only for `show`.
 
