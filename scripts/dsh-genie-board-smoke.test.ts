@@ -248,8 +248,11 @@ describe('the Host the smoke boots', () => {
  * The range both DSH plugins declare, where DSH's manifest contract puts it —
  * top-level `engines.dsh` (`@deepseek-ai/dsh-package-manifest`
  * `DshEnginesManifest`; `package.json.dsh` has no `engines`) — and the READMEs
- * that say what proved it. No DSH installer or loader enforces the range yet,
- * so these files are the only place the claim lives.
+ * that say what proved it and what DSH does with it. DSH enforces the range from
+ * dsh-app-boot 0.2.1-alpha.4 although its own package-manifest README still
+ * says it does not, so each README states the enforcement and quotes that line
+ * as DSH's, not as fact. The shared ceiling and the verified Host of all three
+ * Genie DSH plugins are pinned in `plugins/dsh-engines.test.ts`.
  */
 test('both DSH plugins declare the proven range as engines.dsh, and their READMEs say so', () => {
   const range = '>=0.1.2-rc.1 <0.3.0-0';
@@ -267,11 +270,13 @@ test('both DSH plugins declare the proven range as engines.dsh, and their README
     const readme = readFileSync(join(dir, 'README.md'), 'utf8');
     expect(readme).toContain(`\`${range}\``);
     expect(readme).toContain('top-level `engines.dsh`');
-    expect(readme).toContain('`includePrerelease`');
-    expect(readme).toContain('`0.1.7-rc.2` and\n`0.2.0-rc.1`');
-    expect(readme).toContain('README.md:93');
+    expect(readme).toContain('{ includePrerelease: true }');
+    expect(readme).toContain('Verified Host: `@deepseek-ai/dsh@0.2.2-rc.2`');
+    expect(readme).toContain('DSH enforces this range. From dsh-app-boot 0.2.1-alpha.4');
+    expect(readme).toContain('`dsh plugin allow-version`');
+    expect(readme).toContain('README.md:96');
     expect(readme).not.toContain('No DSH version reads');
-    expect(readme).toContain('@deepseek-ai/dsh@0.2.0-rc.1');
+    expect(readme).toContain('npm install --prefix /tmp/dsh-0.2.2-rc.2 --ignore-scripts @deepseek-ai/dsh@0.2.2-rc.2');
     expect(readme).toContain('DSH_BIN=');
     expect(readme).toContain('npm install --prefix');
   }
