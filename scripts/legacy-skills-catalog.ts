@@ -65,6 +65,12 @@ import { catalogGenieCommits } from './git-history-ownership.js';
 const ROOT = join(import.meta.dir, '..');
 const OUTPUT = join(ROOT, 'src', 'lib', 'legacy-skills-catalog.ts');
 const MARKER_DIRS = ['.genie-codex-fallback-retirement'];
+/**
+ * Automagik's brand skill, carried as a byte copy (scripts/brand-sync.mjs): it has the
+ * `.claude/skills/<name>/` shape genie's early skills shipped under, but it was never a Genie
+ * skill, so it is never a retired one, and genie must never archive a host's copy of it.
+ */
+const BRAND_COPY_SKILL_DIR = '.claude/skills/automagik-brand/';
 
 function gitIn(cwd: string, ...args: string[]): string {
   return execFileSync('git', args, { cwd, encoding: 'utf8', maxBuffer: 1 << 28 });
@@ -143,6 +149,7 @@ export function collectCatalog(
       if (!entry) continue;
       const [, blob, path] = entry as unknown as [string, string, string];
       if (path.startsWith('mikro/')) continue;
+      if (path.startsWith(BRAND_COPY_SKILL_DIR)) continue;
       // Root and nested Genie skill directories have both historically shipped.
       const match = /^(?:.*\/)?skills\/([^/]+)\/SKILL\.md$/.exec(path);
       if (!match) continue;
