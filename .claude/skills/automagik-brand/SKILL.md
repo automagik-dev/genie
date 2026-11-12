@@ -47,6 +47,9 @@ Each line names where the README says it. When this file and the README differ, 
   outlining. Use the files (rule 8).
 - Never invent a colour. Every colour comes from a token, and `triskle-cyan`, `triskle-pink` and
   `triskle-violet` are never text and never a UI colour ("Colour").
+- A status dot never stands alone: every one has a word or a mark beside it. The status colours
+  are `st-ok`, `st-bad`, `st-warn` and `st-work`, with `st-okdot` and `st-warndot` for dots
+  ("Colour").
 - Type is two families: Fredoka for titles, labels and buttons, and DM Sans for running text, used
   as "Type" says. The logo's letters are a drawing, never set in a font.
 

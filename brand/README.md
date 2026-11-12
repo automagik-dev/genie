@@ -82,6 +82,7 @@ node docs/brand/export-png.mjs docs/brand/logo/lockups/automagik-lockup-three-co
 - One accent, `bt-accent`, for links and small details. Focus is always the `st-ring` outline: 3px, 3px off the edge.
 - Three tints carry the mood: `st-cyan`, `st-lilac` and `bt-user` (pink). Each has its own text colour. Together they make the stage, the soft cyan to lilac to pink gradient behind art.
 - `triskle-cyan`, `triskle-pink` and `triskle-violet` are the mark's own colours. They live in the mark and in brand art. They are never text and never a UI colour.
+- Status has four colours: `st-ok`, `st-bad`, `st-warn` and `st-work`, with `st-okdot` and `st-warndot` for dots. Colour never carries a status alone: every status dot has a word or a mark beside it. The four are set apart in lightness, so red-blind, green-blind and blue-blind sight can tell them apart, but some pairs stay close without the word.
 - Each colour's note names the grounds it is legible on. Every text and ground pair named there passes 4.5:1 in both themes.
 - The site's stylesheet also uses short names (`bg`, `paper`, `text`, `line`, `accent`, `ring`); they point at the tokens above.
 

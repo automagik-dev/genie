@@ -1,11 +1,11 @@
 {
   "note": "A copy of the Automagik brand. Do not edit these files here: change them in the source and run scripts/brand-sync.mjs --write.",
   "source": "https://github.com/automagik-si/automagik",
-  "commit": "568a6049c4b05726b214b53edfff17d7c3869c43",
+  "commit": "482d7476a48f178c08e18f23f5863f7a5be25be4",
   "into": "brand",
   "files": {
-    ".claude/skills/automagik-brand/SKILL.md": "487ff94e30f017c5dbf9cc74d21853cb3b31aa03965d20c9401faff4cf5b86c7",
-    "brand/README.md": "56fd0fd807581f68f4e441d91199750cd876ba7df5fdef191a958cd91d93920c",
+    ".claude/skills/automagik-brand/SKILL.md": "df4700cdbb9cb3521da1bb8f6cd587f39b7601cf9aa4ad7f92363d6e593766f4",
+    "brand/README.md": "4ba82b1e45fd124f15c1b64398d9a6523d292a0563dd6035b2bf1c1bf9515288",
     "brand/components/Button/README.md": "2038c6431992a41762a982a8a0e13786f74891593478b0c250779c554f64e5e4",
     "brand/components/Button/preview.html": "d288ec3060381631fc9914230931f8409ccaa52e4c9620724e830c590d3bd5e5",
     "brand/components/Crumbs/README.md": "d6228f15603eafdbe32f3e43a2cfbba6bde83525646827afbcbde5c90201c547",
@@ -114,8 +114,8 @@
     "brand/logo/wordmark/genie-wordmark-ink.svg": "481008dcd0b1281308e22474cebef71a20f78b247e51095896bebec9561d647d",
     "brand/logo/wordmark/omni-wordmark-cream.svg": "e930250e3797750d6ad118b8a5f7639e2604db3a78d68645666177f69191b5d2",
     "brand/logo/wordmark/omni-wordmark-ink.svg": "e8c21842b9c280fddacfbf20e8ce998a1ea4be5069b47a43002ebf7db40e8e37",
-    "brand/tokens/tokens.css": "404e9372bb0278bc3b68cf501a41b21dfeeb2add94e319d7f6c6038a45ec4b92",
-    "brand/tokens/tokens.json": "89f9b9349d48c289212e116b367010e787ffee5bd4062015b9d5b414d2329b2a",
+    "brand/tokens/tokens.css": "18d027db6b5bbf55d48def1a144050a1be1f8378666c97581e5fed1313f32937",
+    "brand/tokens/tokens.json": "42f51a4db6d0c08ddc877ffa4cec5a1b5d9d925ccf811bc8062dcabfa71c5407",
     "scripts/brand-sync.mjs": "c25456917675556d364699d2f0ab2e95f4e88bb2fcd56a71fd3399952ae4e6cf"
   }
 }
