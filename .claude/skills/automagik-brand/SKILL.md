@@ -1,6 +1,8 @@
 ---
 name: automagik-brand
 description: The Automagik brand (Automagik, Genie, Omni) as files in this repository's brand folder (docs/brand, unless SOURCE.json beside this skill names another). Use before any work on a logo or mark, a colour, type or fonts, a UI surface (a page, a screen, a form, a component, a sidebar, any HTML or CSS a person will see), a web or landing page, a slide deck, or brand art. Use it even when the request does not name the brand.
+metadata:
+  internal: true
 ---
 
 # Automagik brand

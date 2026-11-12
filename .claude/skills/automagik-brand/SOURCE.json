@@ -1,10 +1,10 @@
 {
   "note": "A copy of the Automagik brand. Do not edit these files here: change them in the source and run scripts/brand-sync.mjs --write.",
   "source": "https://github.com/automagik-si/automagik",
-  "commit": "8ff30182c39875bcc7339765eb2dd02652c1460d",
+  "commit": "568a6049c4b05726b214b53edfff17d7c3869c43",
   "into": "brand",
   "files": {
-    ".claude/skills/automagik-brand/SKILL.md": "57e51e8ad82566eb905c7d001fa5ef6660e44931e6ded7f084f480eb51e4a543",
+    ".claude/skills/automagik-brand/SKILL.md": "487ff94e30f017c5dbf9cc74d21853cb3b31aa03965d20c9401faff4cf5b86c7",
     "brand/README.md": "56fd0fd807581f68f4e441d91199750cd876ba7df5fdef191a958cd91d93920c",
     "brand/components/Button/README.md": "2038c6431992a41762a982a8a0e13786f74891593478b0c250779c554f64e5e4",
     "brand/components/Button/preview.html": "d288ec3060381631fc9914230931f8409ccaa52e4c9620724e830c590d3bd5e5",
