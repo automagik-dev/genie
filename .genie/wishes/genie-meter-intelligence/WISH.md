@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | DRAFT |
+| **Status** | APPROVED |
 | **Slug** | `genie-meter-intelligence` |
 | **Date** | 2026-11-11 |
 | **Author** | Genie Dev (`gn-2`) |
@@ -394,7 +394,13 @@ _What must be verified on dev after merge. The QA agent tests each criterion._
 
 _The read-only reviewer returns evidence; the invoking orchestrator appends a timestamped block here after plan, execution, and PR reviews._
 
-PENDING — plan-only DRAFT wish; owner decisions D1–D6 APPROVED by the owner, 2026-11-12, and meter/Herdr owner answers for REQUEST-1..REQUEST-7 (2026-11-12) folded in (updated for D6 = yes across all meter-querying groups; awaiting delta review before execution).
+### Plan review — 2026-11-12 — APPROVED
+
+- **Plan as merged (PR #3282, head `1edc0458947f08b2bac5fbad71f0142b4eaabdf6`):** three independent read-only verdicts on that exact head: Reviewer SHIP (0 findings), Tester SHIP (0 findings), Fixer SHIP (1 Low: the Decisions lines of Groups 1 and 4 did not name D6; closed in the owner-rulings update below). Three fix rounds came before it (28 findings, then 10, then touch-ups), all closed.
+- **Owner rulings (2026-11-12):** D1–D6 approved by the owner; D6 approved as yes (query the repository's previous name and merge until `--repo-alias` ships).
+- **Owner-rulings update (PR #3284):** on head `070729dba7a0daa5e3ce19f53689b4509405ece7` the Fixer returned FIX-FIRST (2 Medium, 5 Low) and the Reviewer and Tester SHIP; round 1 closed all seven. On head `10f514287229f97a42b2f80eb7aabb73385f6210`: Fixer SHIP (0 findings), Tester SHIP (0 findings), Reviewer SHIP (0 findings).
+- **Checks on that head:** `genie wish lint` 0 findings; the repository's `wishes:lint` passes; citation check 298 checked, 0 missing.
+- **Persisted by the orchestrator:** Status `APPROVED`. Execution starts with Group 1; the wave base is recorded with `genie context --wish genie-meter-intelligence` when work begins.
 
 ---
 
