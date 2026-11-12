@@ -1,4 +1,4 @@
 [submodule ".docs-vendor"]
 	path = .docs-vendor
-	url = https://github.com/automagik-dev/docs.git
+	url = https://github.com/automagik-si/docs.git
 	branch = main

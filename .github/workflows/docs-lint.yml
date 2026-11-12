@@ -28,7 +28,7 @@ on:
     branches: [main, dev]
     paths:
       - 'SECURITY.md'
-      # Docs live in the .docs-vendor submodule (automagik-dev/docs); trigger
+      # Docs live in the .docs-vendor submodule (automagik-si/docs); trigger
       # on submodule pointer bumps so docs lint runs whenever genie picks up
       # a new docs commit. That is also how a new page (docs/release-notes.mdx)
       # reaches this workflow — it arrives with the pointer bump.
