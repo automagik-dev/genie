@@ -53,7 +53,7 @@ never adopted, refreshed, or removed by Genie.
 
 ## Shipped workflows
 
-Every entrypoint keeps a distinct workflow. Audits use `review` plus a natural-language focus, such as “review performance”; the relevant lens is loaded only when needed. `refine` has exactly two guidance switches, `--for openai` and `--for claude`, using GPT-6 Astra and Claude Fable 5.1 as documented baselines. These switches do not change the runtime model.
+Every entrypoint keeps a distinct workflow. Audits use `review` plus a natural-language focus, such as “review performance”; the relevant lens is loaded only when needed. `refine` has exactly two guidance switches, `--for openai` and `--for claude`, using GPT-6 Astra and Claude Fable 5.2 as documented baselines. These switches do not change the runtime model.
 
 The table below is generated from the tree, never hand-listed. Regenerate it after adding, removing, or re-labelling a skill:
 

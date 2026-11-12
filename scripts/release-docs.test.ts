@@ -1300,7 +1300,7 @@ describe('Group E release and documentation contracts', () => {
 
   test('refine accepts sonnet, opus and fable after --for claude, each loading its own overlay', () => {
     const refine = read('skills/refine/SKILL.md');
-    const overlays = { sonnet: 'claude-sonnet-5-5.md', opus: 'claude-opus-5-5.md', fable: 'claude-fable-5-1.md' };
+    const overlays = { sonnet: 'claude-sonnet-5-5.md', opus: 'claude-opus-5-5.md', fable: 'claude-fable-5-2.md' };
     for (const [target, file] of Object.entries(overlays)) {
       expect(refine).toContain(`| \`--for claude --target ${target}\` | \`prompts/claude.md\` + \`prompts/${file}\` |`);
       expect(read(`skills/refine/prompts/${file}`)).toContain(`(\`--target ${target}\`)`);

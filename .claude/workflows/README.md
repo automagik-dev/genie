@@ -75,7 +75,7 @@ only. `scripts/workflow-routing.test.ts` fails any `agent()` call without a tier
 model.
 
 `brainstorm.js` alone adds two tiers. Its TIERS table carries a third key,
-`judge: { model: 'fable' }` (Fable 5.1), and only its `socrates:*` stages spell
+`judge: { model: 'fable' }` (Fable 5.2), and only its `socrates:*` stages spell
 `modelFor('judge')`; the judge stages of other scripts, such as `wish.js`'s `admit:judge`, stay
 on `reasoner`. Its `scout:*` stages run on the `lead-chosen` tier: the lead's plan names
 `worker` or `reasoner` per scout, and the call spells `modelFor(scoutTier(…))`, where
