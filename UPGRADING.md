@@ -67,7 +67,7 @@ the same. An affected host never sees an error from this, and nothing on it is b
 **Moving to the releases after the fix.** A host follows the releases published after the fix once it runs a version
 that carries the fix.
 
-**What an affected host should do.** _PLACEHOLDER — this paragraph is to be written by the project owner._
+**What an affected host should do.** Your genie keeps working. To get updates again, install the latest version once from automagik-si/genie.
 
 ### MCP retirement
 
