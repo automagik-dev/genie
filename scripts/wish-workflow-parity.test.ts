@@ -427,6 +427,9 @@ describe('git-safety hook guards the surfaces the wish publisher is forbidden', 
    * Every spelling of the same act, because a guard that refuses one spelling and admits another
    * only teaches the next agent which spelling to use. Each of these walked through the guard when
    * PR #2935 was reviewed.
+   *
+   * 28 runs of the hook, each a few dozen grep/sed/jq children: up to 5.0 s on macos-latest, where it
+   * timed out at bun's 5 s default twice. 15 s is 3x the slowest run measured there.
    */
   test('blocks the spellings that used to walk through: flags first, quoted tokens, implicit POST', () => {
     for (const command of [
@@ -469,7 +472,7 @@ describe('git-safety hook guards the surfaces the wish publisher is forbidden', 
     ]) {
       expect([command, probe(command)]).toEqual([command, 2]);
     }
-  });
+  }, 15_000);
 
   /**
    * What this guard is NOT. It matches text, so a determined spelling always gets past it — a bare
