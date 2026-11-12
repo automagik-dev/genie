@@ -345,13 +345,15 @@ describe('T4 cost, time and ETA', () => {
     });
   });
 
-  test('missing, stale and unsupported render "–" for cost and tokens with reason; unpriced blanks only the cost; priced/partial 0 usd with >0 tokens renders <$0.01', () => {
+  test('missing, stale and (on branch_usage) unsupported render "–" for cost and tokens with reason; unpriced blanks only the cost; priced/partial 0 usd with >0 tokens renders <$0.01', () => {
+    // unsupported is a branchRow state only ($defs.taskRow is measured | stale | missing).
+    const ub = { branch: 'feat/x', state: 'unsupported', reason: 'source_unsupported', tokens: null, cost: null };
     const c = cards([
       mRow('t-missing', 'missing', 'absent_store', null, null, null),
       mRow('t-old-meter', 'missing', 'needs usagemeter >= 3.129.2', null, null, null),
       mRow('t-stale-num', 'stale', 'ingestion_stale', 800, 'priced', 9.5),
       mRow('t-stale-null', 'stale', 'ingestion_stale', null, null, null),
-      mRow('t-unsupported', 'unsupported', 'source_unsupported', null, null, null),
+      mRow('t-br-unsupported', 'missing', 'no_task_usage', null, null, null, { branch_usage: ub }),
       mRow('t-unpriced', 'measured', null, 1200, 'unpriced', null),
       mRow('t-priced-zero-usd', 'measured', null, 500, 'priced', 0),
       mRow('t-priced-subcent', 'measured', null, 500, 'priced', 0.004),
@@ -363,10 +365,12 @@ describe('T4 cost, time and ETA', () => {
       ['t-old-meter', 'needs usagemeter >= 3.129.2'],
       ['t-stale-num', 'ingestion_stale'],
       ['t-stale-null', 'ingestion_stale'],
-      ['t-unsupported', 'source_unsupported'],
+      ['t-br-unsupported', 'no_task_usage'],
     ] as const) {
       expect(c[id]).toMatchObject({ cost: '–', tokens_text: '–', usd: null, tokens: null, meter_reason: reason });
     }
+    const bu = c['t-br-unsupported'].branch_usage;
+    expect(bu).toMatchObject({ state: 'unsupported', reason: ub.reason, cost_text: '–', tokens_text: '–', usd: null });
     expect(c['t-unpriced']).toMatchObject({
       cost: '–',
       tokens_text: '1.2k',
