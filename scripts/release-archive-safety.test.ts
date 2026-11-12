@@ -137,7 +137,8 @@ test('extraction never inherits archived ownership or permissions', () => {
     process.env.PATH = `${shim}:${previous}`;
     extractTarball(w.tarball, out);
   } finally {
-    process.env.PATH = previous;
+    if (previous === undefined) Reflect.deleteProperty(process.env, 'PATH');
+    else process.env.PATH = previous;
   }
   const extract = readFileSync(log, 'utf8')
     .trim()

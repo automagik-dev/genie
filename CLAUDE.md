@@ -5,7 +5,7 @@ Claude Code overlay: read and follow the canonical shared repository contract in
 ## Commands
 
 ```bash
-bun run check        # Full gate: typecheck + lint + dead-code + test + cargo test --locked (fails, never skips, without cargo)
+bun run check        # Full gate: typecheck + lint + dead-code + test + test:residue (no `undefined` entry left in the tree) + cargo test --locked (fails, never skips, without cargo)
 bun run build        # Bundle to dist/genie.js (bun target, minified, single file)
 bun run typecheck    # tsc --noEmit
 bun run lint         # biome check .

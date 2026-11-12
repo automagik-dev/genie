@@ -2643,7 +2643,8 @@ describe('default bounded runner (fake npx shim on PATH)', () => {
       const outcome = runSkillsInstall({ version: VERSION_UNDER_TEST, genieHome, home });
       expect(outcome.ok).toBe(true);
     } finally {
-      process.env.PATH = previousPath;
+      if (previousPath === undefined) Reflect.deleteProperty(process.env, 'PATH');
+      else process.env.PATH = previousPath;
     }
 
     expect(readFileSync(argvLog, 'utf8').trimEnd().split('\n')).toEqual([
@@ -2710,7 +2711,8 @@ describe('default bounded runner (fake npx shim on PATH)', () => {
         log: (line) => lines.push(line),
       });
     } finally {
-      process.env.PATH = previousPath;
+      if (previousPath === undefined) Reflect.deleteProperty(process.env, 'PATH');
+      else process.env.PATH = previousPath;
       process.exitCode = savedExitCode ?? 0;
     }
 
