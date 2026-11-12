@@ -1,6 +1,6 @@
 {
   "name": "@automagik/genie",
-  "version": "6.261109.6",
+  "version": "6.261111.2",
   "description": "Collaborative terminal toolkit for human + AI workflows. NOTE: npm distribution discontinued 2026-05-09 — install via `curl -fsSL https://raw.githubusercontent.com/automagik-si/genie/main/install.sh | bash` (cosign + SLSA verified). See https://docs.automagik.dev/genie/security",
   "license": "Apache-2.0",
   "type": "module",
@@ -20,7 +20,8 @@
     "format": "biome format --write .",
     "test": "bun test",
     "test:cargo": "bash scripts/cargo-gate.sh",
-    "typecheck": "tsc --noEmit && tsc --noEmit -p plugins/dsh-genie-board/tsconfig.json && tsc --noEmit -p plugins/dsh-workflow-loader/tsconfig.json",
+    "test:node-floor": "bun test --path-ignore-patterns 'mikro/**' ./plugins/dsh-prepare-node-floor.test.ts",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p plugins/dsh-genie-board/tsconfig.json && tsc --noEmit -p plugins/dsh-workflow-loader/tsconfig.json && tsc --noEmit -p plugins/tsconfig.node-floor.json",
     "dead-code": "bunx knip",
     "skills:lint": "bun run scripts/skills-lint.ts",
     "wishes:lint": "bun run scripts/wishes-lint.ts",

@@ -14,8 +14,8 @@
   },
   "files": ["dist", "agent.cordis.yml", "cordis.patch.yml", "README.md", "NOTICE"],
   "scripts": {
-    "build": "bun run build.ts",
-    "prepare": "node build.ts",
+    "build": "bun run build.mjs",
+    "prepare": "node build.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "devDependencies": {
@@ -23,7 +23,8 @@
     "zod": "3.25.76"
   },
   "engines": {
-    "dsh": ">=0.1.2-rc.1 <0.3.0-0"
+    "dsh": ">=0.1.2-rc.1 <0.3.0-0",
+    "node": ">=22.12.0"
   },
   "dsh": {
     "bundle": {

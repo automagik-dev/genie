@@ -1,3 +1,7 @@
+// Plain JavaScript on purpose (#3275): a git install runs `prepare` — `node build.mjs` —
+// under the host's own node, and node strips types unflagged only from 22.18. A `.ts` entry
+// failed on 22.12–22.17 with ERR_UNKNOWN_FILE_EXTENSION before `dist/` existed, so the
+// plugin installed with no code. Keep type syntax out of this file; tsc still checks it (checkJs).
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { build } from 'esbuild';
@@ -8,7 +12,7 @@ const [version = sourcePackage.version, output = 'dist', ...extra] = process.arg
 if (extra.length || !/^[0-9A-Za-z][0-9A-Za-z.+-]{0,127}$/.test(version)) throw new Error('invalid build version');
 const outdir = resolve(output);
 /** One host bundle per cordis row: the manager plus its two sub-rows. */
-export const HOST_ROWS = ['index', 'board', 'workflows'] as const;
+export const HOST_ROWS = ['index', 'board', 'workflows'];
 for (const row of HOST_ROWS) {
   await build({
     entryPoints: [`src/${row}.ts`],

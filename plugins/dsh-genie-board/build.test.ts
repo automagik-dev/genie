@@ -145,15 +145,15 @@ test('a git install builds the plugin: prepare runs this build under plain node'
     scripts: Record<string, string>;
     devDependencies: Record<string, string>;
   };
-  expect(pkg.scripts.build).toBe('bun run build.ts');
-  expect(pkg.scripts.prepare).toBe('node build.ts');
+  expect(pkg.scripts.build).toBe('bun run build.mjs');
+  expect(pkg.scripts.prepare).toBe('node build.mjs');
   expect(pkg.files).toContain('dist');
   // What the bundle resolves at build time: a bare git checkout has no root node_modules.
   expect(pkg.devDependencies.esbuild).toBeString();
   expect(pkg.devDependencies.zod).toBeString();
   const output = await mkdtemp(join(tmpdir(), 'genie-prepare-'));
   try {
-    const proc = Bun.spawn(['node', 'build.ts', pkg.version, output], {
+    const proc = Bun.spawn(['node', 'build.mjs', pkg.version, output], {
       cwd: root,
       stdout: 'pipe',
       stderr: 'pipe',

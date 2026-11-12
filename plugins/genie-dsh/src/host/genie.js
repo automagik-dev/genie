@@ -10,6 +10,7 @@
 // under Genie with what really happened: a local branch is never called done or delivered.
 // A follow-up wish may be scoped to branches an earlier wish made (`branches`), so it can
 // repair and publish exactly those and nothing else.
+import { createHash } from 'node:crypto';
 import {
   closeSync,
   existsSync,
@@ -58,6 +59,23 @@ const GENIE_RULES = [
   'Do not do the wish yourself in this chat.',
 ];
 
+// What `rt.uiLanguage` may be before it is written into a Genie's saved instructions: a locale
+// in the pattern the Bot team accepts from a browser (bots-dsh channel.js, the `state`
+// endpoint), at most 35 characters (the tag length BCP 47 asks every implementation to take),
+// or a name the team gives a language it knows (channel.js LANGUAGES). Anything else gets the
+// rule that names no language.
+const LOCALE = /^[a-z]{2,3}(-[\w-]+)?$/i;
+const LOCALE_MAX = 35;
+const LANGUAGE_NAMES = new Set(['English', 'Chinese (简体中文)']);
+const interfaceLanguage = (value) => {
+  if (typeof value !== 'string') return undefined;
+  const known = value.trim();
+  if (LANGUAGE_NAMES.has(known)) return known;
+  return known.length <= LOCALE_MAX && LOCALE.test(known) ? known : undefined;
+};
+
+const LANGUAGE_RULE = 'Write in the language the user writes in;';
+
 /**
  * Genie's instructions. `language` is the app's interface language when the team knows it
  * (the last browser that asked the team reported its locale, bots-dsh `rt.uiLanguage`), so
@@ -66,16 +84,30 @@ const GENIE_RULES = [
  * interface's, because the team may not have heard from a browser yet when a Genie is made.
  */
 export function genieInstructions(language) {
-  const known = typeof language === 'string' ? language.trim() : '';
+  const known = interfaceLanguage(language);
   const rule =
-    known === ''
-      ? "Write in the language the user writes in; before they write, in the language of this app's interface. These instructions being in English is no reason to answer in English."
-      : `Write in the language the user writes in; before they write, in ${known}, the language of this app's interface.`;
+    known === undefined
+      ? `${LANGUAGE_RULE} before they write, in the language of this app's interface. These instructions being in English is no reason to answer in English.`
+      : `${LANGUAGE_RULE} before they write, in ${known}, the language of this app's interface.`;
   return [...GENIE_RULES, rule].join('\n');
 }
 
 // The instructions a Genie takes when the team's interface language is not known yet.
 export const GENIE_INSTRUCTIONS = genieInstructions();
+
+// The sha256 of every default text earlier versions gave a Genie, none of which names a
+// language (79492685e, 28644a227, 7dfcc6392; the texts are in test/fixtures). A Genie still on
+// one of these, or on GENIE_INSTRUCTIONS, has instructions no user wrote.
+const EARLIER_DEFAULTS = new Set([
+  'b6e67f6ff3ce74978cad02d0ec689317a106b8c71a8c034ebe74d745607f8141',
+  '64c97607b3fbfa738565714f959abf9eebdd2e92c284f837b311a1a77ac74075',
+  '2b0ec8184e103d1ee3b02e173b4fcd423c17f3f12f0c83351e7a66e4f9201f10',
+]);
+
+/** Whether `text` is exactly a default Genie text that names no language. */
+export const isDefaultInstructions = (text) =>
+  typeof text === 'string' &&
+  (text === GENIE_INSTRUCTIONS || EARLIER_DEFAULTS.has(createHash('sha256').update(text).digest('hex')));
 
 // A Genie's colors, one per Genie: the first is the color Genie's own art is painted in
 // (magenta, ~325°), so the first Genie and one saved before Genies had colors keep that look.
@@ -283,6 +315,26 @@ export function install(rt) {
       rt.warn?.('genie: the Genie Bot was not made: %s', error?.message ?? error);
     }
   })();
+
+  // #3224: the team learns the interface language only when a browser asks for the team, and
+  // keeps it in memory only. So the first Genie, made as the plugin loads, is made without it,
+  // and a Genie from an earlier version has a default text that names none. Once the language
+  // is known, a Genie whose instructions are still exactly a default text gets the text naming
+  // it; instructions anyone changed are never touched, nor a Genie already told a language.
+  // Written into the Bot itself, not through the team's update: the team reads a Bot's
+  // instructions on every turn (bots-dsh prompt.js), so a held greeting (roster.js `kickoff`)
+  // goes out in the language and a Genie that already greeted uses it from its next turn,
+  // while the team's update would start a turn of its own to announce the change.
+  function nameTheLanguage() {
+    if (rt.readOnly() !== undefined) return;
+    const language = interfaceLanguage(rt.uiLanguage?.());
+    if (language === undefined) return;
+    const stale = genieBots().filter((bot) => isDefaultInstructions(bot.instructions));
+    if (stale.length === 0) return;
+    const instructions = genieInstructions(language);
+    for (const bot of stale) bot.instructions = instructions;
+    rt.save().catch((error) => rt.warn?.('genie: the interface language was not saved: %s', error?.message ?? error));
+  }
 
   // Genie's own folder starts as a repository; a folder the user picked is never changed.
   async function repositoryFor(bot) {
@@ -537,6 +589,17 @@ export function install(rt) {
     }
     await Promise.all(settling);
   })().catch((error) => rt.warn?.('genie: the wishes were not reconciled: %s', error?.message ?? error));
+
+  // Every answer to a browser's state request, right after the team took that browser's locale
+  // (bots-dsh channel.js): the first moment the team can know the language.
+  ctx.effect(
+    () =>
+      rt.hooks.live(() => {
+        nameTheLanguage();
+        return {};
+      }),
+    'genie: Genies told the interface language',
+  );
 
   // Adding a Genie: genie-create { folder } answers { bot: { id, name, color }, existed }.
   ctx.effect(() => rt.hooks.endpoint?.('genie-create', (body) => createGenie(body ?? {})), 'genie: create a Genie');

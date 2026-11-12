@@ -80,16 +80,16 @@ fake fails on any member that is not in this table, so a new use has to be added
 | Member | Provided by | Used for |
 |--------|-------------|----------|
 | `rt.home` | `index.js` | where `genie.json` lives |
-| `rt.state.bots` | `src/host/store.js` | the Genie Bots |
+| `rt.state.bots` | `src/host/store.js` | the Genie Bots, and the instructions of one still on a default text once the interface language is known |
 | `rt.state.tasks` | `src/host/agents.js` | a wish's task status, at startup and right after the grant (not a documented API) |
 | `rt.load` | `src/host/store.js` | waiting for the team's state |
-| `rt.save` | `src/host/store.js` | saving the team after a grant |
+| `rt.save` | `src/host/store.js` | saving the team after a grant, or after a Genie was told the interface language |
 | `rt.readOnly` | `src/host/store.js` | no writes while another dsh holds the team |
 | `rt.findBot` | `src/host/store.js` | a free Genie name |
 | `rt.selfOf` | `src/host/store.js` | who called `grant_wish` |
 | `rt.botOf` | `src/host/store.js` | the caller's Bot |
 | `rt.createBot` | `src/host/roster.js` | making a Genie |
-| `rt.uiLanguage` | `src/host/channel.js` | the app's interface language, for the language a new Genie's instructions name |
+| `rt.uiLanguage` | `src/host/channel.js` | the app's interface language, for the language a Genie's instructions name |
 | `rt.ensureWorkspace` | `src/host/roster.js` | the team workspace for Genie's first project |
 | `rt.teamFolder` | `src/host/folders.js` | where wish copies live |
 | `rt.workDirOf` | `src/host/folders.js` | a Genie's project folder |
@@ -99,6 +99,7 @@ fake fails on any member that is not in this table, so a new use has to be added
 | `rt.resumesDone` | `src/host/resume.js` | the startup pass waits for the team's resume pass |
 | `rt.warn` | `src/host/diagnostics.js` | warnings |
 | `rt.hooks.view` | `src/host/extend.js` | the wishes in the team view |
+| `rt.hooks.live` | `src/host/extend.js` | each browser state answer, the first moment the team knows the interface language |
 | `rt.hooks.endpoint` | `src/host/extend.js` | `genie-create` |
 | `ctx.on` | DSH (cordis `Context`) | `session/event`, for turn ends |
 | `ctx.effect` | DSH (cordis `Context`) | registrations that go with the plugin |

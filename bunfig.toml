@@ -6,4 +6,8 @@
 preload = ["./scripts/test-preload.ts"]
 # Mikro is an independent npm/Node package with its own full test gate; so is the Genie DSH
 # plugin, whose tests run on Node against a DeepSeek Harness (plugins/genie-dsh, npm test).
-pathIgnorePatterns = ["mikro/**", "plugins/genie-dsh/**"]
+# plugins/dsh-prepare-node-floor.test.ts needs a Node 22.12.0 binary, which may have to come
+# from nodejs.org, and the default `bun test` stays network-free (#3275). It runs through
+# `bun run test:node-floor` and in CI's own `node-floor` job. The ignore list also refuses a
+# file named on the command line, so that script replaces the list with the CLI flag.
+pathIgnorePatterns = ["mikro/**", "plugins/genie-dsh/**", "plugins/dsh-prepare-node-floor.test.ts"]
