@@ -605,6 +605,20 @@ impl Store {
         &self.location.project
     }
 
+    /// The project's normalized `host/owner/repo` slug from `origin`, when present.
+    pub fn repo_slug(&self) -> Option<String> {
+        crate::meter::repo_slug_of_project(Path::new(&self.location.project))
+    }
+
+    /// Whether `updated_at` is older than the 30-day (`d30`) meter window relative to this store's clock.
+    pub fn outside_d30_window(&self, updated_at: &str) -> bool {
+        let now_str = self.clock.now();
+        let (Some(updated), Some(now)) = (timestamp(updated_at), timestamp(&now_str)) else {
+            return false;
+        };
+        updated.seconds < now.seconds - 30 * 86_400
+    }
+
     pub fn db_path(&self) -> &Path {
         &self.location.db_path
     }

@@ -71,6 +71,7 @@ impl Fx {
             .current_dir(&self.repo)
             .env("GENIE_HOME", home)
             .env("PATH", &self.bin)
+            .env("USAGEMETER_BIN", self.bin.join("usagemeter"))
             .output()
             .unwrap()
     }
@@ -344,6 +345,14 @@ fn t1_list_and_status_carry_the_lifecycle_timestamps_worktree_and_project() {
         "task_lead_min",
         "pr_open_min",
         "pr_lead_min",
+        "meter_state",
+        "meter_reason",
+        "tokens",
+        "cost",
+        "activity_hours",
+        "actors",
+        "work_min",
+        "branch_usage",
     ];
     expected.sort_unstable();
     assert_eq!(keys, expected, "every old key kept, lifecycle and time fields added");
@@ -832,4 +841,247 @@ fn tracked_restart_keeps_historical_branch_ambiguity_in_live_and_rebuilt_rows() 
     let resolved = fx.run(&["status", "gh-9", "--json"]);
     assert_eq!(code(&resolved), 0, "{}", stderr(&resolved));
     assert_eq!(serde_json::from_slice::<Value>(&resolved.stdout).unwrap()["task"], "gh-9");
+}
+
+#[test]
+fn meter_query_uses_repo_alias_isolates_branch_usage_and_keeps_db_readonly() {
+    let fx = fixture("meter-d6", true);
+    assert!(
+        Command::new("git")
+            .args(["remote", "set-url", "origin", "https://github.com/automagik-si/genie.git"])
+            .current_dir(&fx.repo)
+            .status()
+            .unwrap()
+            .success()
+    );
+    let today = recent("2026-11-11T10:00:00Z");
+    for id in ["gn-1", "gn-2", "gn-3", "gn-4", "gn-5"] {
+        seed(&fx, id, TaskEvent::Created, &today, &format!("/wt/{id}"));
+    }
+    seed(&fx, "gn-6", TaskEvent::Created, "2020-01-01T00:00:00Z", "/wt/gn-6");
+
+    let env_json = |v: &str, status: &str, err: Value, rows: Value| {
+        json!({"contract": "usagemeter.query", "contract_version": 1, "capability": "meter.usage@1", "meter_version": v, "status": status, "error": err, "rows": rows}).to_string()
+    };
+    let tok = |n: u64| json!({"input": n / 2, "cache_read": 0, "cache_write_5m": 0, "cache_write_1h": 0, "output": n - (n / 2), "reasoning": 0, "unsplit": 0, "total": n});
+    let cost = |state: &str, usd: Value, priced: u64, unpriced: u64, models: Value| json!({"state": state, "usd": usd, "usd_reported": Value::Null, "usd_estimated": usd, "tokens_priced": priced, "tokens_reported": 0, "tokens_unpriced": unpriced, "unpriced_models": models, "unpriced_models_omitted": 0});
+    let task_row = |task: &str, actors: Value, state: &str, tokens: Value, cost: Value, hours: u64| json!({"task": task, "actors": actors, "actors_omitted": 0, "state": state, "reason": Value::Null, "tokens": tokens, "cost": cost, "activity": {"first_hour": "2026-11-11T09:00:00Z", "last_hour": "2026-11-11T12:00:00Z", "hours": hours, "harnesses": ["claude-code", "codex"]}});
+    let actor = |bot: &str, role: &str, harness: &str| json!({"bot": bot, "kind": "worker", "role": role, "squad": "b-lead", "unrecorded": [], "harness": harness});
+
+    fs::write(
+        fx.bin.join("task-alias.json"),
+        env_json(
+            "3.129.2",
+            "ok",
+            Value::Null,
+            json!([
+                task_row(
+                    "gn-1",
+                    json!([actor("b-worker-1", "dev", "claude-code"), actor("b-worker-2", "review", "codex")]),
+                    "measured",
+                    tok(500),
+                    cost("priced", json!(3.75), 500, 0, json!([])),
+                    4
+                ),
+                task_row(
+                    "gn-2",
+                    json!([actor("b-worker-1", "dev", "claude-code")]),
+                    "measured",
+                    tok(250),
+                    cost("partial", json!(1.25), 150, 100, json!(["custom-model"])),
+                    4
+                ),
+                task_row(
+                    "gn-3",
+                    json!([actor("b-lead", "dev", "claude-code")]),
+                    "measured",
+                    tok(600),
+                    cost("unpriced", Value::Null, 0, 600, json!(["local-v1"])),
+                    2
+                ),
+                task_row("gn-4", json!([]), "zero", tok(0), cost("zero", json!(0.0), 0, 0, json!([])), 0),
+            ]),
+        ),
+    )
+    .unwrap();
+    fs::write(
+        fx.bin.join("branch-alias.json"),
+        env_json(
+            "3.129.2",
+            "ok",
+            Value::Null,
+            json!([{"branch": "feat/gn-5-x", "requested": 1, "state": "measured", "reason": Value::Null, "tokens": tok(500), "cost": cost("priced", json!(1.75), 500, 0, json!([])), "activity": {"first_hour": "2026-11-11T12:00:00Z", "last_hour": "2026-11-11T13:00:00Z", "hours": 2, "harnesses": ["claude-code"]}}]),
+        ),
+    )
+    .unwrap();
+
+    let script = format!(
+        "#!/bin/sh\n\
+         dir=\"{}\"\n\
+         printf '%s\\n' \"$*\" >> \"$dir/meter.log\"\n\
+         emit() {{\n\
+           while IFS= read -r line || [ -n \"$line\" ]; do printf '%s\\n' \"$line\"; done < \"$1\"\n\
+           case \"$(cat \"$1\")\" in *'\"status\":\"usage\"'*) exit 2 ;; esac\n\
+         }}\n\
+         case \"$*\" in\n\
+           *\"--repo github.com/automagik-si/genie --repo-alias github.com/automagik-dev/genie --by task\"*) emit \"$dir/task-alias.json\" ;;\n\
+           *\"--repo github.com/automagik-si/genie --repo-alias github.com/automagik-dev/genie --window d30 --branch\"*) emit \"$dir/branch-alias.json\" ;;\n\
+           *\"--repo github.com/o/r --by task\"*) emit \"$dir/task-noalias.json\" ;;\n\
+           *\"--repo github.com/o/r --window d30 --branch\"*) emit \"$dir/branch-alias.json\" ;;\n\
+           *) exit 2 ;;\n\
+         esac\n",
+        fx.bin.display()
+    );
+    fs::write(fx.bin.join("usagemeter"), script).unwrap();
+    fs::set_permissions(fx.bin.join("usagemeter"), fs::Permissions::from_mode(0o755)).unwrap();
+
+    let db_path = fx.repo.join(".genie/genie.db");
+    let db_before = fs::read(&db_path).unwrap();
+    let list = json_out(&fx.run(&["list", "--json"]));
+    assert_eq!(fs::read(&db_path).unwrap(), db_before, "list --json keeps genie.db byte-identical");
+
+    let calls: Vec<String> = fs::read_to_string(fx.bin.join("meter.log")).unwrap().lines().map(String::from).collect();
+    assert_eq!(calls.len(), 2, "1 --by task call + 1 batched --branch call: {calls:?}");
+    assert!(calls.iter().all(|c| c.contains("--repo-alias github.com/automagik-dev/genie") && !c.contains("gn-6")));
+
+    let by_id = |id: &str| list.as_array().unwrap().iter().find(|t| t["task"] == id).unwrap().clone();
+    let gn1 = by_id("gn-1");
+    assert_eq!(
+        (
+            gn1["meter_state"].as_str(),
+            gn1["tokens"]["total"].as_u64(),
+            gn1["cost"]["usd"].as_f64(),
+            gn1["activity_hours"].as_u64()
+        ),
+        (Some("measured"), Some(500), Some(3.75), Some(4))
+    );
+    assert!(gn1["meter_reason"].is_null() && gn1["work_min"].is_null() && gn1["branch_usage"].is_null());
+    assert_eq!(gn1["actors"].as_array().unwrap().len(), 2);
+    assert!(gn1["actors"][0]["usd"].is_null() && gn1["actors"][0]["work_min"].is_null());
+
+    let gn2 = by_id("gn-2");
+    assert_eq!(
+        (gn2["meter_state"].as_str(), gn2["cost"]["state"].as_str(), gn2["cost"]["usd"].as_f64()),
+        (Some("measured"), Some("partial"), Some(1.25))
+    );
+
+    let gn3 = by_id("gn-3");
+    assert_eq!(
+        (gn3["meter_state"].as_str(), gn3["meter_reason"].as_str(), gn3["cost"]["state"].as_str()),
+        (Some("measured"), Some("unpriced_models"), Some("unpriced"))
+    );
+    assert!(gn3["cost"]["usd"].is_null());
+
+    let gn4 = by_id("gn-4");
+    assert_eq!(
+        (gn4["meter_state"].as_str(), gn4["tokens"]["total"].as_u64(), gn4["cost"]["usd"].as_f64()),
+        (Some("zero"), Some(0), Some(0.0))
+    );
+
+    let gn5 = by_id("gn-5");
+    assert_eq!((gn5["meter_state"].as_str(), gn5["meter_reason"].as_str()), (Some("missing"), Some("no_task_usage")));
+    assert!(gn5["cost"].is_null() && gn5["tokens"].is_null());
+    assert_eq!(
+        (
+            gn5["branch_usage"]["branch"].as_str(),
+            gn5["branch_usage"]["state"].as_str(),
+            gn5["branch_usage"]["cost"]["usd"].as_f64(),
+            gn5["branch_usage"]["tokens"]["total"].as_u64()
+        ),
+        (Some("feat/gn-5-x"), Some("measured"), Some(1.75), Some(500))
+    );
+
+    let gn6 = by_id("gn-6");
+    assert_eq!(
+        (gn6["meter_state"].as_str(), gn6["meter_reason"].as_str()),
+        (Some("missing"), Some("outside_d30_window"))
+    );
+    assert!(gn6["cost"].is_null() && gn6["tokens"].is_null() && gn6["branch_usage"].is_null());
+
+    // Case 2: Older usagemeter (< 3.129.2) invoked with --repo-alias exits 2 with status == "usage" -> "needs usagemeter >= 3.129.2", no fallback call
+    fs::remove_file(fx.bin.join("meter.log")).unwrap();
+    fs::write(
+        fx.bin.join("task-alias.json"),
+        env_json(
+            "3.126.1",
+            "usage",
+            json!({"code": "usage", "message": "unexpected argument '--repo-alias' found", "retry_after_s": Value::Null}),
+            json!([]),
+        ),
+    )
+    .unwrap();
+    let list_old = json_out(&fx.run(&["list", "--json"]));
+    let old_calls: Vec<String> =
+        fs::read_to_string(fx.bin.join("meter.log")).unwrap().lines().map(String::from).collect();
+    assert_eq!(old_calls.len(), 1, "no fallback call without --repo-alias: {old_calls:?}");
+    let gn1_old = list_old.as_array().unwrap().iter().find(|t| t["task"] == "gn-1").unwrap();
+    assert_eq!(
+        (gn1_old["meter_state"].as_str(), gn1_old["meter_reason"].as_str()),
+        (Some("missing"), Some("needs usagemeter >= 3.129.2"))
+    );
+    assert!(gn1_old["cost"].is_null() && gn1_old["tokens"].is_null());
+
+    // Case 3: Repository with no entry in KNOWN_PREVIOUS_REPO_SLUGS passes no --repo-alias and works with 3.126.1 floor
+    fs::remove_file(fx.bin.join("meter.log")).unwrap();
+    assert!(
+        Command::new("git")
+            .args(["remote", "set-url", "origin", "https://github.com/o/r.git"])
+            .current_dir(&fx.repo)
+            .status()
+            .unwrap()
+            .success()
+    );
+    fs::write(
+        fx.bin.join("task-noalias.json"),
+        env_json(
+            "3.126.1",
+            "ok",
+            Value::Null,
+            json!([task_row(
+                "gn-1",
+                json!([]),
+                "measured",
+                tok(100),
+                cost("priced", json!(0.50), 100, 0, json!([])),
+                1
+            )]),
+        ),
+    )
+    .unwrap();
+    let list_noalias = json_out(&fx.run(&["list", "--json"]));
+    let noalias_calls: Vec<String> =
+        fs::read_to_string(fx.bin.join("meter.log")).unwrap().lines().map(String::from).collect();
+    assert!(noalias_calls.iter().all(|c| !c.contains("--repo-alias")), "{noalias_calls:?}");
+    let gn1_noalias = list_noalias.as_array().unwrap().iter().find(|t| t["task"] == "gn-1").unwrap();
+    assert_eq!(
+        (gn1_noalias["meter_state"].as_str(), gn1_noalias["cost"]["usd"].as_f64()),
+        (Some("measured"), Some(0.50))
+    );
+
+    // Case 4: top-level query error (locked) -> missing with error reason, never partial or 0
+    fs::write(
+        fx.bin.join("task-noalias.json"),
+        env_json(
+            "3.126.1",
+            "locked",
+            json!({"code": "locked", "message": "store busy", "retry_after_s": 2}),
+            json!([]),
+        ),
+    )
+    .unwrap();
+    let gn1_err = json_out(&fx.run(&["list", "--json"]))
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["task"] == "gn-1")
+        .unwrap()
+        .clone();
+    assert_eq!((gn1_err["meter_state"].as_str(), gn1_err["meter_reason"].as_str()), (Some("missing"), Some("locked")));
+    assert!(gn1_err["cost"].is_null() && gn1_err["tokens"].is_null());
+    let status_err = json_out(&fx.run(&["status", "gn-1", "--json"]));
+    assert_eq!(
+        (status_err["meter_state"].as_str(), status_err["meter_reason"].as_str()),
+        (Some("missing"), Some("locked"))
+    );
+    assert_eq!(fs::read(&db_path).unwrap(), db_before, "status --json keeps genie.db byte-identical");
 }

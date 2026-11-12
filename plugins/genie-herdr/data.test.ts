@@ -74,6 +74,37 @@ function row(over: Record<string, unknown>) {
   };
 }
 const ok = (stdout: string, code = 0) => ({ ok: code === 0, code, stdout, stderr: '', error: null });
+const tokensOf = (total: number) => ({
+  input: total,
+  cache_read: 0,
+  cache_write_5m: 0,
+  cache_write_1h: 0,
+  output: 0,
+  reasoning: 0,
+  unsplit: 0,
+  total,
+});
+const costOf = (state: string, usd: number | null) => ({
+  state,
+  usd,
+  usd_reported: null,
+  usd_estimated: usd,
+  tokens_priced: usd != null ? 100 : 0,
+  tokens_reported: 0,
+  tokens_unpriced: state === 'partial' || state === 'unpriced' ? 50 : 0,
+  unpriced_models: state === 'partial' || state === 'unpriced' ? ['custom-m'] : [],
+  unpriced_models_omitted: 0,
+});
+const actorOf = (bot = 'b-lead') => ({
+  bot,
+  kind: 'worker',
+  role: 'engineer',
+  squad: 'core',
+  unrecorded: [],
+  harness: 'codex',
+  usd: null,
+  work_min: null,
+});
 
 describe('T2 discovery', () => {
   test('local space folders only, deduped; an empty folder is the home', () => {
@@ -122,20 +153,20 @@ describe('T3 lanes and card', () => {
   ];
 
   test('rows land in Working, Review, Merged and Closed by lane', () => {
-    const lanes = D.lanesOf(P, rows, null, NOW);
+    const lanes = D.lanesOf(P, rows);
     expect(lanes.map((l) => l.key)).toEqual(['Working', 'Review', 'Merged', 'Closed']);
     const ids = Object.fromEntries(lanes.map((l) => [l.key, l.cards.map((c) => c.id)]));
     expect(ids).toEqual({ Working: ['gh-1'], Review: ['gh-2', 'untracked'], Merged: ['gh-3'], Closed: ['gh-4'] });
   });
 
   test('a null task renders "untracked" with its url', () => {
-    const card = D.lanesOf(P, rows, null, NOW)[1].cards.find((c) => c.untracked);
+    const card = D.lanesOf(P, rows)[1].cards.find((c) => c.untracked);
     expect(card.id).toBe('untracked');
     expect(card.url).toBe('https://github.com/o/r/pull/9');
   });
 
   test('the card carries title, id, lead, lane, cost, time and ETA, and no action', () => {
-    const card = D.lanesOf(P, rows, null, NOW)[0].cards[0];
+    const card = D.lanesOf(P, rows)[0].cards[0];
     expect(card).toMatchObject({ id: 'gh-1', title: 'one', lead: 'b-lead', lane: 'Working' });
     for (const k of ['cost', 'time', 'eta']) expect(typeof card[k]).toBe('string');
     for (const k of Object.keys(card)) expect(k).not.toMatch(/^(action|actions|buttons|on[A-Z].*)$/);
@@ -144,7 +175,7 @@ describe('T3 lanes and card', () => {
 
   test('newest updated_at first, at most 12 cards a lane, with the total kept', () => {
     const many = Array.from({ length: 14 }, (_, i) => row({ task: `gh-${i}`, updated_at: iso(NOW - (14 - i) * MIN) }));
-    const working = D.lanesOf(P, many, null, NOW)[0];
+    const working = D.lanesOf(P, many)[0];
     expect(working.cards).toHaveLength(12);
     expect(working.total).toBe(14);
     expect(working.cards[0].id).toBe('gh-13');
@@ -160,82 +191,76 @@ describe('T4 cost, time and ETA', () => {
       created_at: iso(NOW - 90 * MIN),
       task_open_min: 90,
       pr_open_min: null,
+      meter_state: 'measured',
+      meter_reason: null,
+      tokens: tokensOf(1500),
+      cost: costOf('priced', 1.5),
+      activity_hours: 2,
+      actors: [actorOf()],
     }),
-    row({ task: 'gh-2', lane: 'Working' }),
-    row({ task: 'gh-3', state: 'merged', lane: 'Merged', pr_lead_min: 60, task_lead_min: 60 }),
-    row({ task: null, state: 'opened', lane: 'Review', pr_open_min: 300, url: 'https://github.com/o/r/pull/9' }),
-    row({ task: 'gh-4', state: 'closed', lane: 'Closed' }),
-    row({ task: 'gh-old1', state: 'merged', lane: 'Merged', pr_lead_min: 120, task_lead_min: 120 }),
-    row({ task: 'gh-old2', state: 'merged', lane: 'Merged', pr_lead_min: 240, task_lead_min: 240 }),
-  ];
-  const feed = (over = {}) => ({
-    space: {
-      projects: {
-        [P]: {
-          tasks: [
-            {
-              key: 'k1',
-              task: 'gh-1',
-              url: null,
-              branch: 'b1',
-              usd: 1.5,
-              work_min: 30,
-              lead_min: null,
-              started_at: iso(NOW - 90 * MIN),
-              state: 'working',
-              bots: [{ bot: 'b-lead', usd: 1.5, work_min: 30 }],
-            },
-            {
-              key: 'k2',
-              task: 'gh-2',
-              url: null,
-              branch: 'b2',
-              usd: null,
-              work_min: null,
-              lead_min: null,
-              started_at: null,
-              state: 'working',
-              bots: [],
-            },
-            {
-              key: 'k3',
-              task: 'gh-3',
-              url: null,
-              branch: 'b3',
-              usd: 0,
-              work_min: 0,
-              lead_min: 60,
-              started_at: null,
-              state: 'merged',
-              bots: [],
-            },
-            {
-              key: 'k9',
-              task: null,
-              url: 'https://github.com/o/r/pull/9',
-              branch: 'b9',
-              usd: 2,
-              work_min: 5,
-              lead_min: null,
-              started_at: iso(NOW - 300 * MIN),
-              state: 'open',
-              bots: [],
-            },
-            { key: 'kx', task: 'gh-old1', usd: 3, lead_min: 120, state: 'merged', bots: [] },
-            { key: 'ky', task: 'gh-old2', usd: 3, lead_min: 240, state: 'merged', bots: [] },
-          ],
-        },
+    row({
+      task: 'gh-2',
+      lane: 'Working',
+      branch: 'feat/gh-2',
+      meter_state: 'missing',
+      meter_reason: 'no_task_usage',
+      tokens: null,
+      cost: null,
+      branch_usage: {
+        branch: 'feat/gh-2',
+        state: 'measured',
+        reason: null,
+        tokens: tokensOf(4200),
+        cost: costOf('priced', 4.25),
+        activity_hours: 3,
       },
-    },
-    ...over,
-  });
-  const stdout = (doc: unknown) => `${JSON.stringify(doc)}\n`;
-  const cards = (doc: unknown) => {
-    const rowsOf = D.feedRows(D.docFeed(ok(stdout(doc))), P);
-    return Object.fromEntries(
-      D.lanesOf(P, rows, rowsOf, NOW).flatMap((l) => l.cards.map((c) => [c.id === 'untracked' ? c.url : c.id, c])),
+    }),
+    row({
+      task: 'gh-3',
+      state: 'merged',
+      lane: 'Merged',
+      pr_lead_min: 60,
+      task_lead_min: 60,
+      meter_state: 'zero',
+      tokens: tokensOf(0),
+      cost: costOf('zero', 0),
+    }),
+    row({
+      task: null,
+      state: 'opened',
+      lane: 'Review',
+      pr_open_min: 300,
+      url: 'https://github.com/o/r/pull/9',
+      meter_state: 'measured',
+      tokens: tokensOf(2000),
+      cost: costOf('partial', 2),
+    }),
+    row({ task: 'gh-4', state: 'closed', lane: 'Closed', meter_state: 'missing', meter_reason: 'outside_d30_window' }),
+    row({
+      task: 'gh-old1',
+      state: 'merged',
+      lane: 'Merged',
+      pr_lead_min: 120,
+      task_lead_min: 120,
+      meter_state: 'measured',
+      tokens: tokensOf(3000),
+      cost: costOf('priced', 3),
+    }),
+    row({
+      task: 'gh-old2',
+      state: 'merged',
+      lane: 'Merged',
+      pr_lead_min: 240,
+      task_lead_min: 240,
+      meter_state: 'measured',
+      tokens: tokensOf(3000),
+      cost: costOf('priced', 3),
+    }),
+  ];
+  const cards = (listRows = rows) =>
+    Object.fromEntries(
+      D.lanesOf(P, listRows).flatMap((l) => l.cards.map((c) => [c.id === 'untracked' ? c.url : c.id, c])),
     );
-  };
 
   test('null renders "–", a measured 0 renders $0.00 and 0m', () => {
     expect(D.fmtUsd(null)).toBe('–');
@@ -246,16 +271,134 @@ describe('T4 cost, time and ETA', () => {
     expect(D.fmtMin(90)).toBe('1.5h');
   });
 
-  test('joins by (project, task), or by url for a null task', () => {
-    const c = cards(feed());
-    expect(c['gh-1'].cost).toBe('$1.50');
-    expect(c['gh-3'].cost).toBe('$0.00');
-    expect(c['https://github.com/o/r/pull/9'].cost).toBe('$2.00');
-    expect(c['gh-1'].bots).toEqual([{ bot: 'b-lead', usd: 1.5, work_min: 30 }]);
+  test('single cost path from genie-rs list --json: docFeed and feedRows are retired', () => {
+    expect(['docFeed' in D, 'feedRows' in D, 'feedRowFor' in D]).toEqual([false, false, false]);
+    const dataSrc = readFileSync(join(import.meta.dir, 'data.js'), 'utf8');
+    const mainSrc = readFileSync(join(import.meta.dir, 'main.js'), 'utf8');
+    expect(dataSrc.includes('herdr-meter') || mainSrc.includes('herdr-meter')).toBe(false);
+    expect(dataSrc.includes('KNOWN_PREVIOUS_REPO_SLUGS') || mainSrc.includes('KNOWN_PREVIOUS_REPO_SLUGS')).toBe(false);
+    expect(mainSrc).toContain('Branch usage (d30, not task-isolated)');
+  });
+
+  test('renders measured priced and partial costs, zero only on zero state, and actors/branch_usage', () => {
+    const c = cards();
+    expect(c['gh-1']).toMatchObject({
+      meter_state: 'measured',
+      cost_state: 'priced',
+      meter_reason: null,
+      usd: 1.5,
+      cost: '$1.50',
+      cost_badge: null,
+      tokens: 1500,
+      work_min: null,
+      activity_hours: 2,
+      branch_usage: null,
+      bots: [actorOf()],
+    });
+    expect(c['gh-3']).toMatchObject({
+      meter_state: 'zero',
+      cost_state: 'zero',
+      usd: 0,
+      cost: '$0.00',
+      cost_badge: null,
+      tokens: 0,
+    });
+    expect(c['https://github.com/o/r/pull/9']).toMatchObject({
+      meter_state: 'measured',
+      cost_state: 'partial',
+      usd: 2,
+      cost: '$2.00',
+      cost_badge: 'partial',
+      tokens: 2000,
+    });
+    expect(c['gh-2']).toMatchObject({
+      meter_state: 'missing',
+      meter_reason: 'no_task_usage',
+      usd: null,
+      cost: '–',
+      cost_badge: null,
+      tokens: null,
+      branch_usage: {
+        branch: 'feat/gh-2',
+        state: 'measured',
+        cost_state: 'priced',
+        reason: null,
+        tokens_total: 4200,
+        usd: 4.25,
+        cost_text: '$4.25',
+        cost_badge: null,
+        activity_hours: 3,
+      },
+    });
+  });
+
+  test('missing, stale, unsupported and unpriced states render "–" with reason and never $0.00', () => {
+    const c = cards([
+      row({ task: 't-missing', meter_state: 'missing', meter_reason: 'absent_store', cost: null, tokens: null }),
+      row({
+        task: 't-old-meter',
+        meter_state: 'missing',
+        meter_reason: 'needs usagemeter >= 3.129.2',
+        cost: null,
+        tokens: null,
+      }),
+      row({
+        task: 't-stale-num',
+        meter_state: 'stale',
+        meter_reason: 'ingestion_stale',
+        tokens: tokensOf(800),
+        cost: costOf('priced', 9.5),
+      }),
+      row({ task: 't-stale-null', meter_state: 'stale', meter_reason: 'ingestion_stale', tokens: null, cost: null }),
+      row({
+        task: 't-unsupported',
+        meter_state: 'unsupported',
+        meter_reason: 'source_unsupported',
+        tokens: null,
+        cost: null,
+      }),
+      row({
+        task: 't-unpriced',
+        meter_state: 'measured',
+        meter_reason: null,
+        tokens: tokensOf(1200),
+        cost: costOf('unpriced', null),
+      }),
+      row({
+        task: 't-measured-zero-cost',
+        meter_state: 'measured',
+        meter_reason: null,
+        tokens: tokensOf(0),
+        cost: costOf('zero', 0),
+      }),
+    ]);
+    expect(c['t-missing']).toMatchObject({ cost: '–', usd: null, tokens: null, meter_reason: 'absent_store' });
+    expect(c['t-old-meter']).toMatchObject({
+      cost: '–',
+      usd: null,
+      tokens: null,
+      meter_reason: 'needs usagemeter >= 3.129.2',
+    });
+    expect(c['t-stale-num']).toMatchObject({ cost: '–', usd: null, tokens: null, meter_reason: 'ingestion_stale' });
+    expect(c['t-stale-null']).toMatchObject({ cost: '–', usd: null, tokens: null, meter_reason: 'ingestion_stale' });
+    expect(c['t-unsupported']).toMatchObject({
+      cost: '–',
+      usd: null,
+      tokens: null,
+      meter_reason: 'source_unsupported',
+    });
+    expect(c['t-unpriced']).toMatchObject({
+      cost: '–',
+      usd: null,
+      tokens: 1200,
+      cost_state: 'unpriced',
+      meter_reason: 'unpriced_models',
+    });
+    expect(c['t-measured-zero-cost']).toMatchObject({ cost: '$0.00', usd: 0, tokens: 0, cost_state: 'zero' });
   });
 
   test('list task and PR times drive open and terminal cards; missing list time stays unknown', () => {
-    const c = cards(feed());
+    const c = cards();
     expect(c['gh-3'].time).toBe('1.0h');
     expect(c['gh-1'].time).toBe('1.5h');
     expect(c['gh-2'].time).toBe('–');
@@ -267,7 +410,7 @@ describe('T4 cost, time and ETA', () => {
     expect(history).toEqual([60, 120, 240]);
     expect(D.etaText(D.estimateOf(90, history))).toBe('~1.5h');
     expect(D.etaText(D.estimateOf(300, history))).toBe('over');
-    const c = cards(feed());
+    const c = cards();
     expect(c['gh-1'].eta).toBe('~1.5h');
     expect(c['gh-1'].merges).toBe(3);
     expect(c['https://github.com/o/r/pull/9'].eta).toBe('over');
@@ -285,9 +428,9 @@ describe('T4 cost, time and ETA', () => {
     ];
     expect(D.historyOf(samples)).toEqual([0, 60, 120, 240]);
     const other = [{ task: 'other', state: 'merged', lane: 'Merged', pr_lead_min: 99999 }];
-    expect(D.lanesOf('/other', other, null, NOW)[2].cards[0].merges).toBe(1);
-    expect(cards(feed())['gh-1'].est).toMatchObject({ basis: 2 });
-    expect(cards(feed())['gh-1'].merges).toBe(3);
+    expect(D.lanesOf('/other', other)[2].cards[0].merges).toBe(1);
+    expect(cards()['gh-1'].est).toMatchObject({ basis: 2 });
+    expect(cards()['gh-1'].merges).toBe(3);
   });
 
   test('Working and Review use separate comparable merged histories', () => {
@@ -298,10 +441,10 @@ describe('T4 cost, time and ETA', () => {
       row({ task: 'gh-4', state: 'merged', lane: 'Merged', task_lead_min: null, pr_lead_min: 40 }),
       row({ task: 'gh-5', state: 'closed', lane: 'Closed', task_lead_min: 999 }),
     ];
-    const lanes = D.lanesOf(P, samples, null);
+    const lanes = D.lanesOf(P, samples);
     expect(lanes[0].cards[0]).toMatchObject({ time: '30m', eta: '~1.5h', merges: 1, est: { basis: 1 } });
     expect(lanes[1].cards[0]).toMatchObject({ time: '10m', eta: '~20m', merges: 2, est: { basis: 2 } });
-    const legacy = D.lanesOf(P, [row({ pr_open_min: null, age_min: 900 })], null)[0].cards[0];
+    const legacy = D.lanesOf(P, [row({ pr_open_min: null, age_min: 900 })])[0].cards[0];
     expect(legacy).toMatchObject({ time: '–', eta: '–' });
   });
 
@@ -336,7 +479,7 @@ describe('T4 cost, time and ETA', () => {
       ),
       NOW,
     ).rows;
-    const lanes = D.lanesOf(P, samples, null);
+    const lanes = D.lanesOf(P, samples);
     expect(lanes[2].cards.map((c) => [c.time, c.lead_min])).toEqual([
       ['15m', 15],
       ['29m', 29],
@@ -351,13 +494,12 @@ describe('T4 cost, time and ETA', () => {
     expect(D.historyOf(samples, 'task_lead_min')).toEqual([15, 30]);
   });
 
-  test('meter hours, started_at, work_min and lead_min never supply card time or ETA', () => {
-    const meter = [{ task: 'gh-1', hours: 100, started_at: iso(NOW - 900 * MIN), work_min: 999, lead_min: 999 }];
-    const unknown = D.lanesOf(P, [row({})], meter, NOW)[0].cards[0];
-    expect(unknown).toMatchObject({ time: '–', eta: '–', elapsed: null, lead_min: null, merges: 0 });
-    const known = D.lanesOf(P, rows, meter, NOW)[0].cards.find((c) => c.id === 'gh-1');
+  test('meter activity_hours and branch_usage never supply card time, ETA, or card task cost', () => {
+    const unknown = D.lanesOf(P, [row({ activity_hours: 100, work_min: 999 })])[0].cards[0];
+    expect(unknown).toMatchObject({ time: '–', eta: '–', elapsed: null, lead_min: null, merges: 0, work_min: null });
+    const known = D.lanesOf(P, rows)[0].cards.find((c) => c.id === 'gh-1');
     expect(known).toMatchObject({ time: '1.5h', eta: '~1.5h' });
-    const closed = D.lanesOf(P, [row({ state: 'closed', lane: 'Closed', pr_lead_min: 0 })], meter, NOW)[3].cards[0];
+    const closed = D.lanesOf(P, [row({ state: 'closed', lane: 'Closed', pr_lead_min: 0 })])[3].cards[0];
     expect(closed).toMatchObject({ time: '0m', eta: '–' });
     const old = D.normalizeRow({ task: 'gh-1' });
     expect([old.age_min, old.task_open_min, old.task_lead_min, old.pr_open_min, old.pr_lead_min]).toEqual([
@@ -369,30 +511,30 @@ describe('T4 cost, time and ETA', () => {
     ]);
   });
 
-  test('missing or failed meter feeds leave costs unknown and preserve list time and ETA', () => {
-    expect(cards(feed())['gh-4']).toMatchObject({ cost: '–', time: '–', eta: '–' });
-    const live030 = {
-      meter_version: '0.3.0',
-      schema_version: 2,
-      projects: [{ repo: P, tasks: 5 }],
-      tasks: [{ repo: P, branch: 'b1', usd: 9 }],
-    };
-    const outcomes = [
-      ok(stdout(live030)),
-      ok(stdout(feed()), 1),
-      ok(stdout(feed()), 2),
-      ok(stdout(feed()), 3),
-      { ok: false, code: null, stdout: '', stderr: '', error: 'spawn automagik-herdr ENOENT' },
-      ok('{"space":'),
-      ok(`${JSON.stringify(feed())}\n${JSON.stringify(feed())}\n`),
-    ];
-    for (const outcome of outcomes) {
-      const lanes = D.lanesOf(P, rows, D.feedRows(D.docFeed(outcome), P), NOW);
-      expect(lanes.map((l) => l.cards.length)).toEqual([2, 1, 3, 1]);
-      for (const card of lanes.flatMap((l) => l.cards)) expect(card.cost).toBe('–');
-      expect(lanes[0].cards.find((c) => c.id === 'gh-1')).toMatchObject({ time: '1.5h', eta: '~1.5h' });
-      expect(lanes[2].cards.find((c) => c.id === 'gh-3')?.time).toBe('1.0h');
+  test('tasks with missing meter state keep cost unknown ("–") and preserve list time and ETA', () => {
+    expect(cards()['gh-4']).toMatchObject({
+      cost: '–',
+      usd: null,
+      meter_state: 'missing',
+      meter_reason: 'outside_d30_window',
+      time: '–',
+      eta: '–',
+    });
+    const unmeasuredRows = rows.map((r) => ({
+      ...r,
+      meter_state: 'missing',
+      meter_reason: 'usagemeter_unavailable',
+      tokens: null,
+      cost: null,
+    }));
+    const lanes = D.lanesOf(P, unmeasuredRows);
+    expect(lanes.map((l) => l.cards.length)).toEqual([2, 1, 3, 1]);
+    for (const card of lanes.flatMap((l) => l.cards)) {
+      expect(card.cost).toBe('–');
+      expect(card.usd).toBeNull();
     }
+    expect(lanes[0].cards.find((c) => c.id === 'gh-1')).toMatchObject({ time: '1.5h', eta: '~1.5h' });
+    expect(lanes[2].cards.find((c) => c.id === 'gh-3')?.time).toBe('1.0h');
   });
 });
 
@@ -504,7 +646,7 @@ describe('T5 badge', () => {
       { ...labelled('t2', 'gh-1', 'idle'), labels: { ...labelled('t2', 'gh-1').labels, 'worker.of': 'b-lead' } },
       { address: 't3', state: 'dead', status: null, labels: labelled('t3', 'gh-5').labels },
     ];
-    const card = (task: string) => D.lanesOf(P, board[P], null, NOW)[0].cards.find((c) => c.id === task);
+    const card = (task: string) => D.lanesOf(P, board[P])[0].cards.find((c) => c.id === task);
     expect(D.terminalFor(card('gh-1'), terms, { realpaths, workers: noWorkers })).toBe('t2');
     expect(D.terminalFor(card('gh-5'), terms, { realpaths, workers: noWorkers })).toBeNull();
     const fallback = D.parseWorkers(
@@ -526,7 +668,7 @@ describe('T5 badge', () => {
       { address: 't-empty', state: 'live', status: 'working', labels: { ...noLead, 'task.lead': '', 'worker.of': '' } },
       { address: 't-lead', state: 'live', status: 'idle', labels: { ...base, 'worker.of': 'b-lead' } },
     ];
-    const card = D.lanesOf(P, board[P], null, NOW)[0].cards.find((c) => c.id === 'gh-1');
+    const card = D.lanesOf(P, board[P])[0].cards.find((c) => c.id === 'gh-1');
     expect(D.terminalFor(card, terms, { realpaths, workers: noWorkers })).toBe('t-lead');
     expect(D.terminalFor(card, terms.slice(0, 2), { realpaths, workers: noWorkers })).toBe('t-unknown');
   });
@@ -543,7 +685,7 @@ describe('T5 badge', () => {
       });
     const workers = D.parseWorkers(`${start('t-other', 'b-other')}\n${start('t-lead', 'b-lead')}\n`);
     const terms = ['t-other', 't-lead'].map((address) => ({ address, state: 'live', status: 'idle', labels: {} }));
-    const card = D.lanesOf(P, board[P], null, NOW)[0].cards.find((c) => c.id === 'gh-6');
+    const card = D.lanesOf(P, board[P])[0].cards.find((c) => c.id === 'gh-6');
     expect(card.lead).toBe('b-lead');
     expect(D.terminalFor(card, terms, { realpaths, workers })).toBe('t-lead');
     // A card with no lead falls back to the start row's own lead.
@@ -646,8 +788,23 @@ describe('T6 degradation', () => {
       closed_at: null,
       worktree: null,
       project: null,
+      meter_state: null,
+      meter_reason: null,
+      tokens: null,
+      cost: null,
+      activity_hours: null,
+      actors: null,
+      work_min: null,
+      branch_usage: null,
     });
-    expect(D.lanesOf(P, [r], null, NOW)[1].cards[0].id).toBe('gh-1');
+    expect(D.lanesOf(P, [r])[1].cards[0]).toMatchObject({
+      id: 'gh-1',
+      cost: '–',
+      usd: null,
+      meter_state: 'missing',
+      branch_usage: null,
+      bots: [],
+    });
   });
 });
 
@@ -671,7 +828,6 @@ describe('refresh (data.js `refresh`, the host injected)', () => {
     projects = [REPO],
     now = () => NOW,
     login = (_shell: string): Reply => Object.assign(new Error('spawn ENOENT'), { code: 'ENOENT' }),
-    meter = (): Reply => ({ code: 3 }),
   }: {
     bin: (args: string[]) => Reply;
     binThere?: () => boolean;
@@ -680,7 +836,6 @@ describe('refresh (data.js `refresh`, the host injected)', () => {
     projects?: string[];
     now?: () => number;
     login?: (shell: string) => Reply;
-    meter?: () => Reply;
   }) {
     const calls: string[][] = [];
     const wrapped: string[][] = [];
@@ -705,7 +860,6 @@ describe('refresh (data.js `refresh`, the host injected)', () => {
         if (cmd === 'sh' && args[1] === D.BIN_SCRIPT) return answer({ code: binThere() ? 0 : 1, stdout: `${BIN}\n` });
         if (cmd === 'sh' && args[1] === D.REALPATH_SCRIPT) return answer({ code: 0, stdout: '' });
         if (cmd === 'tail') return answer({ code: 0, stdout: workersText });
-        if (cmd === 'automagik-herdr') return answer(meter());
         if (cmd === BIN) return answer(bin(args));
         return answer(new Error(`unexpected exec ${cmd}`));
       },
@@ -841,7 +995,7 @@ describe('refresh (data.js `refresh`, the host injected)', () => {
     for (const s of ['working', 'idle', 'blocked', 'working']) {
       status = s;
       await D.refresh(m, io, { sync: false });
-      const card = D.lanesOf(REPO, m.lists[REPO].rows, null, NOW)[0].cards.find((c) => c.id === 'gh-2');
+      const card = D.lanesOf(REPO, m.lists[REPO].rows)[0].cards.find((c) => c.id === 'gh-2');
       expect([s, D.terminalFor(card, terminals(), { realpaths: m.realpaths, workers: m.workers })]).toEqual([s, 't7']);
     }
     expect(calls.filter((c) => c[0] === 'tail')).toHaveLength(4);
@@ -904,7 +1058,7 @@ describe('refresh (data.js `refresh`, the host injected)', () => {
   const GH_MISSING =
     'genie-rs: gh could not be run (No such file or directory (os error 2)): install it and run gh auth login\n';
 
-  test('the login PATH is resolved once and every genie-rs run (BIN_SCRIPT, list, forge-sync) and doc get carries it', async () => {
+  test('the login PATH is resolved once and every genie-rs run (BIN_SCRIPT, list, forge-sync) carries it', async () => {
     const LOGIN = '/Users/me/.local/bin:/opt/homebrew/bin:/usr/bin:/bin';
     const m = D.newModel();
     const { io, calls, wrapped, shells } = host({
@@ -918,49 +1072,63 @@ describe('refresh (data.js `refresh`, the host injected)', () => {
     expect(wrapped).toContainEqual(['/usr/bin/env', `PATH=${LOGIN}`, 'sh', '-c', D.BIN_SCRIPT]);
     expect(wrapped).toContainEqual(['/usr/bin/env', `PATH=${LOGIN}`, BIN, 'list', '--json', '--project', REPO]);
     expect(wrapped).toContainEqual(['/usr/bin/env', `PATH=${LOGIN}`, BIN, 'forge-sync', '--project', REPO]);
-    // Every genie-rs and automagik-herdr run went through env; the probe, realpaths and tail did not.
-    const viaEnv = (c: string[]) =>
-      c[0] === BIN || c[0] === 'automagik-herdr' || (c[0] === 'sh' && c[2] === D.BIN_SCRIPT);
+    // Every genie-rs run went through env; the probe, realpaths and tail did not; automagik-herdr is never run.
+    expect(calls.some((c) => c[0] === 'automagik-herdr')).toBe(false);
+    const viaEnv = (c: string[]) => c[0] === BIN || (c[0] === 'sh' && c[2] === D.BIN_SCRIPT);
     expect(wrapped.length).toBe(calls.filter(viaEnv).length);
     expect(calls.filter((c) => !viaEnv(c)).every((c) => !wrapped.some((w) => w[2] === c[0]))).toBe(true);
     expect(m.lists[REPO].rows).toHaveLength(2);
   });
 
-  test('usagemeter: doc get runs under the login PATH; a missing automagik-herdr leaves cost and time blank', async () => {
+  test('usagemeter via genie-rs list --json: refresh populates cost, actors and branch_usage without calling automagik-herdr', async () => {
     const LOGIN = '/Users/me/.local/bin:/usr/bin:/bin';
-    const doc = {
-      space: {
-        projects: {
-          [REPO]: { tasks: [{ task: 'gh-1', usd: 1.25, active_min: 30, elapsed_min: 30, lead_min: 30 }] },
+    const enrichedList = JSON.stringify([
+      row({
+        task: 'gh-1',
+        lane: 'Review',
+        meter_state: 'measured',
+        cost: costOf('priced', 1.25),
+        tokens: tokensOf(500),
+        actors: [actorOf()],
+      }),
+      row({
+        task: 'gh-2',
+        lane: 'Working',
+        branch: 'feat/gh-2',
+        meter_state: 'missing',
+        meter_reason: 'no_task_usage',
+        branch_usage: {
+          branch: 'feat/gh-2',
+          state: 'measured',
+          reason: null,
+          tokens: tokensOf(300),
+          cost: costOf('partial', 0.75),
+          activity_hours: 1,
         },
-      },
-    };
-    const notFound = (): Reply => ({ code: 127, stderr: 'env: automagik-herdr: No such file or directory\n' });
-    for (const [meter, priced] of [
-      [(): Reply => ({ code: 0, stdout: `${JSON.stringify(doc)}\n` }), true],
-      [notFound, false], // env could not find it on the login PATH
-      [(): Reply => Object.assign(new Error('spawn automagik-herdr ENOENT'), { code: 'ENOENT' }), false],
-    ] as const) {
-      const m = D.newModel();
-      const { io, wrapped } = host({
-        login: () => ({ code: 0, stdout: `\n__GENIE_LOGIN_PATH__${LOGIN}` }),
-        meter,
-        bin: (args) => (args[0] === 'list' ? { code: 0, stdout: listJson } : { code: 0 }),
-      });
-      await D.refresh(m, io);
-      expect(wrapped).toContainEqual(['/usr/bin/env', `PATH=${LOGIN}`, 'automagik-herdr', 'doc', 'get', 'herdr-meter']);
-      // The board itself is untouched: the binary, both cards, the forge result.
-      expect(m.bin).toEqual({ found: true, path: BIN });
-      expect(m.results).toEqual({ [REPO]: true });
-      const cards = D.lanesOf(REPO, m.lists[REPO].rows, D.feedRows(m.feed, REPO), NOW).flatMap((l) => l.cards);
-      expect(cards.map((c) => c.id).sort()).toEqual(['gh-1', 'gh-2']);
-      const gh1 = cards.find((c) => c.id === 'gh-1');
-      if (priced) expect(gh1?.cost).not.toBe('–');
-      else {
-        expect(m.feed).toBeNull();
-        for (const c of cards) expect([c.cost, c.time]).toEqual(['–', '–']);
-      }
-    }
+      }),
+    ]);
+    const m = D.newModel();
+    const { io, calls } = host({
+      login: () => ({ code: 0, stdout: `\n__GENIE_LOGIN_PATH__${LOGIN}` }),
+      bin: (args) => (args[0] === 'list' ? { code: 0, stdout: enrichedList } : { code: 0 }),
+    });
+    await D.refresh(m, io);
+    expect(calls.some((c) => c[0] === 'automagik-herdr')).toBe(false);
+    expect('feed' in m).toBe(false);
+    const cards = D.lanesOf(REPO, m.lists[REPO].rows).flatMap((l) => l.cards);
+    expect(cards.find((c) => c.id === 'gh-1')).toMatchObject({
+      cost: '$1.25',
+      usd: 1.25,
+      tokens: 500,
+      meter_state: 'measured',
+    });
+    expect(cards.find((c) => c.id === 'gh-2')).toMatchObject({
+      cost: '–',
+      usd: null,
+      meter_state: 'missing',
+      meter_reason: 'no_task_usage',
+      branch_usage: { branch: 'feat/gh-2', cost_text: '$0.75', cost_badge: 'partial', tokens_total: 300 },
+    });
   });
 
   test('no login shell answers: the inherited PATH is kept and every run is exactly as before', async () => {

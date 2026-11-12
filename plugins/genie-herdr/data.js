@@ -1,7 +1,8 @@
 // The Tasks board's pure rules: discovery, the forge-sync budget, lanes and cards, lifecycle time
-// from genie-rs, cost from usagemeter, the badge join and degraded states. No imports (no `herdr`, no
-// `gpui-kit`, no node built-ins): the same file loads in Herdr and in bun:test. Every process is
-// spawned by main.js; the shell it runs is exported here so the tests run the very same strings.
+// and usagemeter cost from `genie-rs list --json --project <p>`, the badge join and degraded states.
+// No imports (no `herdr`, no `gpui-kit`, no node built-ins): the same file loads in Herdr and in
+// bun:test. Every process is spawned by main.js; the shell it runs is exported here so the tests
+// run the very same strings.
 
 export const MOD = 'genie-herdr';
 export const WAITING_KEY = 'genie.tasks.waiting';
@@ -308,7 +309,7 @@ export function forgeReason(outcome) {
 // ---------- list ----------
 
 const ROW_FIELDS =
-  'task task_key state lane title lead forge url branch updated_at created_at opened_at merged_at closed_at worktree project age_min task_open_min task_lead_min pr_open_min pr_lead_min'.split(
+  'task task_key state lane title lead forge url branch updated_at created_at opened_at merged_at closed_at worktree project age_min task_open_min task_lead_min pr_open_min pr_lead_min meter_state meter_reason tokens cost activity_hours actors work_min branch_usage'.split(
     ' ',
   );
 
@@ -341,32 +342,67 @@ export const shownProjects = (projects, lists) => (projects ?? []).filter((p) =>
 
 export const listAge = (entry, now) => (entry?.at == null ? null : fmtMin((now - entry.at) / MIN_MS));
 
-// ---------- usagemeter ----------
+// ---------- usagemeter (via genie-rs list --json) ----------
 
-/** `doc get herdr-meter`: a doc only on exit 0 with one line of JSON (Decision 15); else null. */
-export function docFeed(outcome) {
-  if (!outcome?.ok) return null;
-  const text = String(outcome.stdout ?? '').trim();
-  if (!text || text.includes('\n')) return null;
-  try {
-    const doc = JSON.parse(text);
-    return doc && typeof doc === 'object' ? doc : null;
-  } catch {
-    return null;
+function resolveMeterCost(rawState, rawReason, costObj, tokensObj) {
+  const meterState = typeof rawState === 'string' ? rawState : 'missing';
+  const costState = typeof costObj?.state === 'string' ? costObj.state : null;
+  const meterReason = rawReason ?? (costState === 'unpriced' ? 'unpriced_models' : null);
+  const totalTokens = typeof tokensObj?.total === 'number' && Number.isFinite(tokensObj.total) ? tokensObj.total : null;
+  if (
+    meterState === 'measured' &&
+    (costState === 'priced' || costState === 'partial') &&
+    typeof costObj?.usd === 'number' &&
+    Number.isFinite(costObj.usd)
+  ) {
+    return {
+      meter_state: meterState,
+      cost_state: costState,
+      meter_reason: meterReason,
+      usd: costObj.usd,
+      cost: fmtUsd(costObj.usd),
+      cost_badge: costState === 'partial' ? 'partial' : null,
+      tokens: totalTokens,
+    };
   }
+  if (meterState === 'zero' || (meterState === 'measured' && costState === 'zero')) {
+    return {
+      meter_state: meterState,
+      cost_state: costState ?? 'zero',
+      meter_reason: null,
+      usd: 0,
+      cost: '$0.00',
+      cost_badge: null,
+      tokens: 0,
+    };
+  }
+  return {
+    meter_state: meterState,
+    cost_state: costState,
+    meter_reason: meterReason,
+    usd: null,
+    cost: '–',
+    cost_badge: null,
+    tokens: meterState === 'measured' ? totalTokens : null,
+  };
 }
 
-/** The pinned `space.projects[<project>].tasks`, only when it is an array (usagemeter#8). */
-export function feedRows(doc, project) {
-  const tasks = doc?.space?.projects?.[project]?.tasks;
-  return Array.isArray(tasks) ? tasks : null;
-}
-
-/** The feed row of a card: `(project, task)`, or the url when the task is null. */
-export function feedRowFor(rows, task, url) {
-  if (!rows) return null;
-  if (task != null) return rows.find((r) => r?.task === task) ?? null;
-  return url ? (rows.find((r) => r?.task == null && r?.url === url) ?? null) : null;
+function normalizeBranchUsage(b) {
+  if (!b || typeof b !== 'object' || typeof b.branch !== 'string' || !b.branch) return null;
+  const m = resolveMeterCost(b.state, b.reason, b.cost, b.tokens);
+  return {
+    branch: b.branch,
+    state: m.meter_state,
+    cost_state: m.cost_state,
+    reason: m.meter_reason,
+    tokens: b.tokens ?? null,
+    tokens_total: m.tokens,
+    cost: b.cost ?? null,
+    usd: m.usd,
+    cost_text: m.cost,
+    cost_badge: m.cost_badge,
+    activity_hours: typeof b.activity_hours === 'number' && Number.isFinite(b.activity_hours) ? b.activity_hours : null,
+  };
 }
 
 /** This project's comparable merged lead times from list, including measured zero, sorted. */
@@ -425,8 +461,20 @@ export function fmtUsd(x) {
 const rowKey = (r) => r.task_key ?? r.task ?? r.url ?? r.branch ?? r.title ?? '';
 
 /** The read-only card model: what a card and its drawer show. No actions. */
-export function cardOf(project, r, rows, history) {
-  const f = feedRowFor(rows, r.task, r.url);
+export function cardOf(project, r, history = []) {
+  const m = resolveMeterCost(r.meter_state, r.meter_reason, r.cost, r.tokens);
+  const actors = Array.isArray(r.actors)
+    ? r.actors.map((a) => ({
+        bot: a?.bot ?? null,
+        kind: a?.kind ?? 'worker',
+        role: a?.role ?? null,
+        squad: a?.squad ?? null,
+        unrecorded: Array.isArray(a?.unrecorded) ? a.unrecorded : [],
+        harness: a?.harness ?? null,
+        usd: null,
+        work_min: null,
+      }))
+    : [];
   const open = OPEN.has(r.lane);
   const working = r.lane === 'Working';
   const elapsed = open ? ((working ? r.task_open_min : r.pr_open_min) ?? null) : null;
@@ -449,27 +497,35 @@ export function cardOf(project, r, rows, history) {
     opened_at: r.opened_at,
     merged_at: r.merged_at,
     closed_at: r.closed_at,
-    usd: f?.usd ?? null,
-    work_min: f?.work_min ?? null,
+    meter_state: m.meter_state,
+    cost_state: m.cost_state,
+    meter_reason: m.meter_reason,
+    usd: m.usd,
+    tokens: m.tokens,
+    work_min: null,
+    activity_hours: typeof r.activity_hours === 'number' && Number.isFinite(r.activity_hours) ? r.activity_hours : null,
     lead_min: leadMin,
     elapsed,
-    cost: fmtUsd(f?.usd ?? null),
+    cost: m.cost,
+    cost_badge: m.cost_badge,
     time: open ? fmtMin(elapsed) : fmtMin(leadMin),
     eta: open ? etaText(est) : '–',
     est,
     merges: history.length,
-    bots: Array.isArray(f?.bots) ? f.bots : [],
+    actors,
+    bots: actors,
+    branch_usage: normalizeBranchUsage(r.branch_usage),
   };
 }
 
 const byUpdated = (a, b) => (parseTime(b.updated_at) ?? 0) - (parseTime(a.updated_at) ?? 0);
 
 /** Working, Review, Merged and Closed, newest `updated_at` first, CARD_CAP cards each with the total. */
-export function lanesOf(project, rows, feed) {
+export function lanesOf(project, rows) {
   const taskHistory = historyOf(rows, 'task_lead_min');
   const prHistory = historyOf(rows);
   const cards = (rows ?? []).map((r) =>
-    cardOf(project, normalizeRow(r), feed, r.lane === 'Working' ? taskHistory : prHistory),
+    cardOf(project, normalizeRow(r), r.lane === 'Working' ? taskHistory : prHistory),
   );
   return LANES.map((key) => {
     const all = cards.filter((c) => c.lane === key).sort(byUpdated);
@@ -589,7 +645,6 @@ export const newModel = () => ({
   never: new Set(),
   foldersKey: null,
   lists: {}, // realpath -> applyList entry
-  feed: null,
   sched: undefined, // planTick state
   results: {}, // the last forge-sync outcome per project, for the next plan
   reasons: {}, // project -> why its last forge-sync failed (forgeReason), until one succeeds
@@ -622,7 +677,7 @@ export function forgeNoteOf(m, project) {
   return failed ? (m.reasons?.[project] ?? 'forge not synced') : null;
 }
 
-/** One `genie-rs`, BIN_SCRIPT or `automagik-herdr` run under the model's login PATH, settled. */
+/** One `genie-rs` or BIN_SCRIPT run under the model's login PATH, settled. */
 const runBin = (m, io, cmd, args) => {
   const [c, a] = loginArgv(m.path, cmd, args);
   return settle(io.exec(c, a));
@@ -645,11 +700,11 @@ async function binaryGone(m, io, outcomes) {
  * One refresh of model `m`. `io` is the host: `exec(cmd, args)`, `probe(folders)`
  * (main.js runs PROBE_SCRIPT), `spaces()`, `home()`, `terminals()`, `focusedFolder()`, `workersFile`,
  * `now()`, `notify()` and `publish()`. Order: the login PATH (once per model), binary, probe, the
- * workers tail only when needed, realpaths, the plan, `list` for every project, `doc get`, the badge,
- * then the planned forge-syncs (their outcomes go to the next plan). BIN_SCRIPT, `list`, `doc get`
- * (usagemeter's cost, from `automagik-herdr`) and `forge-sync` run under the login PATH. `sync: false` plans no forge-sync; `feed: false` skips `doc get`.
+ * workers tail only when needed, realpaths, the plan, `list` for every project, the badge,
+ * then the planned forge-syncs (their outcomes go to the next plan). BIN_SCRIPT, `list`
+ * and `forge-sync` run under the login PATH. `sync: false` plans no forge-sync.
  */
-export async function refresh(m, io, { sync = true, feed = true } = {}) {
+export async function refresh(m, io, { sync = true } = {}) {
   if (m.path === undefined) m.path = await resolveLoginPath(io);
   if (!m.bin?.found) m.bin = parseBin(await runBin(m, io, 'sh', ['-c', BIN_SCRIPT]));
   if (!m.bin.found) return io.notify();
@@ -688,7 +743,6 @@ export async function refresh(m, io, { sync = true, feed = true } = {}) {
   listed.forEach((p, i) => {
     m.lists[p] = applyList(m.lists[p], outs[i], io.now());
   });
-  if (feed) m.feed = docFeed(await runBin(m, io, 'automagik-herdr', ['doc', 'get', 'herdr-meter']));
   io.publish();
   io.notify();
 

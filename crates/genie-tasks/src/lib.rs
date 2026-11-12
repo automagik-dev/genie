@@ -5,12 +5,18 @@
 
 pub mod export;
 pub mod link;
+pub mod meter;
 pub mod push;
 pub mod start;
 pub mod state;
 pub mod store;
 
 pub use export::{RebuildReport, rebuild};
+pub use meter::{
+    BranchUsageSummary, KNOWN_PREVIOUS_REPO_SLUGS, MeterActivity, MeterBotKey, MeterBotRow, MeterBranchRow, MeterCost,
+    MeterCostState, MeterQueryError, MeterRowState, MeterTaskActor, MeterTaskRow, MeterTokens, normalize_repo_slug,
+    query_repo_by_bot, query_repo_by_branches, query_repo_by_task, repo_aliases_for_query, repo_slug_of_project,
+};
 pub use push::{Pushed, push};
 pub use start::{StartOptions, Started, VerbError, start};
 pub use state::{Clock, FixedClock, Lane, Refusal, SystemClock, TaskEvent, TaskState, apply};
