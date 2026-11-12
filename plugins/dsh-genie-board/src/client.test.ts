@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, mock, test } from 'bun:test';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -200,14 +200,29 @@ describe('the browser bundle on every primitives table the range admits', () => 
   let output = '';
   let bundle = '';
   let iconsBundle = '';
+  /** The plugin folder's entries before the build: the suite must add none of its own. */
+  let pluginEntries: string[] = [];
 
   beforeAll(async () => {
+    pluginEntries = await readdir(plugin);
     output = await mkdtemp(join(tmpdir(), 'genie-client-tables-'));
     const version = JSON.parse(await readFile(join(plugin, '../../package.json'), 'utf8')).version;
-    const proc = Bun.spawn(['bun', 'run', 'build', version, output], { cwd: plugin, stdout: 'pipe', stderr: 'pipe' });
+    // The build gets a home of its own inside this test's temp tree. Inherited, HOME can be
+    // the string "undefined" by the time this runs in the full suite (a test that restores an
+    // unset variable through process.env writes that string), and bun then creates its
+    // install cache at ./undefined/.bun/install/cache inside this package.
+    const home = join(output, 'home');
+    const env = { ...process.env, HOME: home, BUN_INSTALL_CACHE_DIR: join(home, '.bun', 'install', 'cache') };
+    const dist = join(output, 'dist');
+    const proc = Bun.spawn(['bun', 'run', 'build', version, dist], {
+      cwd: plugin,
+      env,
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
     const [code, stderr] = await Promise.all([proc.exited, new Response(proc.stderr).text()]);
     if (code !== 0) throw new Error(`plugin build failed: ${stderr}`);
-    bundle = await readFile(join(output, 'client.js'), 'utf8');
+    bundle = await readFile(join(dist, 'client.js'), 'utf8');
     // The search glyph sits in a filtered-empty state the first render never reaches,
     // so its resolution is checked on the icons module alone, bundled the same way.
     const built = await build({
@@ -300,4 +315,11 @@ describe('the browser bundle on every primitives table the range admits', () => 
       expect(search).toBe(spelling ? `<i ${glyph('Search')}></i>` : '');
     });
   }
+
+  // Whatever a spawned build or a cache writes, it writes inside this suite's temp tree:
+  // a new entry here is a file the suite left in the source tree (it once was ./undefined).
+  test('the suite leaves the plugin folder as it found it', async () => {
+    const added = (await readdir(plugin)).filter((entry) => !pluginEntries.includes(entry));
+    expect(added).toEqual([]);
+  });
 });

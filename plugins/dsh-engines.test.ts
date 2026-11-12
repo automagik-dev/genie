@@ -4,7 +4,7 @@ import { join } from 'node:path';
 
 /**
  * The DSH Host range every Genie DSH plugin declares in `engines.dsh` is a promise DSH
- * keeps for it. From dsh-app-boot 0.2.1-alpha.5 an unmet range skips the plugin's bundle
+ * keeps for it. From dsh-app-boot 0.2.1-alpha.4 an unmet range skips the plugin's bundle
  * at profile load and disables its row in preflight, evaluated with prereleases included
  * (`semver.satisfies(runtime, range, { includePrerelease: true })`; `engines.dsh`, when
  * present, decides alone). So the three plugins refuse an untested Host together, by one
