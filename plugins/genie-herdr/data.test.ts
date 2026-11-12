@@ -1,7 +1,7 @@
 // The Tasks board's pure rules (plugins/genie-herdr/data.js), driven the way main.js drives them.
 // The shell strings data.js exports (PROBE_SCRIPT, BIN_SCRIPT, REALPATH_SCRIPT) run here under the
 // same `sh -c <script> sh ...args` argv main.js hands to Herdr's exec.
-import { afterEach, describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, mock, test } from 'bun:test';
 import { createHash } from 'node:crypto';
 import {
   chmodSync,
@@ -91,8 +91,8 @@ const costOf = (state: string, usd: number | null) => ({
   usd_estimated: usd,
   tokens_priced: usd != null ? 100 : 0,
   tokens_reported: 0,
-  tokens_unpriced: state === 'partial' || state === 'unpriced' ? 50 : 0,
-  unpriced_models: state === 'partial' || state === 'unpriced' ? ['custom-m'] : [],
+  tokens_unpriced: 0,
+  unpriced_models: [],
   unpriced_models_omitted: 0,
 });
 const actorOf = (bot = 'b-lead') => ({
@@ -105,6 +105,23 @@ const actorOf = (bot = 'b-lead') => ({
   usd: null,
   work_min: null,
 });
+const mRow = (
+  task: string | null,
+  meter_state: string,
+  meter_reason: string | null,
+  total: number | null,
+  cost_state: string | null,
+  usd: number | null,
+  over: Record<string, unknown> = {},
+) =>
+  row({
+    task,
+    meter_state,
+    meter_reason,
+    tokens: total != null ? tokensOf(total) : null,
+    cost: cost_state != null ? costOf(cost_state, usd) : null,
+    ...over,
+  });
 
 describe('T2 discovery', () => {
   test('local space folders only, deduped; an empty folder is the home', () => {
@@ -184,28 +201,15 @@ describe('T3 lanes and card', () => {
 
 describe('T4 cost, time and ETA', () => {
   const rows = [
-    row({
-      task: 'gh-1',
-      lane: 'Working',
-      state: 'created',
+    mRow('gh-1', 'measured', null, 1500, 'priced', 1.5, {
       created_at: iso(NOW - 90 * MIN),
       task_open_min: 90,
       pr_open_min: null,
-      meter_state: 'measured',
-      meter_reason: null,
-      tokens: tokensOf(1500),
-      cost: costOf('priced', 1.5),
       activity_hours: 2,
       actors: [actorOf()],
     }),
-    row({
-      task: 'gh-2',
-      lane: 'Working',
+    mRow('gh-2', 'missing', 'no_task_usage', null, null, null, {
       branch: 'feat/gh-2',
-      meter_state: 'missing',
-      meter_reason: 'no_task_usage',
-      tokens: null,
-      cost: null,
       branch_usage: {
         branch: 'feat/gh-2',
         state: 'measured',
@@ -215,46 +219,39 @@ describe('T4 cost, time and ETA', () => {
         activity_hours: 3,
       },
     }),
-    row({
-      task: 'gh-3',
+    mRow('gh-3', 'missing', 'no_task_usage', null, null, null, {
       state: 'merged',
       lane: 'Merged',
       pr_lead_min: 60,
       task_lead_min: 60,
-      meter_state: 'zero',
-      tokens: tokensOf(0),
-      cost: costOf('zero', 0),
+      branch: 'feat/gh-3',
+      branch_usage: {
+        branch: 'feat/gh-3',
+        state: 'zero',
+        reason: null,
+        tokens: tokensOf(0),
+        cost: costOf('zero', 0),
+        activity_hours: 0,
+      },
     }),
-    row({
-      task: null,
+    mRow(null, 'measured', null, 2000, 'partial', 2, {
       state: 'opened',
       lane: 'Review',
       pr_open_min: 300,
       url: 'https://github.com/o/r/pull/9',
-      meter_state: 'measured',
-      tokens: tokensOf(2000),
-      cost: costOf('partial', 2),
     }),
-    row({ task: 'gh-4', state: 'closed', lane: 'Closed', meter_state: 'missing', meter_reason: 'outside_d30_window' }),
-    row({
-      task: 'gh-old1',
+    mRow('gh-4', 'missing', 'outside_d30_window', null, null, null, { state: 'closed', lane: 'Closed' }),
+    mRow('gh-old1', 'measured', null, 3000, 'priced', 3, {
       state: 'merged',
       lane: 'Merged',
       pr_lead_min: 120,
       task_lead_min: 120,
-      meter_state: 'measured',
-      tokens: tokensOf(3000),
-      cost: costOf('priced', 3),
     }),
-    row({
-      task: 'gh-old2',
+    mRow('gh-old2', 'measured', null, 3000, 'priced', 3, {
       state: 'merged',
       lane: 'Merged',
       pr_lead_min: 240,
       task_lead_min: 240,
-      meter_state: 'measured',
-      tokens: tokensOf(3000),
-      cost: costOf('priced', 3),
     }),
   ];
   const cards = (listRows = rows) =>
@@ -262,13 +259,12 @@ describe('T4 cost, time and ETA', () => {
       D.lanesOf(P, listRows).flatMap((l) => l.cards.map((c) => [c.id === 'untracked' ? c.url : c.id, c])),
     );
 
-  test('null renders "–", a measured 0 renders $0.00 and 0m', () => {
-    expect(D.fmtUsd(null)).toBe('–');
-    expect(D.fmtUsd(0)).toBe('$0.00');
-    expect(D.fmtUsd(1.234)).toBe('$1.23');
-    expect(D.fmtMin(null)).toBe('–');
-    expect(D.fmtMin(0)).toBe('0m');
-    expect(D.fmtMin(90)).toBe('1.5h');
+  test('null renders "–", a measured 0 renders $0.00, 0 and 0m, and fmtTokens formats compact token counts', () => {
+    expect([D.fmtUsd(null), D.fmtUsd(0), D.fmtUsd(0.004), D.fmtUsd(1.234)]).toEqual(['–', '$0.00', '<$0.01', '$1.23']);
+    expect([D.fmtMin(null), D.fmtMin(0), D.fmtMin(90)]).toEqual(['–', '0m', '1.5h']);
+    expect(
+      [null, Number.NaN, -1, 0, 500, 1_500, 42_000, 999_600, 1_500_000, 68_700_000, 1_200_000_000].map(D.fmtTokens),
+    ).toEqual(['–', '–', '–', '0', '500', '1.5k', '42k', '1.0M', '1.5M', '69M', '1.2B']);
   });
 
   test('single cost path from genie-rs list --json: docFeed and feedRows are retired', () => {
@@ -280,7 +276,7 @@ describe('T4 cost, time and ETA', () => {
     expect(mainSrc).toContain('Branch usage (d30, not task-isolated)');
   });
 
-  test('renders measured priced and partial costs, zero only on zero state, and actors/branch_usage', () => {
+  test('renders measured priced and partial costs and compact tokens, zero only on zero state, and actors/branch_usage', () => {
     const c = cards();
     expect(c['gh-1']).toMatchObject({
       meter_state: 'measured',
@@ -290,18 +286,32 @@ describe('T4 cost, time and ETA', () => {
       cost: '$1.50',
       cost_badge: null,
       tokens: 1500,
+      tokens_text: '1.5k',
       work_min: null,
       activity_hours: 2,
       branch_usage: null,
       bots: [actorOf()],
     });
     expect(c['gh-3']).toMatchObject({
-      meter_state: 'zero',
-      cost_state: 'zero',
-      usd: 0,
-      cost: '$0.00',
+      meter_state: 'missing',
+      meter_reason: 'no_task_usage',
+      usd: null,
+      cost: '–',
       cost_badge: null,
-      tokens: 0,
+      tokens: null,
+      tokens_text: '–',
+      branch_usage: {
+        branch: 'feat/gh-3',
+        state: 'zero',
+        cost_state: 'zero',
+        reason: null,
+        tokens_total: 0,
+        tokens_text: '0',
+        usd: 0,
+        cost_text: '$0.00',
+        cost_badge: null,
+        activity_hours: 0,
+      },
     });
     expect(c['https://github.com/o/r/pull/9']).toMatchObject({
       meter_state: 'measured',
@@ -310,6 +320,7 @@ describe('T4 cost, time and ETA', () => {
       cost: '$2.00',
       cost_badge: 'partial',
       tokens: 2000,
+      tokens_text: '2.0k',
     });
     expect(c['gh-2']).toMatchObject({
       meter_state: 'missing',
@@ -318,12 +329,14 @@ describe('T4 cost, time and ETA', () => {
       cost: '–',
       cost_badge: null,
       tokens: null,
+      tokens_text: '–',
       branch_usage: {
         branch: 'feat/gh-2',
         state: 'measured',
         cost_state: 'priced',
         reason: null,
         tokens_total: 4200,
+        tokens_text: '4.2k',
         usd: 4.25,
         cost_text: '$4.25',
         cost_badge: null,
@@ -332,69 +345,51 @@ describe('T4 cost, time and ETA', () => {
     });
   });
 
-  test('missing, stale, unsupported and unpriced states render "–" with reason and never $0.00', () => {
+  test('missing, stale and unsupported render "–" for cost and tokens with reason; unpriced blanks only the cost; priced/partial 0 usd with >0 tokens renders <$0.01', () => {
     const c = cards([
-      row({ task: 't-missing', meter_state: 'missing', meter_reason: 'absent_store', cost: null, tokens: null }),
-      row({
-        task: 't-old-meter',
-        meter_state: 'missing',
-        meter_reason: 'needs usagemeter >= 3.129.2',
-        cost: null,
-        tokens: null,
-      }),
-      row({
-        task: 't-stale-num',
-        meter_state: 'stale',
-        meter_reason: 'ingestion_stale',
-        tokens: tokensOf(800),
-        cost: costOf('priced', 9.5),
-      }),
-      row({ task: 't-stale-null', meter_state: 'stale', meter_reason: 'ingestion_stale', tokens: null, cost: null }),
-      row({
-        task: 't-unsupported',
-        meter_state: 'unsupported',
-        meter_reason: 'source_unsupported',
-        tokens: null,
-        cost: null,
-      }),
-      row({
-        task: 't-unpriced',
-        meter_state: 'measured',
-        meter_reason: null,
-        tokens: tokensOf(1200),
-        cost: costOf('unpriced', null),
-      }),
-      row({
-        task: 't-measured-zero-cost',
-        meter_state: 'measured',
-        meter_reason: null,
-        tokens: tokensOf(0),
-        cost: costOf('zero', 0),
-      }),
+      mRow('t-missing', 'missing', 'absent_store', null, null, null),
+      mRow('t-old-meter', 'missing', 'needs usagemeter >= 3.129.2', null, null, null),
+      mRow('t-stale-num', 'stale', 'ingestion_stale', 800, 'priced', 9.5),
+      mRow('t-stale-null', 'stale', 'ingestion_stale', null, null, null),
+      mRow('t-unsupported', 'unsupported', 'source_unsupported', null, null, null),
+      mRow('t-unpriced', 'measured', null, 1200, 'unpriced', null),
+      mRow('t-priced-zero-usd', 'measured', null, 500, 'priced', 0),
+      mRow('t-priced-subcent', 'measured', null, 500, 'priced', 0.004),
+      mRow('t-partial-zero-usd', 'measured', null, 1500, 'partial', 0),
+      mRow('t-partial-subcent', 'measured', null, 1500, 'partial', 0.004),
     ]);
-    expect(c['t-missing']).toMatchObject({ cost: '–', usd: null, tokens: null, meter_reason: 'absent_store' });
-    expect(c['t-old-meter']).toMatchObject({
-      cost: '–',
-      usd: null,
-      tokens: null,
-      meter_reason: 'needs usagemeter >= 3.129.2',
-    });
-    expect(c['t-stale-num']).toMatchObject({ cost: '–', usd: null, tokens: null, meter_reason: 'ingestion_stale' });
-    expect(c['t-stale-null']).toMatchObject({ cost: '–', usd: null, tokens: null, meter_reason: 'ingestion_stale' });
-    expect(c['t-unsupported']).toMatchObject({
-      cost: '–',
-      usd: null,
-      tokens: null,
-      meter_reason: 'source_unsupported',
-    });
+    for (const [id, reason] of [
+      ['t-missing', 'absent_store'],
+      ['t-old-meter', 'needs usagemeter >= 3.129.2'],
+      ['t-stale-num', 'ingestion_stale'],
+      ['t-stale-null', 'ingestion_stale'],
+      ['t-unsupported', 'source_unsupported'],
+    ] as const) {
+      expect(c[id]).toMatchObject({ cost: '–', tokens_text: '–', usd: null, tokens: null, meter_reason: reason });
+    }
     expect(c['t-unpriced']).toMatchObject({
       cost: '–',
+      tokens_text: '1.2k',
       usd: null,
       tokens: 1200,
       cost_state: 'unpriced',
       meter_reason: 'unpriced_models',
     });
-    expect(c['t-measured-zero-cost']).toMatchObject({ cost: '$0.00', usd: 0, tokens: 0, cost_state: 'zero' });
+    for (const [id, badge, tok, txt, usd, st] of [
+      ['t-priced-zero-usd', null, 500, '500', 0, 'priced'],
+      ['t-priced-subcent', null, 500, '500', 0.004, 'priced'],
+      ['t-partial-zero-usd', 'partial', 1500, '1.5k', 0, 'partial'],
+      ['t-partial-subcent', 'partial', 1500, '1.5k', 0.004, 'partial'],
+    ] as const) {
+      expect(c[id]).toMatchObject({
+        cost: '<$0.01',
+        cost_badge: badge,
+        tokens: tok,
+        tokens_text: txt,
+        usd,
+        cost_state: st,
+      });
+    }
   });
 
   test('list task and PR times drive open and terminal cards; missing list time stays unknown', () => {
@@ -1581,6 +1576,116 @@ describe('the mod', () => {
         args: { name: 'genie-herdr' },
         badge: 'genie.tasks.waiting',
       },
+    ]);
+  });
+
+  test('main.js card and drawer render compact tokens beside cost, expose reason on "–" cards, truncate kv values, and print branch_usage reason once', async () => {
+    type GNode = { kind: string; props: Record<string, unknown>; children: (GNode | string)[] };
+    const mk = (kind: string, extra: Record<string, unknown> = {}): GNode => {
+      const node: GNode = { kind, props: { ...extra }, children: [] };
+      const proxy: GNode = new Proxy(node, {
+        get(target, prop: string) {
+          if (prop in target) return (target as unknown as Record<string, unknown>)[prop];
+          if (prop === 'child') return (c: GNode | string) => target.children.push(c) && proxy;
+          if (prop === 'children') return (cs: (GNode | string)[]) => target.children.push(...cs) && proxy;
+          if (prop === 'when') return (cond: boolean, fn: (n: GNode) => GNode) => (cond ? fn(proxy) : proxy);
+          return (val = true) => Object.assign(target.props, { [prop]: val }) && proxy;
+        },
+      });
+      return proxy;
+    };
+    const textsOf = (n: GNode | string): string[] =>
+      typeof n === 'string' ? [n] : n.children.flatMap((c) => textsOf(c));
+    mock.module('gpui-base', () => ({ h_flex: () => mk('h_flex'), v_flex: () => mk('v_flex') }));
+    mock.module('gpui-kit', () => ({
+      View: class {},
+      div: () => mk('div'),
+      svg: (src: string) => mk('svg', { src }),
+    }));
+    const herdrFns =
+      'appHome closeOverlay exec focused home nextCommand panes props run setShared shared spaces terminals theme'.split(
+        ' ',
+      );
+    mock.module('herdr', () => ({
+      ...Object.fromEntries(herdrFns.map((k) => [k, () => {}])),
+      settings: () => ({ font_family: 'JetBrains Mono' }),
+    }));
+    const mainPath = './main.js';
+    const { default: Tasks } = await import(mainPath);
+    const board = Object.assign(Object.create(Tasks.prototype), {
+      m: D.newModel(),
+      terms: [],
+      selected: {},
+      copied: null,
+    });
+    const t = { foreground: '#fff', muted: '#aaa', dim: '#777', accent: '#0af', border: '#333', surface: '#181818' };
+    const cardFrom = (over: Record<string, unknown>, hist: number[] = []) =>
+      D.cardOf(P, D.normalizeRow(row(over)), hist);
+
+    const renderedMeasured = board.card(
+      cardFrom(
+        {
+          task: 'gn-1',
+          task_open_min: 90,
+          meter_state: 'measured',
+          tokens: tokensOf(1500),
+          cost: costOf('partial', 0),
+        },
+        [60, 120, 240],
+      ),
+      t,
+      null,
+    ) as GNode;
+    expect(textsOf(renderedMeasured)).toEqual([
+      'gn-1',
+      'a task',
+      'b-lead',
+      '1.5h',
+      'left',
+      '~1.5h',
+      '<$0.01',
+      'partial',
+      '1.5k',
+    ]);
+
+    const missingCard = cardFrom({
+      task: 'gn-2',
+      branch: 'feat/gn-2',
+      meter_state: 'missing',
+      meter_reason: 'needs usagemeter >= 3.129.2',
+      branch_usage: {
+        branch: 'feat/gn-2',
+        state: 'stale',
+        reason: 'ingestion_stale',
+        tokens: tokensOf(4200),
+        cost: costOf('priced', null),
+        activity_hours: 2,
+      },
+    });
+    const renderedMissing = board.card(missingCard, t, null) as GNode;
+    const reasonNode = renderedMissing.children.at(-1) as GNode;
+    expect(textsOf(reasonNode)).toEqual(['needs usagemeter >= 3.129.2']);
+    expect(reasonNode.props.truncate).toBe(true);
+
+    const unpricedCard = cardFrom({
+      task: 'gn-3',
+      meter_state: 'measured',
+      tokens: tokensOf(1200),
+      cost: costOf('unpriced', null),
+    });
+    expect(textsOf(board.card(unpricedCard, t, null) as GNode).slice(-3)).toEqual(['–', '1.2k', 'unpriced_models']);
+
+    const drawer = board.drawer(missingCard, t) as GNode;
+    const drawerTexts = textsOf(drawer);
+    expect(drawerTexts.some((s) => s.includes('– ('))).toBe(false);
+    expect(drawerTexts.filter((s) => s === 'needs usagemeter >= 3.129.2')).toHaveLength(1);
+    expect(drawerTexts.filter((s) => s === 'ingestion_stale')).toHaveLength(1);
+    const nodesOf = (n: GNode | string): GNode[] => (typeof n === 'string' ? [] : [n, ...n.children.flatMap(nodesOf)]);
+    const isReason = (c: GNode | string) => c === 'needs usagemeter >= 3.129.2' || c === 'ingestion_stale';
+    const reasons = nodesOf(drawer).filter((n) => isReason(n.children[0]));
+    expect(reasons.map((n) => [n.props.whitespace_normal, n.props.truncate])).toEqual([
+      [true, undefined],
+      [true, undefined],
     ]);
   });
 });

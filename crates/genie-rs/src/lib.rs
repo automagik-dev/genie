@@ -198,7 +198,7 @@ fn attach_missing_meter(val: &mut Value, reason: &str, branch_usage: Value) {
 }
 
 fn attach_task_meter(val: &mut Value, tr: &MeterTaskRow) {
-    val["meter_state"] = json!(tr.state.as_str());
+    val["meter_state"] = json!(tr.state);
     val["meter_reason"] = json!(tr.reason);
     val["tokens"] = json!(tr.tokens);
     val["cost"] = json!(tr.cost);
@@ -216,20 +216,12 @@ fn attach_task_meter(val: &mut Value, tr: &MeterTaskRow) {
 /// Enriches `tasks` with Contract 1 meter fields (`--by task` for card cost, batched `--branch` for drawer usage).
 fn tasks_json(store: &Store, tasks: &[Listed]) -> Vec<Value> {
     let mut out: Vec<Value> = tasks.iter().map(task_json).collect();
-    let in_window: Vec<bool> = tasks.iter().map(|l| !store.outside_d30_window(&l.row.updated_at)).collect();
-    for (val, &inside) in out.iter_mut().zip(&in_window) {
-        if !inside {
-            attach_missing_meter(val, "outside_d30_window", Value::Null);
-        }
-    }
-    if !in_window.iter().any(|&b| b) {
+    if tasks.is_empty() {
         return out;
     }
     let fill_err = |out: &mut [Value], reason: &str| {
-        for (val, &inside) in out.iter_mut().zip(&in_window) {
-            if inside {
-                attach_missing_meter(val, reason, Value::Null);
-            }
+        for val in out.iter_mut() {
+            attach_missing_meter(val, reason, Value::Null);
         }
     };
     let Some(slug) = store.repo_slug() else {
@@ -244,12 +236,14 @@ fn tasks_json(store: &Store, tasks: &[Listed]) -> Vec<Value> {
         }
     };
     let task_map: BTreeMap<&str, &MeterTaskRow> = task_rows.iter().map(|r| (r.task.as_str(), r)).collect();
+    let in_window: Vec<bool> = tasks.iter().map(|l| !store.outside_d30_window(&l.row.updated_at)).collect();
+    // Decision order: by-task row present -> attach as is; absent and inside the window -> branch call; absent and outside the window -> outside_d30_window.
     let mut candidate_branches: Vec<String> = Vec::new();
     for (l, &inside) in tasks.iter().zip(&in_window) {
-        let has_num = !l.row.task.is_empty() && task_map.get(l.row.task.as_str()).is_some_and(|r| r.tokens.is_some());
-        if inside
+        let has_task_row = !l.row.task.is_empty() && task_map.contains_key(l.row.task.as_str());
+        if !has_task_row
+            && inside
             && !l.row.branch.is_empty()
-            && !has_num
             && candidate_branches.len() < MAX_QUERY_BRANCHES
             && !candidate_branches.contains(&l.row.branch)
         {
@@ -263,34 +257,28 @@ fn tasks_json(store: &Store, tasks: &[Listed]) -> Vec<Value> {
     });
 
     for ((val, l), &inside) in out.iter_mut().zip(tasks).zip(&in_window) {
-        if !inside {
-            continue;
-        }
-        let matched = (!l.row.task.is_empty()).then(|| task_map.get(l.row.task.as_str()).copied()).flatten();
-        if let Some(tr) = matched
-            && tr.tokens.is_some()
-        {
+        if let Some(&tr) = (!l.row.task.is_empty()).then(|| task_map.get(l.row.task.as_str())).flatten() {
             attach_task_meter(val, tr);
             continue;
         }
-        let mut reason = matched.and_then(|tr| tr.reason.as_deref()).unwrap_or("no_task_usage").to_string();
+        if !inside {
+            attach_missing_meter(val, "outside_d30_window", Value::Null);
+            continue;
+        }
         let branch_usage = match (l.row.branch.is_empty(), &branch_map) {
             (false, Some(Ok(map))) => map.get(&l.row.branch).map(|b| json!(b)).unwrap_or(Value::Null),
-            (false, Some(Err(err_reason))) => {
-                reason = err_reason.clone();
-                json!(BranchUsageSummary {
-                    branch: l.row.branch.clone(),
-                    state: MeterRowState::Missing,
-                    reason: Some(err_reason.clone()),
-                    tokens: None,
-                    cost: None,
-                    activity: None,
-                    activity_hours: None,
-                })
-            }
+            (false, Some(Err(err_reason))) => json!(BranchUsageSummary {
+                branch: l.row.branch.clone(),
+                state: MeterRowState::Missing,
+                reason: Some(err_reason.clone()),
+                tokens: None,
+                cost: None,
+                activity: None,
+                activity_hours: None,
+            }),
             _ => Value::Null,
         };
-        attach_missing_meter(val, &reason, branch_usage);
+        attach_missing_meter(val, "no_task_usage", branch_usage);
     }
     out
 }

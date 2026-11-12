@@ -28,6 +28,7 @@ import {
   PROBE_SCRIPT,
   TICK_MS,
   fmtMin,
+  fmtTokens,
   fmtUsd,
   focusedProjectOf,
   forgeNoteOf,
@@ -295,7 +296,8 @@ export default class Tasks extends View {
       .when(isOpen(x.lane), (el) => el.child(text('left', 10.5, t.dim)).child(num(x.eta, etaColor)))
       .child(div().w(4))
       .child(num(x.cost))
-      .when(x.cost_badge === 'partial', (el) => el.child(text('partial', 10.5, AMBER, MONO)));
+      .when(x.cost_badge === 'partial', (el) => el.child(text('partial', 10.5, AMBER, MONO)))
+      .child(num(x.tokens_text));
     const border = selected ? t.accent : x.untracked ? AMBER_LINE : t.border;
     const [bg, hoverBorder, hoverBg] = selected ? [t.selected, t.accent, t.selected] : [t.background, t.input, t.hover];
     return v_flex()
@@ -323,7 +325,10 @@ export default class Tasks extends View {
           .mt(6)
           .truncate(),
       )
-      .child(stats);
+      .child(stats)
+      .when(x.cost === '–' && Boolean(x.meter_reason), (e) =>
+        e.child(text(x.meter_reason, 10.5, t.dim, MONO).mt(4).truncate()),
+      );
   }
 
   column(lane, t, selKey) {
@@ -367,13 +372,16 @@ export default class Tasks extends View {
         .rounded(7)
         .bg(t.background)
         .child(text(k, 10.5, t.dim))
-        .child(text(v, 13, color ?? t.foreground, MONO_BOLD));
-    const line = (k, v) =>
-      h_flex()
+        .child(text(v, 13, color ?? t.foreground, MONO_BOLD).truncate());
+    // A reason wraps (its full text lives here; the card truncates it); other lines truncate.
+    const line = (k, v, wrap = false) => {
+      const value = text(v, 11.5, t.muted, MONO).flex_1().min_w(0);
+      return h_flex()
         .gap(8)
         .py(2)
         .child(text(k, 11.5, t.dim).w(70).flex_none())
-        .child(text(v, 11.5, t.muted, MONO).flex_1().min_w(0).truncate());
+        .child(wrap ? value.whitespace_normal() : value.truncate());
+    };
     const row = (id) => press(id, t).gap(8).px(10).h(32).rounded(7).bg(t.background);
     const close = press('drawer-close', t).size(22).justify_center().text_color(t.dim);
     const copied = this.copied === x.key;
@@ -430,12 +438,7 @@ export default class Tasks extends View {
 
     const time = open ? kv('Elapsed', fmtMin(x.elapsed)) : kv('Lead time', fmtMin(x.lead_min));
     const basis = x.est?.basis != null ? `${x.est.basis} of ${x.merges} merges` : `${x.merges} merges`;
-    const costLabel =
-      x.cost === '–' && x.meter_reason
-        ? `– (${x.meter_reason})`
-        : x.cost_badge === 'partial'
-          ? `${x.cost} (partial)`
-          : x.cost;
+    const costLabel = x.cost_badge === 'partial' ? `${x.cost} (partial)` : x.cost;
     el = el
       .child(section('Time and cost'))
       .child(
@@ -445,6 +448,7 @@ export default class Tasks extends View {
           .child(kv('Work', fmtMin(x.work_min)))
           .child(time),
       )
+      .when(x.cost === '–' && Boolean(x.meter_reason), (e) => e.child(line('reason', x.meter_reason, true)))
       .when(open, (e) =>
         e.child(
           h_flex()
@@ -480,18 +484,13 @@ export default class Tasks extends View {
 
     if (x.branch_usage) {
       const bu = x.branch_usage;
-      const buCost =
-        bu.cost_text === '–' && bu.reason
-          ? `– (${bu.reason})`
-          : bu.cost_badge === 'partial'
-            ? `${bu.cost_text} (partial)`
-            : bu.cost_text;
-      const buTokens = bu.tokens_total == null ? '–' : String(bu.tokens_total);
+      const buCost = bu.cost_badge === 'partial' ? `${bu.cost_text} (partial)` : bu.cost_text;
+      const buTokens = bu.tokens_text ?? fmtTokens(bu.tokens_total);
       el = el
         .child(section('Branch usage (d30, not task-isolated)'))
         .child(line('branch', bu.branch))
         .child(h_flex().gap(6).mt(4).child(kv('Cost', buCost)).child(kv('Tokens', buTokens)))
-        .when(Boolean(bu.reason), (e) => e.child(line('reason', bu.reason)));
+        .when(Boolean(bu.reason), (e) => e.child(line('reason', bu.reason, true)));
     }
 
     return el

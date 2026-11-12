@@ -344,6 +344,10 @@ export const listAge = (entry, now) => (entry?.at == null ? null : fmtMin((now -
 
 // ---------- usagemeter (via genie-rs list --json) ----------
 
+/**
+ * Shared by task rows (`$defs.taskRow`: `measured | stale | missing`) and `branch_usage` rows
+ * (`$defs.branchRow`: `measured | zero | missing | stale | unsupported`).
+ */
 function resolveMeterCost(rawState, rawReason, costObj, tokensObj) {
   const meterState = typeof rawState === 'string' ? rawState : 'missing';
   const costState = typeof costObj?.state === 'string' ? costObj.state : null;
@@ -353,16 +357,18 @@ function resolveMeterCost(rawState, rawReason, costObj, tokensObj) {
     meterState === 'measured' &&
     (costState === 'priced' || costState === 'partial') &&
     typeof costObj?.usd === 'number' &&
-    Number.isFinite(costObj.usd)
+    Number.isFinite(costObj.usd) &&
+    costObj.usd >= 0
   ) {
     return {
       meter_state: meterState,
       cost_state: costState,
       meter_reason: meterReason,
       usd: costObj.usd,
-      cost: fmtUsd(costObj.usd),
+      cost: costObj.usd < 0.01 ? '<$0.01' : fmtUsd(costObj.usd),
       cost_badge: costState === 'partial' ? 'partial' : null,
       tokens: totalTokens,
+      tokens_text: fmtTokens(totalTokens),
     };
   }
   if (meterState === 'zero' || (meterState === 'measured' && costState === 'zero')) {
@@ -374,6 +380,7 @@ function resolveMeterCost(rawState, rawReason, costObj, tokensObj) {
       cost: '$0.00',
       cost_badge: null,
       tokens: 0,
+      tokens_text: '0',
     };
   }
   return {
@@ -383,7 +390,9 @@ function resolveMeterCost(rawState, rawReason, costObj, tokensObj) {
     usd: null,
     cost: '–',
     cost_badge: null,
+    // A measured unpriced row has an unknown price, not unknown tokens: the count still shows.
     tokens: meterState === 'measured' ? totalTokens : null,
+    tokens_text: meterState === 'measured' ? fmtTokens(totalTokens) : '–',
   };
 }
 
@@ -397,6 +406,7 @@ function normalizeBranchUsage(b) {
     reason: m.meter_reason,
     tokens: b.tokens ?? null,
     tokens_total: m.tokens,
+    tokens_text: m.tokens_text,
     cost: b.cost ?? null,
     usd: m.usd,
     cost_text: m.cost,
@@ -456,6 +466,16 @@ export function fmtUsd(x) {
   return x < 10 ? `$${x.toFixed(2)}` : `$${Math.round(x)}`;
 }
 
+/** Compact token count; null is "–" and a measured 0 is "0". */
+export function fmtTokens(n) {
+  if (n == null || !Number.isFinite(n) || n < 0) return '–';
+  if (n === 0) return '0';
+  if (n < 1_000) return `${Math.round(n)}`;
+  if (n < 999_500) return n < 10_000 ? `${(n / 1_000).toFixed(1)}k` : `${Math.round(n / 1_000)}k`;
+  if (n < 999_500_000) return n < 10_000_000 ? `${(n / 1_000_000).toFixed(1)}M` : `${Math.round(n / 1_000_000)}M`;
+  return n < 10_000_000_000 ? `${(n / 1_000_000_000).toFixed(1)}B` : `${Math.round(n / 1_000_000_000)}B`;
+}
+
 // ---------- lanes and cards ----------
 
 const rowKey = (r) => r.task_key ?? r.task ?? r.url ?? r.branch ?? r.title ?? '';
@@ -502,6 +522,7 @@ export function cardOf(project, r, history = []) {
     meter_reason: m.meter_reason,
     usd: m.usd,
     tokens: m.tokens,
+    tokens_text: m.tokens_text,
     work_min: null,
     activity_hours: typeof r.activity_hours === 'number' && Number.isFinite(r.activity_hours) ? r.activity_hours : null,
     lead_min: leadMin,
