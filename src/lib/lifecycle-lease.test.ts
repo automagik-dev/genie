@@ -1,8 +1,8 @@
 /**
  * Tests for the shared lifecycle lease. Split verbatim out of the per-agent
  * convergence engine's suite when the lock moved into its own module; the blocks
- * below are unchanged apart from their imports and the minimal tmpdir fixture
- * they need.
+ * below are unchanged apart from their imports, the minimal tmpdir fixture
+ * they need, and restoring the lease env keys instead of deleting them.
  *
  * Run with: bun test src/lib/lifecycle-lease.test.ts
  */
@@ -42,6 +42,17 @@ function writeFile(path: string, content: string): void {
   writeFileSync(path, content, 'utf8');
 }
 
+/** Snapshot both lease keys; the returned restore deletes a key only when it was absent before. */
+function saveLeaseEnv(): () => void {
+  const saved = [LIFECYCLE_LEASE_PATH_ENV, LIFECYCLE_LEASE_OWNER_ENV].map((key) => [key, process.env[key]] as const);
+  return () => {
+    for (const [key, value] of saved) {
+      if (value === undefined) Reflect.deleteProperty(process.env, key);
+      else process.env[key] = value;
+    }
+  };
+}
+
 beforeEach(() => {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'lifecycle-lease-')));
   const genieHome = join(root, 'genie');
@@ -75,6 +86,7 @@ describe('shared lifecycle lease', () => {
     const path = lifecycleLockPath(fixture.genieHome);
     const owner = `${process.pid}:${'a'.repeat(32)}:${'b'.repeat(64)}`;
     writeFile(path, `${owner}\n`);
+    const restoreLeaseEnv = saveLeaseEnv();
     process.env[LIFECYCLE_LEASE_PATH_ENV] = path;
     process.env[LIFECYCLE_LEASE_OWNER_ENV] = owner;
     try {
@@ -84,8 +96,7 @@ describe('shared lifecycle lease', () => {
       borrowed.release();
       expect(readFileSync(path, 'utf8')).toBe(`${owner}\n`);
     } finally {
-      delete process.env[LIFECYCLE_LEASE_PATH_ENV];
-      delete process.env[LIFECYCLE_LEASE_OWNER_ENV];
+      restoreLeaseEnv();
       rmSync(path, { force: true });
     }
   });
@@ -94,6 +105,7 @@ describe('shared lifecycle lease', () => {
     const path = lifecycleLockPath(fixture.genieHome);
     const owner = `${process.pid}:${'c'.repeat(32)}:${'d'.repeat(64)}`;
     writeFile(path, `${owner}\n`);
+    const restoreLeaseEnv = saveLeaseEnv();
     try {
       for (const [borrowedPath, borrowedOwner] of [
         [path, `${process.pid}:${'e'.repeat(32)}:${'d'.repeat(64)}`],
@@ -106,8 +118,7 @@ describe('shared lifecycle lease', () => {
         expect(readFileSync(path, 'utf8')).toBe(`${owner}\n`);
       }
     } finally {
-      delete process.env[LIFECYCLE_LEASE_PATH_ENV];
-      delete process.env[LIFECYCLE_LEASE_OWNER_ENV];
+      restoreLeaseEnv();
       rmSync(path, { force: true });
     }
   });

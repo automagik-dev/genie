@@ -150,7 +150,8 @@ test('signed mode rejects missing/empty sidecars, descriptor mismatch and invali
     writeFileSync(join(tools, 'slsa-verifier'), '#!/bin/sh\necho rejected-provenance >&2\nexit 1\n', { mode: 0o755 });
     expect(() => verifyArtifacts(f.artifacts, version, 'stable')).toThrow('SLSA provenance verification failed');
   } finally {
-    process.env.PATH = previousPath;
+    if (previousPath === undefined) Reflect.deleteProperty(process.env, 'PATH');
+    else process.env.PATH = previousPath;
   }
 });
 test('both publication paths verify signed payloads before reconciliation', () => {
@@ -231,7 +232,8 @@ printf '[{"verificationResult":{"statement":{"predicate":%s}}}]\\n' "$(cat "$(af
     }
     expect(() => verifyArtifacts(f.artifacts, version, 'stable')).toThrow('verified delivery predicate');
   } finally {
-    process.env.PATH = previousPath;
+    if (previousPath === undefined) Reflect.deleteProperty(process.env, 'PATH');
+    else process.env.PATH = previousPath;
   }
 }, 15_000);
 

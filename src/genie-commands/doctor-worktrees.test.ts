@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from 'bun:test';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -424,21 +424,51 @@ describe('post-0.3 retarget: remotty sessions are never launch residue', () => {
 
 describe('doctor wiring', () => {
   const ISOLATED_KEYS = ['HOME', 'GENIE_HOME', 'CODEX_HOME', 'CLAUDE_CONFIG_DIR', 'GENIE_WORKTREES_DIR'] as const;
-  let saved: Partial<Record<(typeof ISOLATED_KEYS)[number], string>> = {};
+  type IsolatedEnv = Partial<Record<(typeof ISOLATED_KEYS)[number], string>>;
+
+  /** The five keys as they stand now; a key missing from the result is absent from the environment. */
+  function snapshotEnv(): IsolatedEnv {
+    const env: IsolatedEnv = {};
+    for (const key of ISOLATED_KEYS) {
+      const value = process.env[key];
+      if (value !== undefined) env[key] = value;
+    }
+    return env;
+  }
+
+  // Taken before EVERY test, whether or not it calls isolate(), so a test that never isolates is
+  // restored to exactly what it found. The snapshot used to be filled only by isolate(): after a
+  // test without it, afterEach deleted all five keys — HOME included — for the rest of the
+  // `bun test` process, and a later `Object.assign(process.env, { HOME: undefined })` restore
+  // stored the string "undefined", so a spawned bun cached packages under ./undefined/.bun.
+  let beforeTest: IsolatedEnv = {};
+
+  beforeEach(() => {
+    beforeTest = snapshotEnv();
+  });
 
   afterEach(() => {
     for (const key of ISOLATED_KEYS) {
-      if (saved[key] === undefined) delete process.env[key];
-      else process.env[key] = saved[key];
+      const value = beforeTest[key];
+      if (value === undefined) Reflect.deleteProperty(process.env, key);
+      else process.env[key] = value;
     }
-    saved = {};
+  });
+
+  // The suite as a whole hands the process back as it found it.
+  let beforeSuite: IsolatedEnv = {};
+
+  beforeAll(() => {
+    beforeSuite = snapshotEnv();
+  });
+
+  afterAll(() => {
+    expect(process.env.HOME).toBe(beforeSuite.HOME);
+    expect(snapshotEnv()).toEqual(beforeSuite);
   });
 
   /** Point every home-shaped env at the fixture so doctor never reads the real host. */
   function isolate(fx: Fixture): void {
-    for (const key of ISOLATED_KEYS) {
-      if (process.env[key] !== undefined) saved[key] = process.env[key];
-    }
     const home = join(fx.dir, 'home');
     mkdirSync(home, { recursive: true });
     process.env.HOME = home;

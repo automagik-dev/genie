@@ -954,9 +954,11 @@ describe('Group E release and documentation contracts', () => {
     expect(pkg.scripts['check:fast']).toContain('bun run lint:complexity-budget');
     expect(workflow).toContain('bun run lint:complexity-budget');
     // The six plugin/hook gates, and later the Orca bundle gate, left with the
-    // payload they linted; `check` is exactly these eight steps and `check:fast`
-    // the first six, without `bun test` or the cargo gate (genie-v7-tasks 1c: CI runs
-    // `cargo test --workspace --locked` directly on both unit legs).
+    // payload they linted; `check` is exactly these nine steps and `check:fast`
+    // the first six, without `bun test`, the residue check that reads what `bun test`
+    // left in the tree, or the cargo gate (genie-v7-tasks 1c: CI runs
+    // `cargo test --workspace --locked` directly on both unit legs). No CI step runs
+    // `test:residue` yet; adding one is a separate decision.
     expect(workflow).not.toContain('lint:orca-bundle');
     const steps = pkg.scripts.check.split(' && ');
     expect(steps).toEqual([
@@ -967,12 +969,13 @@ describe('Group E release and documentation contracts', () => {
       'bun run wishes:lint',
       'bun run lint:complexity-budget',
       'bun test',
+      'bun run test:residue',
       'bun run test:cargo',
     ]);
-    expect(pkg.scripts['check:fast'].split(' && ')).toEqual(steps.slice(0, -2));
+    expect(pkg.scripts['check:fast'].split(' && ')).toEqual(steps.slice(0, -3));
     expect(workflow.match(/^ +run: cargo test --workspace --locked$/gm)).toHaveLength(2);
     // The six plugin/hook lint gates and the `hooks:bind` writer are gone: the
-    // only surviving `lint:` scripts are the one the eight-step gate names, the
+    // only surviving `lint:` scripts are the one the nine-step gate names, the
     // two docs linters and the fixer.
     expect(
       Object.keys(pkg.scripts)
