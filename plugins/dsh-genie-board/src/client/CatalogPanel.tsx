@@ -1,8 +1,8 @@
-import { IconSearchOutline16, Tag } from '@deepseek-ai/dsh-client-ui-primitives';
+import { Tag } from '@deepseek-ai/dsh-client-ui-primitives';
 import type { ReactNode } from 'react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { type WorkflowEntry, api } from './api';
-import { IconWorkflows16 } from './icons';
+import { IconSearch, IconWorkflows16 } from './icons';
 import { Empty, PanelShell, useWorkspaces } from './shell';
 
 function Document({ entry, text }: { entry: WorkflowEntry; text: string | undefined }) {
@@ -152,7 +152,7 @@ function CatalogPanel({
             ))}
             {!visible.length && (
               <div className="gb-empty">
-                <IconSearchOutline16 />
+                <IconSearch />
                 <span>No match</span>
               </div>
             )}
