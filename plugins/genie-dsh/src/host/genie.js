@@ -193,6 +193,7 @@ export function wishBrief({ title, wish, folder, branch, base, branches = [], ca
     `4. Commit everything on ${branch} with a clear message (git add -A, then git commit).${scope}`,
     '5. End with a short final report: what changed (files), how you checked it (commands and their results), and anything left open.',
     'If you need a decision you cannot make, stop and ask it in your final report.',
+    'If a step is refused for a permission (an approval, the sandbox or a deny list), say which step and why in your next message, then go on with what you can still do.',
   ].join('\n');
 }
 

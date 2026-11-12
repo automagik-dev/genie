@@ -6,6 +6,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, test } from 'node:test';
+import { runInThisContext } from 'node:vm';
 import { GENIE_SUGGESTIONS, registerSuggestions } from '../src/client/suggestions.js';
 import { endedWishesOf, markOf, outcomeOf } from '../src/client/wishes.js';
 import {
@@ -34,6 +35,297 @@ afterEach(() => {
 
 // What the plugin uses of the Bot team's runtime (test/team.js), recording what it is asked to do.
 const fakeTeam = (options) => makeTeam(dir, options);
+const h = (type, props, ...children) => ({ type, props, children });
+
+test('an ended wish whose task stopped on a permission keeps its outcome, and its tooltip says a step stopped', () => {
+  const cases = [
+    [{ state: 'local-only' }, { state: 'local-only', short: 'Local branch', full: 'Local branch, not published' }],
+    [{ state: 'no-change' }, { state: 'no-change', short: 'No change', full: 'No change: no branch moved' }],
+    [{ state: 'stopped' }, { state: 'stopped', short: 'Stopped', full: 'Stopped' }],
+    [{ state: 'failed' }, { state: 'failed', short: 'Failed', full: 'Failed' }],
+    [{ state: 'lost' }, { state: 'lost', short: 'Lost', full: 'Lost: the team no longer has its record' }],
+    [{ state: 'x' }, { state: 'x', short: 'Ended', full: 'Ended' }],
+    [
+      { status: 'failed', summary: 'boom\nat x' },
+      { state: 'failed', short: 'Failed', full: 'Failed: boom' },
+    ],
+    [{ status: 'stopped' }, { state: 'stopped', short: 'Stopped', full: 'Stopped' }],
+    [{ status: 'done' }, { state: 'done', short: 'Done', full: 'Done' }],
+    [{ status: 'ended' }, { state: 'done', short: 'Done', full: 'Done' }],
+  ];
+  for (const [wish, expected] of cases) {
+    assert.deepEqual(outcomeOf(wish), expected);
+    assert.deepEqual(outcomeOf(wish, false), expected);
+    assert.deepEqual(outcomeOf(wish, true), {
+      ...outcomeOf(wish),
+      full: `${outcomeOf(wish).full}; a step stopped on a permission`,
+    });
+    assert.equal(markOf(outcomeOf(wish, true)), markOf(outcomeOf(wish)));
+  }
+  assert.deepEqual(outcomeOf({ status: 'failed', summary: 'the provider refused the key\nat x' }, true), {
+    state: 'failed',
+    short: 'Failed',
+    full: 'Failed: the provider refused the key; a step stopped on a permission',
+  });
+  const unchanged = outcomeOf({ state: 'no-change' }, true);
+  assert.deepEqual(unchanged, {
+    state: 'no-change',
+    short: 'No change',
+    full: 'No change: no branch moved; a step stopped on a permission',
+  });
+  assert.equal(markOf(unchanged), '•');
+  assert.deepEqual(outcomeOf({ status: 'failed', summary: 'Request timed out.\nat x' }, true), {
+    state: 'failed',
+    short: 'Failed',
+    full: 'Failed: Request timed out. A step stopped on a permission.',
+  });
+  assert.deepEqual(outcomeOf({ state: 'failed', summary: 'Request timed out.' }, true), {
+    state: 'failed',
+    short: 'Failed',
+    full: 'Failed: Request timed out. A step stopped on a permission.',
+  });
+  assert.equal(
+    outcomeOf({ status: 'failed', summary: 'Connection error!' }, true).full,
+    'Failed: Connection error! A step stopped on a permission.',
+  );
+  assert.equal(
+    outcomeOf({ status: 'failed', summary: 'Is the key set?' }, true).full,
+    'Failed: Is the key set? A step stopped on a permission.',
+  );
+  assert.deepEqual(outcomeOf({ status: 'failed', summary: 'Request timed out.' }), {
+    state: 'failed',
+    short: 'Failed',
+    full: 'Failed: Request timed out.',
+  });
+  assert.equal(markOf(outcomeOf({ status: 'failed', summary: 'Request timed out.' }, true)), '✕');
+  assert.equal(markOf(outcomeOf({ status: 'failed', summary: 'Request timed out.' })), '✕');
+});
+
+test('a wish counts as stopped only for a team stop of its own task, open or closed, and an older team sends none', async () => {
+  const { permissionStopped, stoppedKeyOf } = await import('../src/client/wishes.js');
+  const work = { stops: [{ taskId: 's1', botId: 'g', why: 'never', open: false }] };
+  assert.equal(permissionStopped(work, 's1'), true);
+  assert.equal(permissionStopped(work, 's2'), false);
+  assert.equal(permissionStopped({ stops: [{ botId: 'g' }] }, 's1'), false);
+  for (const older of [{}, undefined, { stops: 'x' }]) {
+    assert.equal(permissionStopped(older, 's1'), false);
+    assert.equal(stoppedKeyOf(older, ['s1']), '');
+  }
+  for (const id of [undefined, null, 1]) assert.equal(permissionStopped({ stops: [{ taskId: id }] }, id), false);
+  assert.equal(permissionStopped({ stops: [null, undefined, {}] }, 's1'), false);
+  work.stops.push({ taskId: 's3', botId: 'g', why: 'sandbox', open: true });
+  assert.equal(permissionStopped(work, 's3'), true);
+  const key = stoppedKeyOf(work, ['s1', 's2', 's3']);
+  assert.equal(key, 's1,s3');
+  assert.equal(stoppedKeyOf(work, ['s1', 's2', 's3']), key);
+  assert.equal(stoppedKeyOf({ stops: [] }, ['s1']), '');
+});
+
+test('a refused grant_wish start draws one error line; a granted, running or other answer draws none', async () => {
+  const { NOT_STARTED, wishRefusal, grantRefusalCard, registerGrantCard } = await import('../src/client/grant-card.js');
+  const card = grantRefusalCard(h);
+  const reason = 'The permission level could not be set, so nothing was started. Try again.';
+  const content = `The wish did not start: ${reason}`;
+  assert.equal(NOT_STARTED, 'The wish did not start:');
+  assert.deepEqual(card({ done: true, content }), {
+    type: 'div',
+    props: { className: 'bt-event bt-event-error', role: 'status', title: content },
+    children: [h('span', null, 'Wish not started'), h('span', null, ` · ${reason}`)],
+  });
+  for (const done of [false, undefined, 1]) assert.equal(card({ done, content }), null);
+  for (const other of [
+    'Wish "x" is granted as a thread on branch wish/x. …',
+    'Only Genie grants wishes. Ask Genie in its chat.',
+    MISSING_GIT,
+    undefined,
+  ]) {
+    assert.equal(card({ done: true, content: other }), null);
+    assert.equal(wishRefusal(other), undefined);
+  }
+  const long = `  The wish did not start: ${'x'.repeat(170)}\nat x  `;
+  assert.deepEqual(wishRefusal(long), { reason: 'x'.repeat(160), title: long.trim() });
+  assert.deepEqual(card({ done: true, content: long }).children[1], h('span', null, ` · ${'x'.repeat(160)}`));
+  assert.deepEqual(wishRefusal('The wish did not start: x\nat x'), {
+    reason: 'x',
+    title: 'The wish did not start: x\nat x',
+  });
+  assert.equal(card({ done: true, content: 'The wish did not start:' }).children[1], null);
+  const registrations = [];
+  const dispose = () => {};
+  assert.equal(
+    registerGrantCard(
+      {
+        register: (...args) => {
+          registrations.push(args);
+          return dispose;
+        },
+      },
+      card,
+    ),
+    dispose,
+  );
+  assert.deepEqual(registrations, [['grant_wish', card]]);
+  for (const older of [undefined, {}, { register: true }])
+    assert.equal(typeof registerGrantCard(older, card), 'function');
+  assert.equal(registrations.length, 1);
+});
+
+test('a start the team refuses for its level answers as before, saves no wish, and draws the card', async () => {
+  const team = fakeTeam();
+  const { rt, tools } = compose(team);
+  await rt.genieReady;
+  const genie = Object.values(team.state.bots)[0];
+  const first = await grant(tools, genie.id, { title: 'First', wish: 'w' });
+  const kept = structuredClone(rt.genieWishes());
+  assert.equal(kept.length, 1);
+  const reason = 'The permission level could not be set, so nothing was started. Try again.';
+  team.startTask = async (task) => {
+    team.record.tasks.push(task);
+    throw Object.assign(new Error(reason), { code: 'bot/refused', levelNotSet: true });
+  };
+  const answer = await grant(tools, genie.id, { title: 'x', wish: 'w' });
+  assert.equal(answer, `The wish did not start: ${reason}`);
+  assert.deepEqual(rt.genieWishes(), kept);
+  assert.equal(savedWishes(team).length, 1);
+  const { grantRefusalCard } = await import('../src/client/grant-card.js');
+  const card = grantRefusalCard(h);
+  assert.equal(card({ done: true, content: first }), null);
+  assert.deepEqual(card({ done: true, content: answer }).children[1], h('span', null, ` · ${reason}`));
+});
+
+test('the brief tells a wish to report a step refused for a permission at once, and again in its final report', async () => {
+  const line =
+    'If a step is refused for a permission (an approval, the sandbox or a deny list), say which step and why in your next message, then go on with what you can still do.';
+  const decision = 'If you need a decision you cannot make, stop and ask it in your final report.';
+  for (const scope of [{}, { branches: ['wish/x'], canPublish: true }, { branches: ['wish/x'] }]) {
+    const brief = wishBrief({ title: 'x', wish: 'w', folder: dir, branch: 'wish/x', base: 'abcdef', ...scope });
+    assert.ok(brief.includes(`${decision}\n${line}`));
+  }
+  const team = fakeTeam();
+  const { rt, tools } = compose(team);
+  await rt.genieReady;
+  const genie = Object.values(team.state.bots)[0];
+  await grant(tools, genie.id, { title: 'x', wish: 'w' });
+  assert.ok(team.record.tasks[0].text.includes(`${decision}\n${line}`));
+});
+
+test('the client entry puts a stop in the row’s tooltip and registers the card, and an older team gets neither and throws nothing', () => {
+  // Use a path: knip follows new URL(…, import.meta.url) into the bundle and reports its external require.
+  const source = readFileSync(join(import.meta.dirname, '..', 'client.js'), 'utf8');
+  const load = (withCards) => {
+    const registered = { rows: [], chips: [], cards: [] };
+    const registry = (list) => ({
+      register: (...args) => {
+        list.push(args);
+        return () => {};
+      },
+    });
+    const omni = {
+      botChildren: registry(registered.rows),
+      chatSuggestions: registry(registered.chips),
+      ...(withCards ? { toolCards: registry(registered.cards) } : {}),
+    };
+    let bundle;
+    runInThisContext(`(function(window) {\n${source}\n})`)({
+      __ModuleLoader__: {
+        load: (entry) => {
+          bundle = entry;
+        },
+      },
+    });
+    assert.equal(bundle.id, '@automagik/genie-dsh');
+    const entry = bundle.factory((name) => {
+      if (name === 'react') return { createElement: h };
+      if (name === '@automagik/bots-dsh/client') return { omni };
+      throw new Error(`Unexpected module: ${name}`);
+    });
+    entry.apply({ effect: (run) => run() });
+    assert.equal(registered.rows.length, 1);
+    assert.equal(registered.rows[0][0].id, 'genie-wishes');
+    assert.equal(registered.chips.length, 1);
+    assert.deepEqual(registered.chips[0][0].items(), GENIE_SUGGESTIONS.items());
+    return { Component: registered.rows[0][0].Component, registered };
+  };
+  const { Component, registered } = load(true);
+  const bot = { id: 'g', kind: 'genie', name: 'Genie' };
+  const roster = {
+    tasks: { s1: { status: 'done' }, s3: { status: 'failed', summary: 'boom' } },
+    genie: {
+      wishes: [
+        { sessionId: 's1', botId: 'g', title: 'One', branch: 'wish/one', state: 'no-change' },
+        { sessionId: 's3', botId: 'g', title: 'Three', branch: 'wish/three', state: 'failed' },
+      ],
+    },
+  };
+  const opened = [];
+  const actions = { openSession: (id) => opened.push(id) };
+  let work = { stops: [] };
+  let calls = 0;
+  const useWork = (select) => {
+    calls++;
+    return select(work);
+  };
+  const props = { bot, roster, actions, useWork };
+  const plain = Component(props).children[0];
+  assert.equal(calls, 1);
+  assert.deepEqual(
+    plain.map((row) => [row.props['aria-label'], row.props.title]),
+    [
+      ['One, No change: no branch moved', 'One · No change: no branch moved · wish/one'],
+      ['Three, Failed: boom', 'Three · Failed: boom · wish/three'],
+    ],
+  );
+  work = { stops: [{ taskId: 's1', botId: 'g', why: 'sandbox', open: false }] };
+  const stopped = Component(props).children[0];
+  assert.equal(calls, 2);
+  assert.equal(stopped[0].props['aria-label'], 'One, No change: no branch moved; a step stopped on a permission');
+  assert.equal(stopped[0].props.title, 'One · No change: no branch moved; a step stopped on a permission · wish/one');
+  assert.equal(stopped[1].props['aria-label'], plain[1].props['aria-label']);
+  assert.equal(stopped[1].props.title, plain[1].props.title);
+  for (const rows of [plain, stopped]) {
+    assert.deepEqual(
+      rows.map((row) => [row.props['data-state'], row.children[0].children[0], row.children[2].children[0]]),
+      [
+        ['no-change', '•', 'No change'],
+        ['failed', '✕', 'Failed'],
+      ],
+    );
+    for (const row of rows) assert.equal(row.props.className, 'bt-thread');
+  }
+  stopped[0].props.onClick();
+  assert.deepEqual(opened, ['s1']);
+  assert.equal(Component({ ...props, bot: { id: 'x', kind: 'bot' } }), null);
+  assert.equal(calls, 3);
+  assert.equal(Component({ ...props, roster: {} }), null);
+  assert.equal(calls, 4);
+  const oldRows = Component({ ...props, useWork: undefined }).children[0];
+  assert.equal(calls, 4);
+  assert.deepEqual(
+    oldRows.map((row) => [row.props['aria-label'], row.props.title, row.children]),
+    plain.map((row) => [row.props['aria-label'], row.props.title, row.children]),
+  );
+  const older = load(false);
+  assert.equal(older.registered.cards.length, 0);
+  assert.deepEqual(
+    older.Component({ ...props, useWork: undefined }).children[0].map((row) => row.props.title),
+    plain.map((row) => row.props.title),
+  );
+  assert.equal(registered.cards.length, 1);
+  assert.equal(registered.cards[0].length, 2);
+  const [name, card] = registered.cards[0];
+  assert.equal(name, 'grant_wish');
+  assert.equal(typeof card, 'function');
+  assert.deepEqual(
+    card({ done: true, content: 'The wish did not start: x' }),
+    h(
+      'div',
+      { className: 'bt-event bt-event-error', role: 'status', title: 'The wish did not start: x' },
+      h('span', null, 'Wish not started'),
+      h('span', null, ' · x'),
+    ),
+  );
+  assert.equal(card({ done: true, content: 'Wish "x" is granted as a thread on branch wish/x. …' }), null);
+});
 
 test('a new team gets one Genie Bot, in its own project folder, with the default model', async () => {
   const team = fakeTeam();
@@ -226,9 +518,12 @@ test('a wish is only given branches that exist, and never the integration branch
   await rt.genieReady;
   assert.match(
     await grant(tools, 'g', { title: 'Missing', wish: 'w', branches: ['wish/missing'] }),
-    /is not a branch in/,
+    /^The wish did not start: wish\/missing is not a branch in /,
   );
-  assert.match(await grant(tools, 'g', { title: 'Own', wish: 'w', branches: ['main'] }), /integration branch/);
+  assert.match(
+    await grant(tools, 'g', { title: 'Own', wish: 'w', branches: ['main'] }),
+    /^The wish did not start: main is the project's integration branch/,
+  );
   // The tool schema itself refuses a scope that is not a list of branch names.
   await assert.rejects(grant(tools, 'g', { title: 'Bad', wish: 'w', branches: 'all' }), /must be an array/);
   assert.equal(team.record.tasks.length, 0);
@@ -658,6 +953,10 @@ test('no v2 state renders as Done, and the instructions never call an unpublishe
     assert.notEqual(outcome.short, 'Done', state);
     assert.notEqual(outcome.state, 'done', state);
     assert.notEqual(markOf(outcome), '✓', state);
+    const stopped = outcomeOf({ state, status: 'done' }, true);
+    assert.notEqual(stopped.short, 'Done', state);
+    assert.notEqual(stopped.state, 'done', state);
+    assert.notEqual(markOf(stopped), '✓', state);
   }
   assert.deepEqual(
     ['local-only', 'no-change', 'stopped', 'failed', 'lost'].map((state) => outcomeOf({ state }).short),

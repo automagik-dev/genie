@@ -32,7 +32,34 @@ module.exports = __toCommonJS(index_exports);
 
 // src/client/core.js
 var import_client = require("@automagik/bots-dsh/client");
-var { botChildren, chatSuggestions } = import_client.omni;
+var { botChildren, chatSuggestions, toolCards } = import_client.omni;
+
+// src/client/grant-card.js
+var NOT_STARTED = "The wish did not start:";
+function wishRefusal(content) {
+  const text = String(content ?? "").trim();
+  if (!text.startsWith(NOT_STARTED)) return void 0;
+  const reason = text.slice(NOT_STARTED.length).split("\n")[0].trim().slice(0, 160);
+  return { reason, title: text };
+}
+function grantRefusalCard(h2) {
+  return ({ done, content }) => {
+    if (done !== true) return null;
+    const refusal = wishRefusal(content);
+    if (refusal === void 0) return null;
+    const { reason, title } = refusal;
+    return h2(
+      "div",
+      { className: "bt-event bt-event-error", role: "status", title },
+      h2("span", null, "Wish not started"),
+      reason ? h2("span", null, ` · ${reason}`) : null
+    );
+  };
+}
+function registerGrantCard(toolCards2, render) {
+  return typeof toolCards2?.register === "function" ? toolCards2.register("grant_wish", render) : () => {
+  };
+}
 
 // src/client/suggestions.js
 var GENIE_SUGGESTIONS = Object.freeze({
@@ -67,7 +94,19 @@ var STATE_WORDS = {
   lost: { short: "Lost", full: "Lost: the team no longer has its record" }
 };
 var markOf = (outcome) => outcome.state === "done" ? "✓" : outcome.state === "local-only" || outcome.state === "no-change" ? "•" : "✕";
-function outcomeOf(wish) {
+function permissionStopped(work, sessionId) {
+  return typeof sessionId === "string" && Array.isArray(work?.stops) && work.stops.some((entry) => entry?.taskId === sessionId);
+}
+var stoppedKeyOf = (work, sessionIds) => sessionIds.filter((id) => permissionStopped(work, id)).join(",");
+var PERMISSION_STOP_SUFFIX = "; a step stopped on a permission";
+var PERMISSION_STOP_SENTENCE = " A step stopped on a permission.";
+function outcomeOf(wish, stopped = false) {
+  const base = endedOutcome(wish);
+  if (stopped !== true) return base;
+  const end = /[.!?]$/.test(base.full) ? PERMISSION_STOP_SENTENCE : PERMISSION_STOP_SUFFIX;
+  return { ...base, full: `${base.full}${end}` };
+}
+function endedOutcome(wish) {
   const state = wish.state ?? wish.status;
   if (state === "failed") {
     const reason = String(wish.summary ?? "").split("\n")[0].trim();
@@ -83,15 +122,21 @@ function outcomeOf(wish) {
 
 // src/client/index.js
 var import_react = require("react");
-function GenieWishes({ bot, roster, actions }) {
-  if (bot?.kind !== "genie") return null;
-  const wishes = endedWishesOf(roster, bot.id);
+function GenieWishes({ bot, roster, actions, useWork }) {
+  const wishes = bot?.kind === "genie" ? endedWishesOf(roster, bot.id) : [];
+  const stoppedKey = typeof useWork === "function" ? useWork(
+    (work) => stoppedKeyOf(
+      work,
+      wishes.map((wish) => wish.sessionId)
+    )
+  ) : "";
   if (wishes.length === 0) return null;
+  const stopped = new Set(stoppedKey.split(",").filter(Boolean));
   return (0, import_react.createElement)(
     "div",
     { className: "bt-threads", role: "group", "aria-label": `Wishes ${bot.name} granted` },
     wishes.map((wish) => {
-      const outcome = outcomeOf(wish);
+      const outcome = outcomeOf(wish, stopped.has(wish.sessionId));
       return (0, import_react.createElement)(
         "button",
         {
@@ -113,6 +158,7 @@ function GenieWishes({ bot, roster, actions }) {
 function apply(ctx) {
   ctx.effect(() => botChildren.register({ id: "genie-wishes", Component: GenieWishes }), "genie: ended wishes");
   ctx.effect(() => registerSuggestions(chatSuggestions), "genie: empty-chat suggestions");
+  ctx.effect(() => registerGrantCard(toolCards, grantRefusalCard(import_react.createElement)), "genie: a refused wish start in the chat");
 }
 return Object.defineProperty({ ...module.exports }, Symbol.toStringTag, { value: 'Module' })
   },

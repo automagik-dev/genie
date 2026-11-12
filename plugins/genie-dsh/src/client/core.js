@@ -4,4 +4,5 @@
 import { omni } from '@automagik/bots-dsh/client';
 
 // chatSuggestions is undefined on a team older than bots-dsh 3.23.
-export const { botChildren, chatSuggestions } = omni;
+// toolCards is undefined on a team without the tool-card registry.
+export const { botChildren, chatSuggestions, toolCards } = omni;
