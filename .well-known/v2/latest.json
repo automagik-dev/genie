@@ -1,9 +1,9 @@
 {
   "schema_version": 1,
   "channel": "stable",
-  "version": "6.261112.1",
-  "released_at": "2026-11-12T00:00:00Z",
-  "tarball_base": "https://github.com/automagik-si/genie/releases/download/v6.261112.1",
+  "version": "6.261113.7",
+  "released_at": "2026-11-13T00:00:00Z",
+  "tarball_base": "https://github.com/automagik-si/genie/releases/download/v6.261113.7",
   "platforms": [
     "linux-x64-glibc",
     "linux-x64-musl",
