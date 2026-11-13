@@ -1,11 +1,11 @@
 {
   "note": "A copy of the Automagik brand. Do not edit these files here: change them in the source and run scripts/brand-sync.mjs --write.",
   "source": "https://github.com/automagik-si/automagik",
-  "commit": "482d7476a48f178c08e18f23f5863f7a5be25be4",
+  "commit": "11b777cac5f9856b8174245d8854006219dc082a",
   "into": "brand",
   "files": {
-    ".claude/skills/automagik-brand/SKILL.md": "df4700cdbb9cb3521da1bb8f6cd587f39b7601cf9aa4ad7f92363d6e593766f4",
-    "brand/README.md": "4ba82b1e45fd124f15c1b64398d9a6523d292a0563dd6035b2bf1c1bf9515288",
+    ".claude/skills/automagik-brand/SKILL.md": "0a19e59dcc4ccf5f6d804b20a69e732faf45521278406178203ab889d867fbfb",
+    "brand/README.md": "bc7659eab62a3b792c3a353875deffa943811b1a3118ea5a985f55e6c47127e6",
     "brand/components/Button/README.md": "2038c6431992a41762a982a8a0e13786f74891593478b0c250779c554f64e5e4",
     "brand/components/Button/preview.html": "d288ec3060381631fc9914230931f8409ccaa52e4c9620724e830c590d3bd5e5",
     "brand/components/Crumbs/README.md": "d6228f15603eafdbe32f3e43a2cfbba6bde83525646827afbcbde5c90201c547",
@@ -65,7 +65,7 @@
     "brand/genie/README.md": "b4d820d5bdcbbd87482b3a86460dce193faefac464edbac1bb03bd17ec4bf54b",
     "brand/genie/genie-avatar-256.webp": "3b29de1d9fa0c0cd6a9e9ea53a726c95d9cd8ce563bf8ba643d291bcfb290142",
     "brand/genie/genie-full-body.png": "4d34a8d97aee68b04dc4b217f1a39176d205eddb8e0a9ba51c9906de73aa3674",
-    "brand/logo/README.md": "590c6ecf1e1e0f15325f7203a2728506fd7a7689e641ef9c38f204904fe61f71",
+    "brand/logo/README.md": "c39c9daa7e37bbb71f37a3e4782fe5e23555543ab06b0dde6058eff044c5f25e",
     "brand/logo/lockups/automagik-lockup-cream-header.svg": "507d420ecf8179bc075ea9a1bc15b37bf85748891c7729a80ad3d855bfb68023",
     "brand/logo/lockups/automagik-lockup-cream.svg": "7b076c59f5258a2f4671c86d0bc43d207aa7d7a9cf6996454aa0a2694e3b9d23",
     "brand/logo/lockups/automagik-lockup-ink-header.svg": "06e30f305bf6ea204eb91a25dddd494df61e94228c182a5319521e80a800dfa3",
@@ -116,6 +116,6 @@
     "brand/logo/wordmark/omni-wordmark-ink.svg": "e8c21842b9c280fddacfbf20e8ce998a1ea4be5069b47a43002ebf7db40e8e37",
     "brand/tokens/tokens.css": "18d027db6b5bbf55d48def1a144050a1be1f8378666c97581e5fed1313f32937",
     "brand/tokens/tokens.json": "42f51a4db6d0c08ddc877ffa4cec5a1b5d9d925ccf811bc8062dcabfa71c5407",
-    "scripts/brand-sync.mjs": "c25456917675556d364699d2f0ab2e95f4e88bb2fcd56a71fd3399952ae4e6cf"
+    "scripts/brand-sync.mjs": "668bdfd48627b769790e2953fae1c5c47b578df18cbbb13ed0ba52fc54a80771"
   }
 }
