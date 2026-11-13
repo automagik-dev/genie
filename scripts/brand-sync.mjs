@@ -117,12 +117,15 @@ const within = (path, folder) => path === folder || path.startsWith(`${folder}/`
  * Why `into` cannot be the brand's folder in a copy, or undefined when it can. A folder inside
  * the repository, named from its root, that is not git's, not the skill's or one around it, and
  * not one around the tool: --write removes what it did not copy from the folders it owns.
+ * Letter case is ignored: on a Mac or on Windows, .Claude/skills and Scripts are the same
+ * folders as .claude/skills and scripts.
  */
 function refusedInto(into) {
   if (!plain(into) || into.startsWith('-')) return 'it must be a folder inside the repository, named from its root (for example brand, or docs/brand)';
-  if (into.split('/').some(part => part.toLowerCase() === '.git')) return 'it is inside .git';
-  if (within(into, SKILL_FOLDER) || within(SKILL_FOLDER, into)) return `it overlaps the skill's folder (${SKILL_FOLDER})`;
-  if (within(TOOL, into)) return `it holds the tool (${TOOL})`;
+  const [named, skill, tool] = [into, SKILL_FOLDER, TOOL].map(path => path.toLowerCase());
+  if (named.split('/').includes('.git')) return 'it is inside .git';
+  if (within(named, skill) || within(skill, named)) return `it overlaps the skill's folder (${SKILL_FOLDER})`;
+  if (within(tool, named)) return `it holds the tool (${TOOL})`;
   return undefined;
 }
 
@@ -310,10 +313,16 @@ export function write({ to, from, remote, into: asked }) {
       throw new Error(`${error.message}${asked === undefined ? ' Or put the brand in another folder: --into <folder>.' : ''}`);
     }
     const here = present(root, into);
-    // A folder chosen for the first time is the copy's alone from then on: it may not hold other files now.
-    if (into !== before?.into && into !== BRAND) {
-      const others = here.filter(path => within(path, into) && !kept.has(path) && !before?.files.includes(path));
-      if (others.length) throw new Error(`${into} holds files that are not a brand copy (${others[0]}${others.length > 1 ? ` and ${others.length - 1} more` : ''}). Nothing was changed: choose a folder of the copy's own with --into.`);
+    // A folder the repository chose is the copy's alone, but this tool removes from it only what a copy
+    // recorded. A file nobody recorded is somebody's work: on the first run and on every later one it
+    // stops the write. docs/brand, the default, is the brand's by name: there the copy removes the rest.
+    // A link is not counted here: the check for links below refuses it by its own name.
+    if (into !== BRAND) {
+      const recorded = before?.files ?? [];
+      const others = here.filter(path => within(path, into) && !kept.has(path) && !recorded.includes(path) && !lstatOf(join(root, path))?.isSymbolicLink());
+      const named = `${others[0]}${others.length > 1 ? ` and ${others.length - 1} more` : ''}`;
+      if (others.length && before?.into !== into) throw new Error(`${into} holds files that are not a brand copy (${named}). Nothing was changed: choose a folder of the copy's own with --into.`);
+      if (others.length) throw new Error(`${into} holds files this copy never recorded (${named}). Nothing was changed: move them out of the brand's folder, then run --write again.`);
     }
     const removed = here.filter(path => path !== RECORD && !kept.has(path));
     // The folder the copy was in, when this run moves it: the files that copy recorded, and its record.
