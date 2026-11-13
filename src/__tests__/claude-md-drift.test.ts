@@ -101,7 +101,8 @@ describe('CLAUDE.md v5 drift guard', () => {
 
   test('documents the one skills channel in both files', () => {
     for (const file of [overlay, shared]) {
-      expect(file).toContain('npx skills add automagik-dev/genie');
+      expect(file).toContain('npx skills add automagik-si/genie');
+      expect(file).not.toContain('npx skills add automagik-dev/genie');
       expect(file).toContain('skills-install.json');
     }
   });
