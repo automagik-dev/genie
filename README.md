@@ -105,7 +105,7 @@ Genie adds steps around the code. They pay off when a change deserves review, an
 
 - **Small, obvious edits.** The run above asked 0 questions and, by its own `genie wish report`, took 19.9 min and 387,079 tokens to delete dead code. That is one sample. An edit you can make and check by hand is faster without Genie.
 - **Big plans.** Plan size predicts delivery. In an observational sample of 50 wishes, the share merged within 8h fell from 100% (n=9) for the smallest plans to 95% (n=19), 67% (n=12) and 30% (n=10) for the largest. Split big work before it starts.
-- **Diffs you will not read.** Agents miss things, reviewers included. The reviewer passed a wrong gate command in [#3045](https://github.com/automagik-dev/genie/pull/3045), and [#2935](https://github.com/automagik-dev/genie/pull/2935) met 68 of 86 blind criteria with 3 HIGH gaps. Read the diff and the verdict before you merge.
+- **Diffs you will not read.** Agents miss things, reviewers included. The reviewer passed a wrong gate command in [#3045](https://github.com/automagik-si/genie/pull/3045), and [#2935](https://github.com/automagik-si/genie/pull/2935) met 68 of 86 blind criteria with 3 HIGH gaps. Read the diff and the verdict before you merge.
 - **Weak checks.** The gate runs your repository's checks, so a wish proves only what those checks prove.
 - **Untrusted repositories, or no integration branch.** `/wish` runs the repository's own install and check commands, so point it only at repositories you trust. It opens its pull request against `dev` by default and refuses `main` or `master` as the base.
 
@@ -137,7 +137,7 @@ The installer hands its arguments to `genie install`. `--integrations auto|codex
 curl -fsSL https://raw.githubusercontent.com/automagik-si/genie/main/install.sh | bash -s -- --integrations none
 ```
 
-Each detected agent gets the skills in its own skills home: `~/.claude/skills` for Claude Code, and the shared `~/.agents/skills` for Codex and the other agents that read it. `genie install` and `genie update` install the skills from the tree the signed release delivered, never from a GitHub ref. The public `npx skills add automagik-dev/genie` command serves the repository's default branch instead, so it can be ahead of or behind any release.
+Each detected agent gets the skills in its own skills home: `~/.claude/skills` for Claude Code, and the shared `~/.agents/skills` for Codex and the other agents that read it. `genie install` and `genie update` install the skills from the tree the signed release delivered, never from a GitHub ref. The public `npx skills add automagik-si/genie` command serves the repository's default branch instead, so it can be ahead of or behind any release.
 
 Every release is cosign-signed with SLSA provenance, and `genie update` verifies it offline, with no GitHub credential. The repository-hosted `.well-known/v2/latest.json` and `dev.json` manifests are the authoritative channel pointers. GitHub's `/releases/latest` route and prerelease badge are deliberately not channel authority: a promotion advances only a monotonic manifest and never rewrites already-published assets or channel-significant draft/prerelease/latest metadata. [Security and releases](https://docs.automagik.dev/genie/security) has the details.
 </details>
@@ -154,7 +154,7 @@ Genie v6.261003.1 has 18 CLI commands. Nothing runs in the background: every com
 | `genie board` | Kanban view of task state, derived live by query |
 | `genie config` | Read the resolved global config, for example `config get budgets.maxEscalationsPerGroup` |
 | `genie context` | Resolve spawn context as versioned JSON: the wish or group branch and base SHA, or the integration branch |
-| `genie desktop` | Open the Automagik desktop app with Genie preloaded: downloads the build for this machine from automagik-dev/automagik's releases, checked against `SHA256SUMS` |
+| `genie desktop` | Open the Automagik desktop app with Genie preloaded: downloads the build for this machine from automagik-si/automagik's releases, checked against `SHA256SUMS` |
 | `genie doctor` | Check the installation; `--fix-global-db` repairs a contaminated machine-scope database, backup first |
 | `genie help` | Show help for any command |
 | `genie idea` | Capture an idea into the roadmap board's Idea lane |
@@ -198,4 +198,4 @@ npm --prefix mikro test
 
 ## Links
 
-[Docs](https://docs.automagik.dev/genie): [Skills](https://docs.automagik.dev/genie/skills), [Workflows](https://docs.automagik.dev/genie/workflows), [CLI reference](https://docs.automagik.dev/genie/cli-reference), [Security and releases](https://docs.automagik.dev/genie/security) · [UPGRADING.md](UPGRADING.md) · [Releases](https://github.com/automagik-dev/genie/releases) · [automagik-dev](https://github.com/automagik-dev), the org behind Genie · [Discord](https://discord.gg/xcW8c7fF3R) · [Apache-2.0 License](LICENSE)
+[Docs](https://docs.automagik.dev/genie): [Skills](https://docs.automagik.dev/genie/skills), [Workflows](https://docs.automagik.dev/genie/workflows), [CLI reference](https://docs.automagik.dev/genie/cli-reference), [Security and releases](https://docs.automagik.dev/genie/security) · [UPGRADING.md](UPGRADING.md) · [Releases](https://github.com/automagik-si/genie/releases) · [automagik-si](https://github.com/automagik-si), the org behind Genie · [Discord](https://discord.gg/xcW8c7fF3R) · [Apache-2.0 License](LICENSE)

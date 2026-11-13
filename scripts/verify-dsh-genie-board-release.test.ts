@@ -150,7 +150,8 @@ test('signed mode rejects missing/empty sidecars, descriptor mismatch and invali
     writeFileSync(join(tools, 'slsa-verifier'), '#!/bin/sh\necho rejected-provenance >&2\nexit 1\n', { mode: 0o755 });
     expect(() => verifyArtifacts(f.artifacts, version, 'stable')).toThrow('SLSA provenance verification failed');
   } finally {
-    process.env.PATH = previousPath;
+    if (previousPath === undefined) Reflect.deleteProperty(process.env, 'PATH');
+    else process.env.PATH = previousPath;
   }
 });
 test('both publication paths verify signed payloads before reconciliation', () => {
@@ -158,6 +159,9 @@ test('both publication paths verify signed payloads before reconciliation', () =
   expect(workflow.match(/verify-dsh-genie-board-release.ts --signed-artifact-dir/g)?.length).toBe(2);
 });
 
+// Three full four-platform verifications (one in process, two through the CLI) run verify-release.sh
+// 13 times, and each reads the release certificate's repository ids in bash. On macos-latest that took
+// 2.1-6.3 s and timed out at bun's 5 s default; 15 s is 2.4x the slowest run measured there.
 test('signed orchestration verifies all four signatures, provenance and endorsed descriptors; rejects rewritten source', () => {
   // These deterministic executables prove invocation and failure propagation, not cryptographic validity.
   const f = fixture();
@@ -166,23 +170,21 @@ test('signed orchestration verifies all four signatures, provenance and endorsed
   const log = join(f.root, 'calls');
   for (const name of ['cosign', 'slsa-verifier'])
     writeFileSync(join(tools, name), `#!/bin/sh\necho ${name} >> '${log}'\nexit 0\n`, { mode: 0o755 });
+  // gh is a shell stand-in too: the test starts it 32 times, 13 of them only to answer the
+  // `gh attestation verify --help` probe in verify-release.sh, so a bun start per call was waste.
   writeFileSync(
     join(tools, 'gh'),
-    `#!/usr/bin/env bun
-import { readFileSync, appendFileSync, readdirSync, copyFileSync } from 'node:fs';
-const args = process.argv.slice(2);
-if (args.includes('--help')) process.exit(1);
-if (args[0] === 'release' && args[1] === 'download') {
- const directory = args[args.indexOf('--dir') + 1];
- for (const name of readdirSync(${JSON.stringify(f.artifacts)})) copyFileSync(${JSON.stringify(f.artifacts)} + '/' + name, directory + '/' + name);
- process.exit(0);
-}
-if (args[0] === 'release' && args[1] === 'view') { console.log(JSON.stringify({ tagName: 'v${version}', isDraft: false, isPrerelease: false })); process.exit(0); }
-if (args[0] === 'api') { console.log(JSON.stringify({ sha: process.env.DSH_TEST_TAG_SHA || '${'a'.repeat(40)}' })); process.exit(0); }
-appendFileSync(${JSON.stringify(log)}, 'descriptor\\n');
-appendFileSync(${JSON.stringify(f.root)} + '/gh-argv', args.join('\\u0000') + '\\n');
-const bundle = args[args.indexOf('--bundle') + 1];
-console.log(JSON.stringify([{ verificationResult: { statement: { predicate: JSON.parse(readFileSync(bundle, 'utf8')) } } }]));
+    `#!/bin/sh
+for arg in "$@"; do [ "$arg" = --help ] && exit 1; done
+after() { flag=$1; shift; while [ "$#" -gt 1 ]; do [ "$1" = "$flag" ] && { printf '%s' "$2"; return 0; }; shift; done; return 1; }
+case "$1 $2" in
+'release download') cp '${f.artifacts}'/* "$(after --dir "$@")"/; exit ;;
+'release view') echo '{"tagName":"v${version}","isDraft":false,"isPrerelease":false}'; exit 0 ;;
+esac
+if [ "$1" = api ]; then echo "{\\"sha\\":\\"\${DSH_TEST_TAG_SHA:-${'a'.repeat(40)}}\\"}"; exit 0; fi
+echo descriptor >> '${log}'
+{ printf '%s\\0' "$@"; echo; } >> '${f.root}/gh-argv'
+printf '[{"verificationResult":{"statement":{"predicate":%s}}}]\\n' "$(cat "$(after --bundle "$@")")"
 `,
     { mode: 0o755 },
   );
@@ -230,9 +232,10 @@ console.log(JSON.stringify([{ verificationResult: { statement: { predicate: JSON
     }
     expect(() => verifyArtifacts(f.artifacts, version, 'stable')).toThrow('verified delivery predicate');
   } finally {
-    process.env.PATH = previousPath;
+    if (previousPath === undefined) Reflect.deleteProperty(process.env, 'PATH');
+    else process.env.PATH = previousPath;
   }
-});
+}, 15_000);
 
 test('a missing member on only the final platform fails after the other three complete', () => {
   const f = fixture();

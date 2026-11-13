@@ -67,7 +67,7 @@ describe('plugin lane', () => {
       {
         name: '@automagik/genie-dsh',
         version: '0.1.2',
-        url: 'https://github.com/automagik-dev/genie/releases/download/genie-dsh-v0.1.2/automagik-genie-dsh-0.1.2.tgz',
+        url: 'https://github.com/automagik-si/genie/releases/download/genie-dsh-v0.1.2/automagik-genie-dsh-0.1.2.tgz',
         integrity: 'sha512-abc',
         sha256: 'f'.repeat(64),
         size: 10302,

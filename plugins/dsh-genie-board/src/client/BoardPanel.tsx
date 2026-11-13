@@ -1,7 +1,7 @@
-import { Button, IconPlusOutline16, StateDot, Tag } from '@deepseek-ai/dsh-client-ui-primitives';
+import { Button, StateDot, Tag } from '@deepseek-ai/dsh-client-ui-primitives';
 import { useCallback, useEffect, useState } from 'react';
 import { type Aggregate, type Board, type Card, api, remembered } from './api';
-import { IconBoard16 } from './icons';
+import { IconBoard16, IconPlus } from './icons';
 import { Empty, PanelShell, type Status, useWorkspaces, when } from './shell';
 
 const STATUS_LABEL: Record<Card['status'], string> = {
@@ -550,7 +550,7 @@ export function BoardPanel() {
             <Button
               size="sm"
               variant="primary"
-              icon={<IconPlusOutline16 />}
+              icon={<IconPlus />}
               type="submit"
               disabled={busy || !boardRef || !title.trim()}
             >

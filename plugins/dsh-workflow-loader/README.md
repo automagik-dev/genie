@@ -113,18 +113,31 @@ the DSH run root) and the tool returns the head plus how much it left out.
 
 DSH **0.1.2-rc.1 up to, not including, 0.3.0** — top-level `engines.dsh` in
 `package.json` (where DSH's manifest contract puts it) reads
-`>=0.1.2-rc.1 <0.3.0-0`. The 0.2 line was exercised on
-2026-09-28: the smoke under *Verification* passed against a real
-`@deepseek-ai/dsh@0.2.0-rc.1` Host (npm dist-tag `next`) and against
-`0.1.7-rc.2`, each pinned with `DSH_BIN`. Every Host API the row calls
-(`tools`, `workflowEngine.start`, `systemPrompt`) is unchanged between those two
-versions. Evaluate the range with prereleases
-included (`includePrerelease`): under default npm semver it matches only release
-versions, and the exact versions proven are the prereleases `0.1.7-rc.2` and
-`0.2.0-rc.1`. DSH's own manifest contract says nothing enforces the range yet —
-`@deepseek-ai/dsh-package-manifest` README.md:93 (0.2.0-rc.1): "Current
-installers and loaders do not enforce `dsh.manifestVersion` or `engines.dsh`" —
-so the range records what was proven; it does not gate an install.
+`>=0.1.2-rc.1 <0.3.0-0`. The ceiling is the next minor that has not been
+exercised yet.
+
+Verified Host: `@deepseek-ai/dsh@0.2.2-rc.2` (npm dist-tag `next`), on
+2026-11-12: the smoke under *Verification* passed against it, pinned with
+`DSH_BIN`, under Node 22 and Node 24 — the row activated in the `headless`
+profile and registered `workflow_run`, and the control boot with the Host-root
+`workflow-ptc` off left it `pending (waiting for service: workflowEngine)`. Every
+Host API the row calls (`tools`, `workflowEngine.start`, `systemPrompt`) is
+declared the same in 0.2.2-rc.1 and 0.2.2-rc.2. Before that, the smoke passed
+against `0.2.0-rc.1` and `0.1.7-rc.2` on 2026-09-28.
+
+DSH enforces this range. From dsh-app-boot 0.2.1-alpha.4 (dsh 0.2.1-alpha.4,
+so every 0.2.1-rc and later Host), `evaluatePluginCompatibility` checks
+`engines.dsh` with `semver.satisfies(runtime, range, { includePrerelease: true })`:
+prereleases take part, and an `engines.dsh` that is present decides alone. An
+unmet range skips the plugin's bundle at profile load and disables its row in
+preflight (`@deepseek-ai/dsh-app-boot` 0.2.2-rc.2, `lib/index.js` lines
+1099-1108, 1811-1812, 3118-3119); the one bypass is an exact-version grant,
+`dsh plugin allow-version`. Hosts before 0.2.1-alpha.4 do not read the range.
+`@deepseek-ai/dsh-package-manifest`'s own README still says the opposite through
+0.2.2-rc.2 ("Current installers and loaders do not enforce `dsh.manifestVersion`
+or `engines.dsh`", README.md:96); the code above is what runs. That rule is why
+the ceiling is spelled `<0.3.0-0`, the same as the other two Genie DSH plugins:
+`<0.3.0` would admit every 0.3.0 prerelease (`plugins/dsh-engines.test.ts`).
 
 **Node floor: 22.12.** A git install has no `dist/` (it is not committed), so the
 package builds itself in its `prepare` script, `node build.mjs`, under the host's
@@ -148,7 +161,8 @@ profile you install it into decides whether that exists:
 | `headless` (and any profile that keeps `dsh-base`'s Host-root `workflow-ptc`) | yes — `dsh-base` mounts `workflow-ptc` there | activates and registers `workflow_run` |
 | `web` | no — the web app disables the Host-root `workflow-ptc` and mounts it only inside the `standard`/`ptc` web presets' isolated `delegation` group | stays `pending (waiting for service: workflowEngine)`; the Host boots, the tool never appears |
 
-That is true of 0.1.7-rc.2 and 0.2.0-rc.1 alike. Mounting the row per preset on
+That is true of 0.1.7-rc.2, 0.2.0-rc.1 and 0.2.2-rc.2 alike (`dsh-web-app`'s
+`cordis.patch.yml` still disables the Host-root `workflow-ptc`). Mounting the row per preset on
 `web` would change how it ships, so it is listed under *Not done yet* rather than
 worked around.
 
@@ -193,7 +207,7 @@ a personal copy that has drifted from the project's.
 
 ## Verification
 
-- `bun test src/` — 47 tests: the dialect against this repository's own catalog,
+- `bun test src/` — 50 tests: the dialect against this repository's own catalog,
   and the row end to end with a stub engine.
 - `bun scripts/dsh-workflow-loader-smoke.ts` — installs the row into the
   `headless` profile of an isolated `DSH_HOME`/`HOME`/`TMPDIR` tree, asserts the
@@ -217,8 +231,8 @@ a personal copy that has drifted from the project's.
   install scripts off and point the smoke at it:
 
   ```sh
-  npm install --prefix /tmp/dsh-0.2.0-rc.1 --ignore-scripts @deepseek-ai/dsh@0.2.0-rc.1
-  DSH_BIN=/tmp/dsh-0.2.0-rc.1/node_modules/.bin/dsh bun scripts/dsh-workflow-loader-smoke.ts
+  npm install --prefix /tmp/dsh-0.2.2-rc.2 --ignore-scripts @deepseek-ai/dsh@0.2.2-rc.2
+  DSH_BIN=/tmp/dsh-0.2.2-rc.2/node_modules/.bin/dsh bun scripts/dsh-workflow-loader-smoke.ts
   ```
 - The plugin is a **release payload member**: `scripts/build-binary.sh` stages its dist
   into the tarball, `scripts/release-payload-version.ts` stamps its `package.json` with

@@ -180,6 +180,7 @@ describe('runtime integration removal reporting', () => {
     const result = removeRuntimeIntegrations({
       removeMarketplace: true,
       codexHome,
+      claudeHome: mkdtempSync(join(tmpdir(), 'genie-claude-remove-')),
       detected: { codex: true, claude: true },
       timeoutMs: 321,
       runner(command, args, options) {
@@ -200,6 +201,7 @@ describe('runtime integration removal reporting', () => {
   test('already-absent plugins are an idempotent success', () => {
     const result = removeRuntimeIntegrations({
       codexHome: mkdtempSync(join(tmpdir(), 'genie-codex-remove-')),
+      claudeHome: mkdtempSync(join(tmpdir(), 'genie-claude-remove-')),
       detected: { codex: true, claude: false },
       installedEvidence: { codex: false, claude: false },
       runner() {

@@ -64,7 +64,9 @@
       ".docs-vendor",
       "docs",
       ".well-known",
-      "tests/fixtures/delivery-evidence"
+      "tests/fixtures/delivery-evidence",
+      "brand",
+      "scripts/brand-sync.mjs"
     ]
   },
   "overrides": [

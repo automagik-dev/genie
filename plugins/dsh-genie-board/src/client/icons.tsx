@@ -1,13 +1,32 @@
 /**
- * Sidebar glyphs in the DSH primitive style: 16-unit viewBox, 1.5px strokes,
- * currentColor, `size` prop. Drawn to sit beside IconSkillOutline16 and friends.
+ * Every icon the panels draw. The two sidebar glyphs are drawn here in the DSH
+ * primitive style (16-unit viewBox, 1.5px strokes, currentColor, `size` prop); the
+ * three action glyphs come from the Host's own primitives table.
  */
+import * as primitives from '@deepseek-ai/dsh-client-ui-primitives';
 import type { ReactElement } from 'react';
 
 interface IconProps {
   size?: number | undefined;
   className?: string | undefined;
 }
+
+type Glyph = (props: IconProps) => ReactElement | null;
+const noGlyph: Glyph = () => null;
+
+/*
+ * `@deepseek-ai/dsh-client-ui-primitives` 0.1.7-alpha.1 renamed every `IconXOutline16`
+ * to `IconXOutlineRegular` / `IconXOutlineMedium` with no alias, and the range this
+ * plugin declares spans both sides of that rename. Each action glyph is therefore read
+ * from the namespace, the current name first and the earlier one second: a name the
+ * Host's frozen module table does not carry reads as `undefined` there, and rendering
+ * `undefined` is what failed both panels on first render from 0.1.7-alpha.1 until this
+ * fix. A table with neither name draws no glyph; every call site keeps its text
+ * (Refresh, Add, No match), so none of them is ever an icon-only control.
+ */
+export const IconRefresh: Glyph = primitives.IconRefreshOutlineRegular ?? primitives.IconRefreshOutline16 ?? noGlyph;
+export const IconPlus: Glyph = primitives.IconPlusOutlineRegular ?? primitives.IconPlusOutline16 ?? noGlyph;
+export const IconSearch: Glyph = primitives.IconSearchOutlineRegular ?? primitives.IconSearchOutline16 ?? noGlyph;
 
 const frame = (size: number, className: string | undefined, children: ReactElement | ReactElement[]) => (
   <svg

@@ -940,8 +940,15 @@ test('the executable resolves from GENIE_HOME/bin, ~/.genie/bin and ~/.local/bin
     }
     expect(() => resolveExecutable()).toThrow('Genie executable is unavailable');
   } finally {
-    Object.assign(process.env, environment);
+    // A key that was unset is deleted again: Bun stores `process.env.X = undefined` as the
+    // string "undefined", and a later spawn would treat HOME="undefined" as a relative path.
+    for (const [key, value] of Object.entries(environment)) {
+      if (value === undefined) Reflect.deleteProperty(process.env, key);
+      else process.env[key] = value;
+    }
   }
+  for (const [key, value] of Object.entries(environment)) expect(process.env[key]).toBe(value);
+  expect(process.env.HOME).not.toBe('undefined');
 });
 // F6 end to end, with a genie that hangs: the browser must receive the deadline
 // answer as JSON, inside the socket deadline. On Node — DSH's runtime — the old

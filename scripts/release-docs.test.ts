@@ -954,9 +954,11 @@ describe('Group E release and documentation contracts', () => {
     expect(pkg.scripts['check:fast']).toContain('bun run lint:complexity-budget');
     expect(workflow).toContain('bun run lint:complexity-budget');
     // The six plugin/hook gates, and later the Orca bundle gate, left with the
-    // payload they linted; `check` is exactly these eight steps and `check:fast`
-    // the first six, without `bun test` or the cargo gate (genie-v7-tasks 1c: CI runs
-    // `cargo test --workspace --locked` directly on both unit legs).
+    // payload they linted; `check` is exactly these nine steps and `check:fast`
+    // the first six, without `bun test`, the residue check that reads what `bun test`
+    // left in the tree, or the cargo gate (genie-v7-tasks 1c: CI runs
+    // `cargo test --workspace --locked` directly on both unit legs). No CI step runs
+    // `test:residue` yet; adding one is a separate decision.
     expect(workflow).not.toContain('lint:orca-bundle');
     const steps = pkg.scripts.check.split(' && ');
     expect(steps).toEqual([
@@ -967,12 +969,13 @@ describe('Group E release and documentation contracts', () => {
       'bun run wishes:lint',
       'bun run lint:complexity-budget',
       'bun test',
+      'bun run test:residue',
       'bun run test:cargo',
     ]);
-    expect(pkg.scripts['check:fast'].split(' && ')).toEqual(steps.slice(0, -2));
+    expect(pkg.scripts['check:fast'].split(' && ')).toEqual(steps.slice(0, -3));
     expect(workflow.match(/^ +run: cargo test --workspace --locked$/gm)).toHaveLength(2);
     // The six plugin/hook lint gates and the `hooks:bind` writer are gone: the
-    // only surviving `lint:` scripts are the one the eight-step gate names, the
+    // only surviving `lint:` scripts are the one the nine-step gate names, the
     // two docs linters and the fixer.
     expect(
       Object.keys(pkg.scripts)
@@ -1093,7 +1096,7 @@ describe('Group E release and documentation contracts', () => {
     // skills.sh channel.
     expect(docs).toContain('Genie ships exactly two surfaces');
     for (const statement of [
-      'npx skills add automagik-dev/genie',
+      'npx skills add automagik-si/genie',
       'skills-install.json',
       '~/.agents/skills',
       'MCP retirement',
@@ -1106,13 +1109,16 @@ describe('Group E release and documentation contracts', () => {
     const readme = read('README.md');
     for (const statement of [
       'Genie ships exactly two surfaces',
-      'npx skills add automagik-dev/genie',
+      'npx skills add automagik-si/genie',
       'skills-install.json',
       '~/.agents/skills',
       'skills: skipped (consent: none)',
     ]) {
       expect(readme).toContain(statement);
     }
+    // The repository moved to automagik-si/genie. A skills CLI before 1.8.0 reports an install under the name it is
+    // given, so the README never offers the pre-rename command (UPGRADING.md names it once, for existing installs).
+    expect(readme).not.toContain('npx skills add automagik-dev/genie');
     // The retired CLI-managed-fallback promise must be gone from operator docs.
     expect(docs).not.toContain('synchronizes up to 23 digest-managed product-skill fallbacks');
     expect(docs).not.toContain('CLI-managed product skills');
@@ -1154,7 +1160,8 @@ describe('Group E release and documentation contracts', () => {
     // overview names it, keeps the default-branch caveat on the manual command,
     // and no longer promises a plugin/user-tier fallback of any kind.
     const skillsOverview = read('skills/README.md');
-    expect(skillsOverview).toContain('npx skills add automagik-dev/genie');
+    expect(skillsOverview).toContain('npx skills add automagik-si/genie');
+    expect(skillsOverview).not.toContain('npx skills add automagik-dev/genie');
     expect(skillsOverview).toContain("repository's default branch");
     expect(skillsOverview).toContain('`genie update` installs the exact delivered');
     expect(skillsOverview).toContain('separately installed personal copy of a skill is');

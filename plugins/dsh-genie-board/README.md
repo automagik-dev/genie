@@ -185,19 +185,50 @@ structure at zero release cost, while a rename would have to move
 Requires Bun (checkout builds), a Host-installed Genie CLI, and DSH
 **0.1.2-rc.1 up to, not including, 0.3.0** — top-level `engines.dsh` in
 `package.json` (where DSH's manifest contract puts it) reads
-`>=0.1.2-rc.1 <0.3.0-0`. The floor was exercised with the Host installed at
-the time. The 0.2 line was exercised on 2026-09-28: the smoke below passed
-unchanged against a real `@deepseek-ai/dsh@0.2.0-rc.1` Host (npm dist-tag
-`next`) and against `0.1.7-rc.2`, each pinned with `DSH_BIN` (see
-*Validation*). Every Host API the plugin calls is unchanged between those two
-versions. Evaluate the range with prereleases
-included (`includePrerelease`): under default npm semver it matches only release
-versions, and the exact versions proven are the prereleases `0.1.7-rc.2` and
-`0.2.0-rc.1`. DSH's own manifest contract says nothing enforces the range yet —
-`@deepseek-ai/dsh-package-manifest` README.md:93 (0.2.0-rc.1): "Current
-installers and loaders do not enforce `dsh.manifestVersion` or `engines.dsh`" —
-so the range records what was proven; it does not gate an install. The
-ceiling is the next minor that has not been exercised yet.
+`>=0.1.2-rc.1 <0.3.0-0`. The ceiling is the next minor that has not been
+exercised yet. The floor was exercised with the Host installed at the time and
+has not been re-verified since.
+
+Verified Host: `@deepseek-ai/dsh@0.2.2-rc.2` (npm dist-tag `next`), on
+2026-11-12, both halves. The smoke under *Validation* passed against it, pinned
+with `DSH_BIN`, under Node 22 and Node 24: install, list, restart, health, load,
+create, move, disable-by-id and disable-manager. The built `client.js` mounted
+both panels against `@deepseek-ai/dsh-client-ui-primitives@0.2.2-rc.2`, whose
+318 exports are exactly the primitives table that Host serves (*Validation*, the
+icons step). Every Host API and slot the plugin uses — `workspaceRegistry.list`,
+`webServer.register`, `connection.requestRejection`, `sidebar.panellist`, `main`
+— and the primitives it renders (`Button`, `Tag`, `StateDot`) are declared the
+same in 0.2.2-rc.1 and 0.2.2-rc.2.
+
+The earlier proof was narrower than it read. On 2026-09-28 the smoke passed
+against `0.2.0-rc.1` and `0.1.7-rc.2`, but the smoke probes Host routes only,
+and the browser half did not work on either: from
+`@deepseek-ai/dsh-client-ui-primitives` 0.1.7-alpha.1 — first shipped in dsh
+0.1.7-alpha.1 — until this fix, both panels failed on first render on every
+Host. The client imported `IconRefreshOutline16`, `IconPlusOutline16` and
+`IconSearchOutline16`; that release renamed every `IconXOutline16` to
+`IconXOutlineRegular` / `IconXOutlineMedium` with no alias, so the three read
+as `undefined` from the Host's table and React refused to render them.
+`src/client/icons.tsx` now reads the current name first and the earlier one
+second, and draws no glyph when a table has neither; every control keeps its
+text.
+
+DSH enforces this range. From dsh-app-boot 0.2.1-alpha.4 (dsh 0.2.1-alpha.4,
+so every 0.2.1-rc and later Host), `evaluatePluginCompatibility` checks
+`engines.dsh` with `semver.satisfies(runtime, range, { includePrerelease: true })`:
+prereleases take part, and an `engines.dsh` that is present decides alone (the
+`@deepseek-ai/dsh-*` peers are then ignored). An unmet range skips the plugin's
+bundle at profile load and disables its row in preflight
+(`@deepseek-ai/dsh-app-boot` 0.2.2-rc.2, `lib/index.js` lines 1099-1108,
+1811-1812, 3118-3119). The one bypass is an exact-version grant for this plugin
+version on that dsh version, `dsh plugin allow-version`. Hosts before
+0.2.1-alpha.4 do not read the range. `@deepseek-ai/dsh-package-manifest`'s own
+README still says the opposite through 0.2.2-rc.2 ("Current installers and
+loaders do not enforce `dsh.manifestVersion` or `engines.dsh`", README.md:96);
+the code above is what runs. Under that include-prerelease rule `<0.3.0` would
+admit every 0.3.0 prerelease, so the ceiling is spelled `<0.3.0-0`, the same as
+the other two Genie DSH plugins: an untested 0.3.0 Host refuses all three
+together (`plugins/dsh-engines.test.ts`).
 
 **Node floor: 22.12.** A git install has no `dist/` (it is not committed), so the
 package builds itself in its `prepare` script, `node build.mjs`, under the host's
@@ -343,21 +374,46 @@ install scripts off (nothing global, nothing under your `DSH_HOME`) and point th
 smoke at it:
 
 ```sh
-npm install --prefix /tmp/dsh-0.2.0-rc.1 --ignore-scripts @deepseek-ai/dsh@0.2.0-rc.1
-DSH_BIN=/tmp/dsh-0.2.0-rc.1/node_modules/.bin/dsh bun scripts/dsh-genie-board-smoke.ts
+npm install --prefix /tmp/dsh-0.2.2-rc.2 --ignore-scripts @deepseek-ai/dsh@0.2.2-rc.2
+DSH_BIN=/tmp/dsh-0.2.2-rc.2/node_modules/.bin/dsh bun scripts/dsh-genie-board-smoke.ts
 ```
 
 The pinned binary's directory also goes first on the children's PATH, so
 anything the Host itself spawns as `dsh` is the same version.
+
+The smoke never loads the browser half, so a Host bump also checks that **the
+icons the client imports exist in the Host's primitives table**. The table is
+one frozen object in the Host's web bundle; print the names the client takes
+from it:
+
+```sh
+F=$(ls /tmp/dsh-0.2.2-rc.2/node_modules/@deepseek-ai/dsh-web-frontend/dist/assets/index-*.js)
+grep -oE 'Object\.freeze\(Object\.defineProperty\(\{__proto__:null,[^}]*\}' "$F" \
+  | grep 'StateDot:' | tr ',{' '\n\n' \
+  | grep -xE '(Button|Tag|StateDot|Icon(Refresh|Plus|Search)Outline(Regular|16)):[A-Za-z0-9_$]+' | cut -d: -f1 | sort
+```
+
+On 0.2.2-rc.2 it prints `Button`, `IconPlusOutlineRegular`,
+`IconRefreshOutlineRegular`, `IconSearchOutlineRegular`, `StateDot` and `Tag`.
+`Button`, `Tag` and `StateDot` must all be there, or the panels cannot render;
+each of `Refresh`, `Plus` and `Search` needs one of its two spellings, or that
+control loses its glyph (never its text). A name outside those two spellings
+means the primitives renamed again: add it to `src/client/icons.tsx`,
+`types/primitives.d.ts` and the tables in `src/client.test.ts`.
 
 `src/contract.test.ts` runs the REAL CLI (`bun <repo>/src/genie.ts`) against a
 seeded temporary repository through this plugin's own process layer and parses
 its output with these schemas, so a producer change that the two hand-written key
 lists would both miss fails here. `src/client.test.ts` renders the browser half with
 real React on a DOM stand-in — DSH's frozen browser module table is stubbed to
-the plain elements it wraps — and asserts on the emitted markup: the laneless
-mark in the board picker, and the comment window with its "showing last N of M"
-label.
+the plain elements it wraps, carrying only the icon names the current Host
+serves — and asserts on the emitted markup: the laneless mark in the board
+picker, and the comment window with its "showing last N of M" label. It also
+builds the shipped `client.js` and evaluates it the way the Host does
+(`window.__ModuleLoader__` and an injected `require`) against three primitives
+tables — the current icon names only, the pre-0.1.7 names only, and neither —
+and requires both panels to mount on each, with the glyph whenever the table
+has one.
 
 The smoke rebuilds `dist/` itself before installing, so it can never pass
 against a bundle left over from an earlier build; a failing plugin build fails

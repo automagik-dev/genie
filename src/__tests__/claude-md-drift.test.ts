@@ -101,7 +101,8 @@ describe('CLAUDE.md v5 drift guard', () => {
 
   test('documents the one skills channel in both files', () => {
     for (const file of [overlay, shared]) {
-      expect(file).toContain('npx skills add automagik-dev/genie');
+      expect(file).toContain('npx skills add automagik-si/genie');
+      expect(file).not.toContain('npx skills add automagik-dev/genie');
       expect(file).toContain('skills-install.json');
     }
   });
@@ -219,6 +220,8 @@ describe('CLAUDE.md subcommand drift guard', () => {
     expect(documentedInvocation(documented as string, 'task').flags).toEqual([]);
   });
 
+  // One CLI start per documented task line: up to 5.3 s on macos-latest, where it timed out at bun's
+  // 5 s default once. 15 s is 2.8x the slowest run measured there.
   test('every task verb and flag CLAUDE.md documents exists in the registry', () => {
     const verbs = subcommandNames(cliHelp(['task']));
     for (const line of documentedLines(content, 'Task subcommands', 'task')) {
@@ -227,7 +230,7 @@ describe('CLAUDE.md subcommand drift guard', () => {
       const options = longOptions(cliHelp(['task', name]));
       for (const flag of flags) expect([name, ...options]).toContain(flag);
     }
-  });
+  }, 15_000);
 
   /**
    * Dogfood 7 W5: `genie config` shipped, the `fix` skill built its repair

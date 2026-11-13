@@ -1,0 +1,20 @@
+{
+  "description": "How a git remote becomes the --repo value (host/owner/repo): credentials, port, query and fragment dropped, host lower-cased, .git dropped, path case kept. The meter and genie both test against these cases; no repo value may contain a credential. Synthetic values only. RFC 0018.",
+  "cases": [
+    { "remote": "https://example.com/acme/widgets.git", "repo": "example.com/acme/widgets" },
+    { "remote": "https://EXAMPLE.com/Acme/Widgets", "repo": "example.com/Acme/Widgets" },
+    { "remote": "git@example.com:acme/widgets.git", "repo": "example.com/acme/widgets" },
+    { "remote": "ssh://git@example.com/acme/widgets.git", "repo": "example.com/acme/widgets" },
+    { "remote": "https://someone@example.com/acme/widgets/?ref=x#top", "repo": "example.com/acme/widgets" },
+    { "remote": "https://example.org/group/sub/project.git", "repo": "example.org/group/sub/project" },
+    { "remote": "https://example.com:8443/acme/widgets.git", "repo": "example.com/acme/widgets" },
+    { "remote": "ssh://git@EXAMPLE.com:2222/acme/widgets.git", "repo": "example.com/acme/widgets" },
+    { "remote": "https://someone:FAKE-TOKEN@example.com/acme/widgets.git?token=FAKE-TOKEN", "repo": "example.com/acme/widgets" },
+    { "remote": "https://oauth2:FAKE-TOKEN@example.org:8443/group/sub/project", "repo": "example.org/group/sub/project" },
+    { "remote": "deploy:FAKE-TOKEN@example.org:acme/widgets", "repo": "example.org/acme/widgets" },
+    { "remote": "file:///srv/git/widgets.git", "repo": null },
+    { "remote": "/srv/git/widgets.git", "repo": null },
+    { "remote": "../widgets", "repo": null },
+    { "remote": "", "repo": null }
+  ]
+}

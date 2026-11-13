@@ -1,6 +1,6 @@
 // Tests import the plugin outside a dsh profile, so its @deepseek-ai peers resolve from a
 // DeepSeek Harness install: DSH_HARNESS, else the Bot team checkout's dev/harness
-// (automagik-dev/automagik apps/bots-dsh, `bun run harness` there), found beside the genie
+// (automagik-si/automagik apps/bots-dsh, `bun run harness` there), found beside the genie
 // repository or at BOTS_DSH.
 import { existsSync } from 'node:fs';
 import { registerHooks } from 'node:module';

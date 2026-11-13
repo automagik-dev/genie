@@ -34,7 +34,8 @@ export const TOOL_NAME = 'workflow_run';
  * of `workflowEngine`. `web` does not: the web app disables that Host-root row
  * and mounts `workflow-ptc` only inside the `standard`/`ptc` web presets'
  * isolated `delegation` group, so on `web` this row stays `pending (waiting for service:
- * workflowEngine)` on every DSH version tried (0.1.7-rc.2 and 0.2.0-rc.1). The
+ * workflowEngine)` on every DSH version tried (0.1.7-rc.2 and 0.2.0-rc.1; 0.2.2-rc.2's
+ * `dsh-web-app` still disables that row, and its control boot prints the same line). The
  * live run the README records was a `headless` one for the same reason.
  */
 export const PROFILE = 'headless';

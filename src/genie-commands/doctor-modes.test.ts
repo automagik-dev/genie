@@ -9,7 +9,7 @@
  * green under both `umask 022` and `umask 000`) can leak into an assertion.
  */
 
-import { afterEach, describe, expect, test } from 'bun:test';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
 import {
   chmodSync,
@@ -684,21 +684,50 @@ describe('probe errors keep the item with a reason', () => {
 
 describe('doctor wiring', () => {
   const ISOLATED_KEYS = ['HOME', 'GENIE_HOME', 'CODEX_HOME', 'CLAUDE_CONFIG_DIR', 'GENIE_WORKTREES_DIR'] as const;
-  let saved: Partial<Record<(typeof ISOLATED_KEYS)[number], string>> = {};
+  type IsolatedEnv = Partial<Record<(typeof ISOLATED_KEYS)[number], string>>;
+
+  /** The five keys as they stand now; a key missing from the result is absent from the environment. */
+  function snapshotEnv(): IsolatedEnv {
+    const env: IsolatedEnv = {};
+    for (const key of ISOLATED_KEYS) {
+      const value = process.env[key];
+      if (value !== undefined) env[key] = value;
+    }
+    return env;
+  }
+
+  // Taken before EVERY test, not inside isolate(): a snapshot filled only by isolate() made
+  // afterEach delete all five keys — HOME included — for the rest of the `bun test` process
+  // whenever a test failed before reaching isolate() (doctor-worktrees.test.ts had a test that
+  // never called it at all).
+  let beforeTest: IsolatedEnv = {};
+
+  beforeEach(() => {
+    beforeTest = snapshotEnv();
+  });
 
   afterEach(() => {
     for (const key of ISOLATED_KEYS) {
-      if (saved[key] === undefined) delete process.env[key];
-      else process.env[key] = saved[key];
+      const value = beforeTest[key];
+      if (value === undefined) Reflect.deleteProperty(process.env, key);
+      else process.env[key] = value;
     }
-    saved = {};
+  });
+
+  // The suite as a whole hands the process back as it found it.
+  let beforeSuite: IsolatedEnv = {};
+
+  beforeAll(() => {
+    beforeSuite = snapshotEnv();
+  });
+
+  afterAll(() => {
+    expect(process.env.HOME).toBe(beforeSuite.HOME);
+    expect(snapshotEnv()).toEqual(beforeSuite);
   });
 
   /** Point every home-shaped env at the fixture so doctor never reads the real host. */
   function isolate(fixture: Fixture): void {
-    for (const key of ISOLATED_KEYS) {
-      if (process.env[key] !== undefined) saved[key] = process.env[key];
-    }
     const home = join(fixture.dir, 'home');
     mkdirSync(home, { recursive: true });
     chmodSync(home, 0o755);

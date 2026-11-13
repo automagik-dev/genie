@@ -10,11 +10,15 @@
 //! forge-sync reports it on stderr and exits 0 (Decision 12). Errors go to stderr; `--json` output
 //! goes to stdout.
 
+use std::collections::BTreeMap;
 use std::io::Write;
 use std::path::PathBuf;
 
 use genie_forge::SyncOptions;
-use genie_tasks::store::{Listed, open_store_read};
+use genie_tasks::meter::{
+    BranchUsageSummary, MAX_QUERY_BRANCHES, MeterRowState, MeterTaskRow, query_repo_by_branches, query_repo_by_task,
+};
+use genie_tasks::store::{Listed, Store, open_store_read};
 use genie_tasks::{Lane, StartOptions, StoredEvent, VerbError, genie_home, rebuild};
 use serde_json::{Value, json};
 
@@ -154,7 +158,7 @@ fn lane(lane: Lane) -> &'static str {
     }
 }
 
-/// A task's JSON: every `v7_tasks` key, then its lifecycle and the realpath `project`.
+/// A task's base JSON: every `v7_tasks` key, then its lifecycle and the realpath `project`.
 fn task_json(listed: &Listed) -> Value {
     let (t, life) = (&listed.row, &listed.lifecycle);
     json!({
@@ -180,6 +184,103 @@ fn task_json(listed: &Listed) -> Value {
         "pr_open_min": listed.pr_open_min,
         "pr_lead_min": listed.pr_lead_min,
     })
+}
+
+fn attach_missing_meter(val: &mut Value, reason: &str, branch_usage: Value) {
+    val["meter_state"] = json!("missing");
+    val["meter_reason"] = json!(reason);
+    val["tokens"] = Value::Null;
+    val["cost"] = Value::Null;
+    val["activity_hours"] = Value::Null;
+    val["actors"] = json!([]);
+    val["work_min"] = Value::Null;
+    val["branch_usage"] = branch_usage;
+}
+
+fn attach_task_meter(val: &mut Value, tr: &MeterTaskRow) {
+    val["meter_state"] = json!(tr.state);
+    val["meter_reason"] = json!(tr.reason);
+    val["tokens"] = json!(tr.tokens);
+    val["cost"] = json!(tr.cost);
+    val["activity_hours"] = json!(tr.activity.as_ref().map(|a| a.hours));
+    val["actors"] = Value::Array(
+        tr.actors
+            .iter()
+            .map(|a| json!({"bot": a.bot, "kind": a.kind, "role": a.role, "squad": a.squad, "unrecorded": a.unrecorded, "harness": a.harness, "usd": Value::Null, "work_min": Value::Null}))
+            .collect(),
+    );
+    val["work_min"] = Value::Null;
+    val["branch_usage"] = Value::Null;
+}
+
+/// Enriches `tasks` with Contract 1 meter fields (`--by task` for card cost, batched `--branch` for drawer usage).
+fn tasks_json(store: &Store, tasks: &[Listed]) -> Vec<Value> {
+    let mut out: Vec<Value> = tasks.iter().map(task_json).collect();
+    if tasks.is_empty() {
+        return out;
+    }
+    let fill_err = |out: &mut [Value], reason: &str| {
+        for val in out.iter_mut() {
+            attach_missing_meter(val, reason, Value::Null);
+        }
+    };
+    let Some(slug) = store.repo_slug() else {
+        fill_err(&mut out, "no_repo_slug");
+        return out;
+    };
+    let task_rows = match query_repo_by_task(&slug) {
+        Ok(rows) => rows,
+        Err(err) => {
+            fill_err(&mut out, &err.reason);
+            return out;
+        }
+    };
+    let task_map: BTreeMap<&str, &MeterTaskRow> = task_rows.iter().map(|r| (r.task.as_str(), r)).collect();
+    let in_window: Vec<bool> = tasks.iter().map(|l| !store.outside_d30_window(&l.row.updated_at)).collect();
+    // Decision order: by-task row present -> attach as is; absent and inside the window -> branch call; absent and outside the window -> outside_d30_window.
+    let mut candidate_branches: Vec<String> = Vec::new();
+    for (l, &inside) in tasks.iter().zip(&in_window) {
+        let has_task_row = !l.row.task.is_empty() && task_map.contains_key(l.row.task.as_str());
+        if !has_task_row
+            && inside
+            && !l.row.branch.is_empty()
+            && candidate_branches.len() < MAX_QUERY_BRANCHES
+            && !candidate_branches.contains(&l.row.branch)
+        {
+            candidate_branches.push(l.row.branch.clone());
+        }
+    }
+    let branch_map = (!candidate_branches.is_empty()).then(|| {
+        query_repo_by_branches(&slug, &candidate_branches)
+            .map(|rows| rows.into_iter().map(|r| (r.branch.clone(), r)).collect::<BTreeMap<_, _>>())
+            .map_err(|e| e.reason)
+    });
+
+    for ((val, l), &inside) in out.iter_mut().zip(tasks).zip(&in_window) {
+        if let Some(&tr) = (!l.row.task.is_empty()).then(|| task_map.get(l.row.task.as_str())).flatten() {
+            attach_task_meter(val, tr);
+            continue;
+        }
+        if !inside {
+            attach_missing_meter(val, "outside_d30_window", Value::Null);
+            continue;
+        }
+        let branch_usage = match (l.row.branch.is_empty(), &branch_map) {
+            (false, Some(Ok(map))) => map.get(&l.row.branch).map(|b| json!(b)).unwrap_or(Value::Null),
+            (false, Some(Err(err_reason))) => json!(BranchUsageSummary {
+                branch: l.row.branch.clone(),
+                state: MeterRowState::Missing,
+                reason: Some(err_reason.clone()),
+                tokens: None,
+                cost: None,
+                activity: None,
+                activity_hours: None,
+            }),
+            _ => Value::Null,
+        };
+        attach_missing_meter(val, "no_task_usage", branch_usage);
+    }
+    out
 }
 
 fn event_json(e: &StoredEvent) -> Value {
@@ -253,7 +354,7 @@ fn status(args: &[String], out: &mut dyn Write) -> Result<(), Failure> {
     let task = &listed.row;
     let events: Vec<StoredEvent> = store.events()?.into_iter().filter(|e| e.task_key == task.task_key).collect();
     if flags.json {
-        let mut body = task_json(&listed);
+        let mut body = tasks_json(&store, std::slice::from_ref(&listed)).pop().unwrap();
         body["events"] = events.iter().map(event_json).collect();
         writeln!(out, "{body}")?;
     } else {
@@ -272,7 +373,7 @@ fn list(args: &[String], out: &mut dyn Write) -> Result<(), Failure> {
     let store = open_store_read(&flags.project()?)?;
     let tasks = store.listed()?;
     if flags.json {
-        writeln!(out, "{}", Value::Array(tasks.iter().map(task_json).collect()))?;
+        writeln!(out, "{}", Value::Array(tasks_json(&store, &tasks)))?;
     } else {
         for t in tasks.iter().map(|l| &l.row) {
             let id = if t.task.is_empty() { &t.task_key } else { &t.task };

@@ -621,8 +621,12 @@ export function isPinnedNpxPackage(pkg: string): boolean {
   return version !== '' && !['latest', 'next', '*'].includes(version);
 }
 
-/** The one unpinned invocation shipped skills already document, allowed verbatim. */
-const DOCUMENTED_NPX_INSTALL = /^skills\s+add\s+automagik-dev\/genie\b/;
+/**
+ * The one unpinned invocation shipped skills already document, allowed verbatim. Only the current address passes:
+ * the pre-rename `automagik-dev/genie` form still installs through GitHub's redirect, but a skills CLI before 1.8.0
+ * reports that install to skills.sh under the old name, which keeps the stale listing alive.
+ */
+const DOCUMENTED_NPX_INSTALL = /^skills\s+add\s+automagik-si\/genie\b/;
 const NPX_INVOCATION = /\bnpx\s+(?:-{1,2}[A-Za-z][A-Za-z0-9-]*\s+)*([^\s'"`]+)([^\n]*)/g;
 
 /** True when `subject` runs `npx` on a package that is neither pinned nor the documented installer. */
@@ -654,7 +658,7 @@ export const HAZARD_RULES: readonly HazardRule[] = [
     scope: 'fence',
     matches: hasUnpinnedNpxInstaller,
     guidance:
-      'pin the package (`npx -y skills@<version>`) or use the documented `npx skills add automagik-dev/genie` form',
+      'pin the package (`npx -y skills@<version>`) or use the documented `npx skills add automagik-si/genie` form',
   },
   {
     label: 'pip install',

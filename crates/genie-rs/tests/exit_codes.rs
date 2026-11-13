@@ -70,7 +70,9 @@ impl Fx {
             .args(args)
             .current_dir(&self.repo)
             .env("GENIE_HOME", home)
+            .env("METER_STATE_DIR", home.join("meter-state"))
             .env("PATH", &self.bin)
+            .env("USAGEMETER_BIN", self.bin.join("usagemeter"))
             .output()
             .unwrap()
     }
@@ -344,6 +346,14 @@ fn t1_list_and_status_carry_the_lifecycle_timestamps_worktree_and_project() {
         "task_lead_min",
         "pr_open_min",
         "pr_lead_min",
+        "meter_state",
+        "meter_reason",
+        "tokens",
+        "cost",
+        "activity_hours",
+        "actors",
+        "work_min",
+        "branch_usage",
     ];
     expected.sort_unstable();
     assert_eq!(keys, expected, "every old key kept, lifecycle and time fields added");
@@ -832,4 +842,555 @@ fn tracked_restart_keeps_historical_branch_ambiguity_in_live_and_rebuilt_rows() 
     let resolved = fx.run(&["status", "gh-9", "--json"]);
     assert_eq!(code(&resolved), 0, "{}", stderr(&resolved));
     assert_eq!(serde_json::from_slice::<Value>(&resolved.stdout).unwrap()["task"], "gh-9");
+}
+
+#[test]
+fn meter_query_uses_repo_alias_isolates_branch_usage_and_keeps_db_readonly() {
+    let fx = fixture("meter-d6", true);
+    let git_ok = |args: &[&str]| {
+        assert!(Command::new("git").args(args).current_dir(&fx.repo).status().unwrap().success());
+    };
+    git_ok(&["remote", "set-url", "origin", "https://github.com/automagik-si/genie.git"]);
+    let today = recent("2026-11-11T10:00:00Z");
+    for id in ["gn-1", "gn-2", "gn-3", "gn-4", "gn-5", "gn-8", "gn-9", "gn-10"] {
+        seed(&fx, id, TaskEvent::Created, &today, &format!("/wt/{id}"));
+    }
+    seed(&fx, "gn-6", TaskEvent::Created, "2020-01-01T00:00:00Z", "/wt/gn-6");
+    seed(&fx, "gn-7", TaskEvent::Created, "2020-01-01T00:00:00Z", "/wt/gn-7");
+
+    // Envelopes and rows copy real `usagemeter query --json` output (3.129.x) and the meter's canonical
+    // `meter/schema/query/v1/examples/*.json`, names made synthetic; all are schema-valid but gn-1's
+    // deliberate unknown field.
+    let env_json = |v: &str, status: &str, err: Value, rows: Value| {
+        let ok = |x: Value| if status == "ok" { x } else { Value::Null };
+        let branches: Vec<Value> = rows.as_array().unwrap().iter().filter_map(|r| r.get("branch").cloned()).collect();
+        let mut query = json!({"repo": "github.com/automagik-si/genie", "repo_aliases": ["github.com/automagik-dev/genie"], "window": "d30", "branch_count": branches.len(), "branches": branches, "branches_complete": true, "request_sha256": "0".repeat(64)});
+        if branches.is_empty() {
+            query["by"] = json!("task");
+        }
+        json!({
+            "contract": "usagemeter.query", "contract_version": 1, "capability": "meter.usage@1",
+            "meter_version": v, "status": status, "error": err, "generated_at": "2026-11-11T15:00:00Z",
+            "as_of": ok(json!("2026-11-11T14:55:00Z")),
+            "machine": if matches!(status, "ok" | "too_large") { json!({"id": "0123456789abcdef0123456789abcdef", "scope": "local"}) } else { Value::Null },
+            "store": if matches!(status, "usage" | "absent_store" | "locked" | "unsupported_contract") { Value::Null } else { json!({"schema_version": 3, "location": "current"}) },
+            "ingestion": ok(json!({"watermark": "2026-11-11T14:55:00Z", "counted_from": "2026-10-03T00:00:00Z", "evidence_from": "2026-11-07T00:00:00Z", "complete": true, "backlog": {"bytes": 0, "files": 0}, "stale": false, "stale_after_s": 7200})),
+            "window": ok(json!({"name": "d30", "requested_start": "2026-10-12T15:00:00Z", "start": "2026-10-12T15:00:00Z", "end": "2026-11-11T15:00:00Z", "clipped": false})),
+            "sources": if status == "ok" { json!([{"harness": "claude-code", "status": "ok", "reason": null, "last_success": "2026-11-11T14:55:00Z", "stale": false}]) } else { json!([]) },
+            "unattributed": ok(json!({"tokens_total": 0, "harnesses": []})),
+            "actor_unattributed": ok(json!({"tokens_total": 0, "tokens_ambiguous": 0, "tokens_unlinked": 0, "tokens_before_evidence": 0, "parts": [], "absent_bot_is_zero": false})),
+            "pricing": ok(json!({"table": {"origin": "bundled", "date": "2026-10-06", "source": "usagemeter bundled list prices", "label": "list prices, an estimate", "sha256": null}, "reported_wins": true, "long_prompt_tiers": false})),
+            "query": if status == "usage" { Value::Null } else { query },
+            "rows": rows
+        })
+        .to_string()
+    };
+    let tok_r = |n: u64, reasoning: Value| json!({"input": n / 2, "cache_read": 0, "cache_write_5m": 0, "cache_write_1h": 0, "output": n - (n / 2), "reasoning": reasoning, "unsplit": 0, "total": n});
+    let tok = |n: u64| tok_r(n, json!(0));
+    let cost = |state: &str, usd: Value, priced: u64, unpriced: u64, models: Value| json!({"state": state, "usd": usd, "usd_reported": if usd.is_null() { Value::Null } else { json!(0) }, "usd_estimated": usd, "tokens_priced": priced, "tokens_reported": 0, "tokens_unpriced": unpriced, "unpriced_models": models, "unpriced_models_omitted": 0});
+    // What task and branch rows share; a row without tokens has no models, precision, actor block or activity.
+    let body = |precision: &str, state: &str, reason: Value, tokens: Value, cost: Value, hours: u64| {
+        let n = tokens["total"].as_u64();
+        let (models, prec) = match n {
+            Some(t) if t > 0 => (
+                json!([{"model": "claude-opus-5-5", "calls": 12, "tokens": tokens, "cost_usd": cost["usd"]}]),
+                json!("exact"),
+            ),
+            _ => (json!([]), Value::Null),
+        };
+        let mut attribution =
+            json!({"precision": precision, "exclusive": false, "shared": false, "coverage": "complete"});
+        if let Some(t) = n {
+            attribution["actor"] = json!({"tokens_attributed": t, "tokens_ambiguous": 0, "tokens_unlinked": 0, "tokens_before_evidence": 0, "tokens_by_basis": {"session": t, "label": 0, "worktree": 0}, "tokens_by_branch_basis": {"log": t, "ledger": 0, "none": 0}});
+        }
+        let activity = n.map(|t| match t {
+            0 => json!({"first_hour": null, "last_hour": null, "hours": 0, "harnesses": []}),
+            _ => json!({"first_hour": "2026-11-11T09:00:00Z", "last_hour": "2026-11-11T12:00:00Z", "hours": hours, "harnesses": ["claude-code"]}),
+        });
+        json!({"state": state, "reason": reason, "tokens": tokens, "cost": cost, "models": models, "models_omitted": 0, "token_precision": prec, "attribution": attribution, "activity": activity, "incomplete_sources": []})
+    };
+    let task_row = |task: &str, actors: Value, state: &str, tokens: Value, cost: Value, hours: u64| {
+        let reason = match state {
+            "stale" => json!("ingestion_stale"),
+            "missing" => json!("task_ambiguous"),
+            _ => Value::Null,
+        };
+        let omitted = u64::from(actors.as_array().is_some_and(|a| a.is_empty()) && state != "missing");
+        let mut r = body("task_interval", state, reason, tokens, cost, hours);
+        (r["task"], r["actors"], r["actors_omitted"]) = (json!(task), actors, json!(omitted));
+        r
+    };
+    let branch_row = |branch: &str, state: &str, reason: Value, tokens: Value, cost: Value| {
+        let mut r = body("branch_window", state, reason, tokens, cost, 2);
+        (r["branch"], r["requested"]) = (json!(branch), json!(1));
+        r
+    };
+    let actor = |bot: &str, role: &str, harness: &str| json!({"bot": bot, "kind": "worker", "role": role, "squad": "b-lead", "unrecorded": [], "harness": harness});
+    let write_bin = |name: &str, body: &str| fs::write(fx.bin.join(name), body).unwrap();
+    let read_lines = |name: &str| -> Vec<String> {
+        fs::read_to_string(fx.bin.join(name)).unwrap().lines().map(String::from).collect()
+    };
+
+    let mut gn1 = task_row(
+        "gn-1",
+        json!([actor("b-worker-1", "dev", "claude-code"), actor("b-worker-2", "review", "codex")]),
+        "measured",
+        tok_r(500, json!(120)),
+        cost("priced", json!(3.75), 500, 0, json!([])),
+        4,
+    );
+    gn1["future_row_field"] = json!(true);
+    write_bin(
+        "task-alias.json",
+        &env_json(
+            "3.129.2",
+            "ok",
+            Value::Null,
+            json!([
+                gn1,
+                task_row(
+                    "gn-2",
+                    json!([actor("b-worker-1", "dev", "claude-code")]),
+                    "measured",
+                    tok_r(250, Value::Null),
+                    cost("partial", json!(1.25), 150, 100, json!(["custom-model"])),
+                    4
+                ),
+                task_row(
+                    "gn-3",
+                    json!([actor("b-lead", "dev", "claude-code")]),
+                    "measured",
+                    tok(600),
+                    cost("unpriced", Value::Null, 0, 600, json!(["local-v1"])),
+                    2
+                ),
+                task_row("gn-4", json!([]), "measured", tok(500), cost("priced", json!(0.0), 500, 0, json!([])), 1),
+                task_row(
+                    "gn-6",
+                    json!([actor("b-worker-1", "dev", "claude-code")]),
+                    "measured",
+                    tok(180),
+                    cost("priced", json!(0.90), 180, 0, json!([])),
+                    1
+                ),
+                task_row("gn-9", json!([]), "missing", Value::Null, Value::Null, 0),
+                task_row(
+                    "gn-10",
+                    json!([actor("b-worker-1", "dev", "claude-code")]),
+                    "stale",
+                    tok(300),
+                    cost("priced", json!(9.99), 300, 0, json!([])),
+                    2
+                ),
+            ]),
+        ),
+    );
+    write_bin(
+        "branch-alias.json",
+        &env_json(
+            "3.129.2",
+            "ok",
+            Value::Null,
+            json!([
+                branch_row(
+                    "feat/gn-5-x",
+                    "measured",
+                    Value::Null,
+                    tok(500),
+                    cost("priced", json!(1.75), 500, 0, json!([]))
+                ),
+                branch_row("feat/gn-8-x", "zero", Value::Null, tok(0), cost("zero", json!(0.0), 0, 0, json!([])))
+            ]),
+        ),
+    );
+
+    let script = format!(
+        "#!/bin/sh\ndir=\"{}\"\nprintf '%s\\n' \"$*\" >> \"$dir/meter.log\"\nemit() {{\n  rc=0\n  if [ -f \"$dir/exit.code\" ]; then IFS= read -r rc < \"$dir/exit.code\"; fi\n  while IFS= read -r line || [ -n \"$line\" ]; do\n    printf '%s\\n' \"$line\"\n    if [ \"$rc\" = \"0\" ]; then\n      case \"$line\" in\n        *'\"status\":\"usage\"'*) rc=2 ;;\n        *'\"status\":\"absent_store\"'*) rc=10 ;;\n        *'\"status\":\"locked\"'*) rc=11 ;;\n        *'\"status\":\"newer_schema\"'*) rc=12 ;;\n        *'\"status\":\"outdated_store\"'*) rc=13 ;;\n        *'\"status\":\"unsupported_contract\"'*) rc=14 ;;\n        *'\"status\":\"too_large\"'*) rc=15 ;;\n        *'\"status\":\"error\"'*) rc=1 ;;\n      esac\n    fi\n  done < \"$1\"\n  printf '%s\\n' \"$rc\" >> \"$dir/exit.log\"\n  exit \"$rc\"\n}}\ncase \"$*\" in\n  *\"--repo github.com/automagik-si/genie --repo-alias github.com/automagik-dev/genie --by task\"*) emit \"$dir/task-alias.json\" ;;\n  *\"--repo github.com/automagik-si/genie --repo-alias github.com/automagik-dev/genie --window d30 --branch\"*) emit \"$dir/branch-alias.json\" ;;\n  *\"--repo github.com/o/r --by task\"*) emit \"$dir/task-noalias.json\" ;;\n  *\"--repo github.com/o/r --window d30 --branch\"*) emit \"$dir/branch-alias.json\" ;;\n  *) printf '2\\n' >> \"$dir/exit.log\"; exit 2 ;;\nesac\n",
+        fx.bin.display()
+    );
+    write_bin("usagemeter", &script);
+    fs::set_permissions(fx.bin.join("usagemeter"), fs::Permissions::from_mode(0o755)).unwrap();
+
+    let meter_state_dir = fx.home.join("meter-state");
+    assert!(meter_state_dir.starts_with(&fx.home));
+    let db_path = fx.repo.join(".genie/genie.db");
+    let db_before = fs::read(&db_path).unwrap();
+    assert!(!db_before.is_empty(), "seeded genie.db must be non-empty");
+    let assert_db_untouched = || {
+        assert_eq!(fs::read(&db_path).unwrap(), db_before, "genie.db must remain byte-identical");
+        assert!(!Path::new(&format!("{}-wal", db_path.display())).exists());
+        assert!(!Path::new(&format!("{}-shm", db_path.display())).exists());
+        assert!(!meter_state_dir.exists(), "read-only query must not create METER_STATE_DIR");
+    };
+    let list = json_out(&fx.run(&["list", "--json"]));
+    assert_db_untouched();
+
+    let calls = read_lines("meter.log");
+    assert_eq!(calls.len(), 2, "1 --by task call + 1 batched --branch call: {calls:?}");
+    assert!(calls.iter().all(|c| c.contains("--repo-alias github.com/automagik-dev/genie")
+        && !c.contains("gn-6")
+        && !c.contains("gn-7")
+        && !c.contains("gn-9")
+        && !c.contains("gn-10")));
+    assert!(calls[1].contains("--branch feat/gn-5-x") && calls[1].contains("--branch feat/gn-8-x"));
+
+    let by_id = |arr: &Value, id: &str| arr.as_array().unwrap().iter().find(|t| t["task"] == id).unwrap().clone();
+    let gn1 = by_id(&list, "gn-1");
+    assert_eq!(
+        (
+            gn1["meter_state"].as_str(),
+            gn1["tokens"]["total"].as_u64(),
+            gn1["tokens"]["reasoning"].as_u64(),
+            gn1["cost"]["usd"].as_f64(),
+            gn1["activity_hours"].as_u64()
+        ),
+        (Some("measured"), Some(500), Some(120), Some(3.75), Some(4))
+    );
+    assert!(gn1["meter_reason"].is_null() && gn1["work_min"].is_null() && gn1["branch_usage"].is_null());
+    assert_eq!(gn1["actors"].as_array().unwrap().len(), 2);
+    assert!(gn1["actors"][0]["usd"].is_null() && gn1["actors"][0]["work_min"].is_null());
+
+    let gn2 = by_id(&list, "gn-2");
+    assert_eq!(
+        (
+            gn2["meter_state"].as_str(),
+            gn2["cost"]["state"].as_str(),
+            gn2["cost"]["usd"].as_f64(),
+            gn2["tokens"]["reasoning"].is_null()
+        ),
+        (Some("measured"), Some("partial"), Some(1.25), true)
+    );
+
+    let gn3 = by_id(&list, "gn-3");
+    assert_eq!(
+        (gn3["meter_state"].as_str(), gn3["meter_reason"].as_str(), gn3["cost"]["state"].as_str()),
+        (Some("measured"), Some("unpriced_models"), Some("unpriced"))
+    );
+    assert!(gn3["cost"]["usd"].is_null());
+
+    let gn4 = by_id(&list, "gn-4");
+    assert_eq!(
+        (
+            gn4["meter_state"].as_str(),
+            gn4["cost"]["state"].as_str(),
+            gn4["tokens"]["total"].as_u64(),
+            gn4["cost"]["usd"].as_f64()
+        ),
+        (Some("measured"), Some("priced"), Some(500), Some(0.0))
+    );
+
+    let gn5 = by_id(&list, "gn-5");
+    assert_eq!((gn5["meter_state"].as_str(), gn5["meter_reason"].as_str()), (Some("missing"), Some("no_task_usage")));
+    assert!(gn5["cost"].is_null() && gn5["tokens"].is_null());
+    assert_eq!(
+        (
+            gn5["branch_usage"]["branch"].as_str(),
+            gn5["branch_usage"]["state"].as_str(),
+            gn5["branch_usage"]["cost"]["usd"].as_f64(),
+            gn5["branch_usage"]["tokens"]["total"].as_u64()
+        ),
+        (Some("feat/gn-5-x"), Some("measured"), Some(1.75), Some(500))
+    );
+
+    let gn6 = by_id(&list, "gn-6");
+    assert_eq!(
+        (gn6["meter_state"].as_str(), gn6["cost"]["usd"].as_f64(), gn6["tokens"]["total"].as_u64()),
+        (Some("measured"), Some(0.90), Some(180))
+    );
+    assert!(gn6["meter_reason"].is_null() && gn6["branch_usage"].is_null());
+
+    let gn7 = by_id(&list, "gn-7");
+    assert_eq!(
+        (gn7["meter_state"].as_str(), gn7["meter_reason"].as_str()),
+        (Some("missing"), Some("outside_d30_window"))
+    );
+    assert!(gn7["cost"].is_null() && gn7["tokens"].is_null() && gn7["branch_usage"].is_null());
+
+    let gn8 = by_id(&list, "gn-8");
+    assert_eq!((gn8["meter_state"].as_str(), gn8["meter_reason"].as_str()), (Some("missing"), Some("no_task_usage")));
+    assert!(gn8["cost"].is_null() && gn8["tokens"].is_null());
+    assert_eq!(
+        (
+            gn8["branch_usage"]["branch"].as_str(),
+            gn8["branch_usage"]["state"].as_str(),
+            gn8["branch_usage"]["cost"]["state"].as_str(),
+            gn8["branch_usage"]["cost"]["usd"].as_f64(),
+            gn8["branch_usage"]["tokens"]["total"].as_u64()
+        ),
+        (Some("feat/gn-8-x"), Some("zero"), Some("zero"), Some(0.0), Some(0))
+    );
+
+    let gn9 = by_id(&list, "gn-9");
+    assert_eq!(
+        (gn9["meter_state"].as_str(), gn9["meter_reason"].as_str(), gn9["actors"].as_array().unwrap().len()),
+        (Some("missing"), Some("task_ambiguous"), 0)
+    );
+    assert!(gn9["cost"].is_null() && gn9["branch_usage"].is_null());
+
+    let gn10 = by_id(&list, "gn-10");
+    assert_eq!(
+        (gn10["meter_state"].as_str(), gn10["meter_reason"].as_str(), gn10["actors"].as_array().unwrap().len()),
+        (Some("stale"), Some("ingestion_stale"), 1)
+    );
+    assert!(gn10["cost"]["usd"].is_null() && gn10["branch_usage"].is_null());
+
+    // Case 2: Older usagemeter (< 3.129.2) invoked with --repo-alias exits 2 with status == "usage" -> "needs usagemeter >= 3.129.2", no fallback call
+    write_bin(
+        "task-alias.json",
+        &env_json(
+            "3.126.1",
+            "usage",
+            json!({"code": "usage", "message": "unknown option \"--repo-alias\" for query; see usagemeter --help"}),
+            json!([]),
+        ),
+    );
+    let direct_old = Command::new(fx.bin.join("usagemeter"))
+        .args([
+            "query",
+            "--repo",
+            "github.com/automagik-si/genie",
+            "--repo-alias",
+            "github.com/automagik-dev/genie",
+            "--by",
+            "task",
+        ])
+        .env("PATH", &fx.bin)
+        .output()
+        .unwrap();
+    assert_eq!(direct_old.status.code(), Some(2));
+    fs::remove_file(fx.bin.join("meter.log")).unwrap();
+    let _ = fs::remove_file(fx.bin.join("exit.log"));
+    let list_old = json_out(&fx.run(&["list", "--json"]));
+    assert_eq!(read_lines("meter.log").len(), 1, "no fallback call without --repo-alias");
+    assert_eq!(read_lines("exit.log"), vec!["2"]);
+    let gn1_old = by_id(&list_old, "gn-1");
+    assert_eq!(
+        (gn1_old["meter_state"].as_str(), gn1_old["meter_reason"].as_str()),
+        (Some("missing"), Some("needs usagemeter >= 3.129.2"))
+    );
+    assert!(gn1_old["cost"].is_null() && gn1_old["tokens"].is_null());
+
+    // Case 3: Repository with no entry in KNOWN_PREVIOUS_REPO_SLUGS passes no --repo-alias and works with 3.126.1 floor
+    fs::remove_file(fx.bin.join("meter.log")).unwrap();
+    git_ok(&["remote", "set-url", "origin", "https://github.com/o/r.git"]);
+    write_bin(
+        "task-noalias.json",
+        &env_json(
+            "3.126.1",
+            "ok",
+            Value::Null,
+            json!([task_row(
+                "gn-1",
+                json!([]),
+                "measured",
+                tok(100),
+                cost("priced", json!(0.50), 100, 0, json!([])),
+                1
+            )]),
+        ),
+    );
+    let list_noalias = json_out(&fx.run(&["list", "--json"]));
+    assert!(read_lines("meter.log").iter().all(|c| !c.contains("--repo-alias")));
+    let gn1_noalias = by_id(&list_noalias, "gn-1");
+    assert_eq!(
+        (gn1_noalias["meter_state"].as_str(), gn1_noalias["cost"]["usd"].as_f64()),
+        (Some("measured"), Some(0.50))
+    );
+
+    // Case 3b (M2a on branch_usage stale + unsupported + M2c failed --branch call keeps task meter_reason == "no_task_usage"):
+    write_bin(
+        "branch-alias.json",
+        &env_json(
+            "3.126.1",
+            "ok",
+            Value::Null,
+            json!([
+                branch_row(
+                    "feat/gn-5-x",
+                    "stale",
+                    json!("ingestion_stale"),
+                    tok(500),
+                    cost("priced", json!(8.88), 500, 0, json!([]))
+                ),
+                branch_row("feat/gn-8-x", "unsupported", json!("source_unsupported"), Value::Null, Value::Null)
+            ]),
+        ),
+    );
+    let list_stale_br = json_out(&fx.run(&["list", "--json"]));
+    let gn5_stale_br = by_id(&list_stale_br, "gn-5");
+    assert_eq!(
+        (
+            gn5_stale_br["meter_state"].as_str(),
+            gn5_stale_br["meter_reason"].as_str(),
+            gn5_stale_br["branch_usage"]["state"].as_str(),
+            gn5_stale_br["branch_usage"]["reason"].as_str(),
+            gn5_stale_br["branch_usage"]["cost"]["usd"].is_null()
+        ),
+        (Some("missing"), Some("no_task_usage"), Some("stale"), Some("ingestion_stale"), true)
+    );
+    let gn8_unsup_br = by_id(&list_stale_br, "gn-8");
+    assert_eq!(
+        (
+            gn8_unsup_br["meter_state"].as_str(),
+            gn8_unsup_br["meter_reason"].as_str(),
+            gn8_unsup_br["branch_usage"]["state"].as_str(),
+            gn8_unsup_br["branch_usage"]["reason"].as_str(),
+            gn8_unsup_br["branch_usage"]["cost"].is_null()
+        ),
+        (Some("missing"), Some("no_task_usage"), Some("unsupported"), Some("source_unsupported"), true)
+    );
+
+    write_bin(
+        "branch-alias.json",
+        &env_json(
+            "3.126.1",
+            "locked",
+            json!({"code": "locked", "message": "no consistent snapshot of the store within 2 s", "retry_after_s": 5}),
+            json!([]),
+        ),
+    );
+    let gn5_br_err = by_id(&json_out(&fx.run(&["list", "--json"])), "gn-5");
+    assert_eq!(
+        (
+            gn5_br_err["meter_state"].as_str(),
+            gn5_br_err["meter_reason"].as_str(),
+            gn5_br_err["branch_usage"]["state"].as_str(),
+            gn5_br_err["branch_usage"]["reason"].as_str(),
+            gn5_br_err["branch_usage"]["cost"].is_null()
+        ),
+        (Some("missing"), Some("no_task_usage"), Some("missing"), Some("locked"), true)
+    );
+
+    // Case 4 (Reviewer M1): every non-zero exit (1, 2, 10..15), asserted as the fake's real exit status, with
+    // the meter's envelope and with no stdout at all (the reason then comes from the exit code alone).
+    // Each error object carries the fields its status requires (`meter/schema/query/v1/examples/*.json`).
+    let schema_versions = json!({"store_schema_version": 4, "supported_schema_version": 3});
+    for (code, status, extra, bare_reason) in [
+        (1, "error", json!({"code": "store_unreadable"}), "internal_error"),
+        (2, "usage", json!({}), "needs usagemeter >= 3.126.1"),
+        (10, "absent_store", json!({}), "absent_store"),
+        (11, "locked", json!({"retry_after_s": 5}), "locked"),
+        (12, "newer_schema", schema_versions.clone(), "newer_schema"),
+        (13, "outdated_store", schema_versions, "outdated_store"),
+        (14, "unsupported_contract", json!({"supported_contracts": [1]}), "unsupported_contract"),
+        (15, "too_large", json!({"limit_bytes": 458_752, "needed_bytes": 921_869, "rows_fit": 3}), "too_large"),
+    ] {
+        write_bin("exit.code", &format!("{code}\n"));
+        let mut err = json!({"code": status, "message": "simulated failure"});
+        err.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
+        let envelope = env_json("3.129.2", status, err.clone(), json!([]));
+        for (stdout, reason) in [(envelope.as_str(), err["code"].as_str().unwrap()), ("", bare_reason)] {
+            write_bin("task-noalias.json", stdout);
+            let direct = Command::new(fx.bin.join("usagemeter"))
+                .args(["query", "--repo", "github.com/o/r", "--by", "task"])
+                .env("PATH", &fx.bin)
+                .output()
+                .unwrap();
+            assert_eq!((direct.status.code(), direct.stdout.is_empty()), (Some(code), stdout.is_empty()));
+            let _ = fs::remove_file(fx.bin.join("exit.log"));
+            let listed = by_id(&json_out(&fx.run(&["list", "--json"])), "gn-1");
+            let status_json = json_out(&fx.run(&["status", "gn-1", "--json"]));
+            for t in [&listed, &status_json] {
+                assert_eq!((t["meter_state"].as_str(), t["meter_reason"].as_str()), (Some("missing"), Some(reason)));
+                assert!(t["cost"].is_null() && t["tokens"].is_null(), "exit {code}: never a number");
+            }
+            assert_eq!(read_lines("exit.log"), vec![code.to_string(); 2], "the fake exited {code} for list and status");
+        }
+    }
+    let _ = fs::remove_file(fx.bin.join("exit.code"));
+    let _ = fs::remove_file(fx.bin.join("exit.log"));
+    assert_db_untouched();
+
+    // Case 5: 50 tasks via a git worktree (--project <worktree>) resolves the main checkout's non-empty genie.db.
+    for n in 11..=50 {
+        let id = format!("gn-{n}");
+        seed(&fx, &id, TaskEvent::Created, &today, &format!("/wt/{id}"));
+    }
+    write_bin(
+        "task-noalias.json",
+        &env_json(
+            "3.129.2",
+            "ok",
+            Value::Null,
+            json!([task_row(
+                "gn-1",
+                json!([]),
+                "measured",
+                tok(100),
+                cost("priced", json!(0.50), 100, 0, json!([])),
+                1
+            )]),
+        ),
+    );
+    let wt = fx.repo.parent().unwrap().join("wt");
+    git_ok(&["-c", "user.name=t", "-c", "user.email=t@e", "commit", "--allow-empty", "-q", "-m", "init"]);
+    git_ok(&["worktree", "add", "-q", "-b", "feat/wt", wt.to_str().unwrap()]);
+    assert!(!wt.join(".genie").exists());
+    fs::remove_file(fx.bin.join("meter.log")).unwrap();
+    let db_50_before = fs::read(&db_path).unwrap();
+    assert!(db_50_before.len() > db_before.len());
+    let list_50 = json_out(&fx.run(&["list", "--json", "--project", wt.to_str().unwrap()]));
+    assert_eq!(list_50.as_array().unwrap().len(), 50);
+    assert_eq!(read_lines("meter.log").len(), 2);
+    let status_50 = json_out(&fx.run(&["status", "gn-1", "--json", "--project", wt.to_str().unwrap()]));
+    assert_eq!(status_50["cost"]["usd"].as_f64(), Some(0.50));
+    assert_eq!(fs::read(&db_path).unwrap(), db_50_before);
+    assert!(!Path::new(&format!("{}-wal", db_path.display())).exists());
+    assert!(!Path::new(&format!("{}-shm", db_path.display())).exists());
+    assert!(!wt.join(".genie").exists());
+
+    // Case 6 (M1a): a meter past METER_CALL_TIMEOUT is killed, reaped, and degraded to usagemeter_timeout.
+    let assert_pid_dead = |pid_file: &str| {
+        let pid = fs::read_to_string(fx.bin.join(pid_file)).unwrap().trim().to_string();
+        assert!(
+            !Command::new("/bin/kill")
+                .args(["-0", &pid])
+                .stderr(std::process::Stdio::null())
+                .status()
+                .unwrap()
+                .success()
+        );
+    };
+    write_bin(
+        "usagemeter",
+        &format!("#!/bin/sh\nprintf '%s\\n' \"$$\" > \"{}/meter.pid\"\nexec /bin/sleep 20\n", fx.bin.display()),
+    );
+    fs::set_permissions(fx.bin.join("usagemeter"), fs::Permissions::from_mode(0o755)).unwrap();
+    let t_start = std::time::Instant::now();
+    let list_timeout = json_out(&fx.run(&["list", "--json"]));
+    assert!(t_start.elapsed() < genie_tasks::METER_CALL_TIMEOUT + std::time::Duration::from_millis(1500));
+    let timeout_arr = list_timeout.as_array().unwrap();
+    assert_eq!(timeout_arr.len(), 50);
+    for t in timeout_arr {
+        assert_eq!(
+            (t["meter_state"].as_str(), t["meter_reason"].as_str()),
+            (Some("missing"), Some("usagemeter_timeout"))
+        );
+        assert!(t["cost"].is_null() && t["tokens"].is_null());
+    }
+    assert_pid_dead("meter.pid");
+
+    // Case 7 (M1b): stdout past MAX_METER_OUTPUT_BYTES stops the read at the cap, well before the deadline, and is
+    // killed, reaped, and degraded to output_too_large (not the meter's own exit-15 too_large).
+    write_bin(
+        "usagemeter",
+        &format!(
+            "#!/bin/sh\nprintf '%s\\n' \"$$\" > \"{}/meter.pid\"\ns=\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"\ni=0\nwhile [ \"$i\" -lt 14 ]; do s=\"$s$s\"; i=$((i + 1)); done\nprintf '%s' \"$s\"\nexec /bin/sleep 20\n",
+            fx.bin.display()
+        ),
+    );
+    fs::set_permissions(fx.bin.join("usagemeter"), fs::Permissions::from_mode(0o755)).unwrap();
+    let t_start = std::time::Instant::now();
+    let list_flood = json_out(&fx.run(&["list", "--json"]));
+    assert!(t_start.elapsed() < genie_tasks::METER_CALL_TIMEOUT);
+    let flood_arr = list_flood.as_array().unwrap();
+    assert_eq!(flood_arr.len(), 50);
+    for t in flood_arr {
+        assert_eq!(
+            (t["meter_state"].as_str(), t["meter_reason"].as_str()),
+            (Some("missing"), Some("output_too_large"))
+        );
+        assert!(t["cost"].is_null() && t["tokens"].is_null());
+    }
+    assert_pid_dead("meter.pid");
 }

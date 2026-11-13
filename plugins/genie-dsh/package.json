@@ -1,15 +1,15 @@
 {
   "name": "@automagik/genie-dsh",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Genie for DeepSeek Harness: a Genie Bot on the Automagik Bot team that grants wishes, each one a thread working in its own copy of the project, from a fresh base",
   "keywords": ["dsh-plugin", "deepseek-harness", "dsh", "genie", "agents"],
-  "homepage": "https://github.com/automagik-dev/genie/tree/dev/plugins/genie-dsh#readme",
+  "homepage": "https://github.com/automagik-si/genie/tree/dev/plugins/genie-dsh#readme",
   "bugs": {
-    "url": "https://github.com/automagik-dev/genie/issues"
+    "url": "https://github.com/automagik-si/genie/issues"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/automagik-dev/genie.git",
+    "url": "git+https://github.com/automagik-si/genie.git",
     "directory": "plugins/genie-dsh"
   },
   "license": "Apache-2.0",
@@ -26,7 +26,7 @@
     "test": "node --import ./test/harness-resolve.mjs --test \"test/*.test.js\""
   },
   "engines": {
-    "dsh": ">=0.2.1-rc.2 <0.3.0"
+    "dsh": ">=0.2.1-rc.2 <0.3.0-0"
   },
   "peerDependencies": {
     "@automagik/bots-dsh": ">=3.3.0",

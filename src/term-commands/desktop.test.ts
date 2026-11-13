@@ -1,11 +1,11 @@
 /**
  * genie desktop — opens the Automagik desktop app with Genie preloaded, mirroring Omni's
- * `omni desktop`. Unit tests for the release pick, the checksum list, the cache and the launch
- * (with `--preload=genie`); CLI tests run the real entry as a subprocess with `--path` and
- * `--dry-run`, so nothing is downloaded or opened.
+ * `omni desktop`. Unit tests for where the releases are read, the release pick, the checksum
+ * list, the cache and the launch (with `--preload=genie`); CLI tests run the real entry as a
+ * subprocess with `--path` and `--dry-run`, so nothing is downloaded or opened.
  */
 
-import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, spyOn, test } from 'bun:test';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -13,6 +13,7 @@ import {
   type DesktopRelease,
   PRELOAD,
   appCacheDir,
+  buildFromReleases,
   desktopHome,
   desktopTarget,
   extractionDir,
@@ -116,6 +117,59 @@ describe('genie desktop: the build for this machine', () => {
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
+  });
+});
+
+describe('genie desktop: where the releases are read', () => {
+  // The organization is automagik-si. The automagik-dev names only redirect there, so the
+  // command reads the new ones directly; pinned here so an edit cannot drift back silently.
+  const AUTOMAGIK = 'https://api.github.com/repos/automagik-si/automagik/releases?per_page=50';
+  const OMNI_DESKTOP = 'https://api.github.com/repos/automagik-si/omni-desktop/releases?per_page=50';
+
+  /** A dry run against a GitHub that answers only `answers`; any other URL is a 404. */
+  const dryRun = async (answers: Record<string, DesktopRelease[]>) => {
+    const asked: string[] = [];
+    let out = '';
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = (async (url: string | URL | Request) => {
+      asked.push(String(url));
+      const releases = answers[String(url)];
+      return releases ? Response.json(releases) : new Response('Not Found', { status: 404 });
+    }) as typeof fetch;
+    const write = spyOn(process.stdout, 'write').mockImplementation((chunk: string | Uint8Array) => {
+      out += String(chunk);
+      return true;
+    });
+    try {
+      return { file: await buildFromReleases(linux, { dryRun: true }), asked, out };
+    } finally {
+      write.mockRestore();
+      globalThis.fetch = realFetch;
+    }
+  };
+
+  test("Automagik's releases are read from automagik-si/automagik", async () => {
+    const run = await dryRun({
+      [AUTOMAGIK]: [release('v3.261110.1', ['Omni-3.261110.1-linux-x86_64.AppImage', 'SHA256SUMS'])],
+    });
+    expect(run.asked).toEqual([AUTOMAGIK]);
+    expect(run.file).toBeNull();
+    expect(run.out).toBe(
+      'Would download Omni-3.261110.1-linux-x86_64.AppImage from v3.261110.1 and open it with Genie preloaded\n',
+    );
+  });
+
+  test('without an Automagik build, the build comes from automagik-si/omni-desktop, and the notice says so', async () => {
+    const run = await dryRun({
+      [AUTOMAGIK]: [release('v3.261110.1', ['automagik-bots-dsh-3.261110.1.tgz', 'plugins.json'])],
+      [OMNI_DESKTOP]: [release('v2.261023.32', ['Omni-2.261023.32-linux-x86_64.AppImage', 'SHA256SUMS'])],
+    });
+    expect(run.asked).toEqual([AUTOMAGIK, OMNI_DESKTOP]);
+    expect(run.file).toBeNull();
+    expect(run.out).toBe(
+      'Taking v2.261023.32 from automagik-si/omni-desktop; it updates itself.\n' +
+        'Would download Omni-2.261023.32-linux-x86_64.AppImage from v2.261023.32 and open it with Genie preloaded\n',
+    );
   });
 });
 

@@ -85,7 +85,8 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  process.env.PATH = savedPath;
+  if (savedPath === undefined) Reflect.deleteProperty(process.env, 'PATH');
+  else process.env.PATH = savedPath;
   if (savedGenieHome === undefined) Reflect.deleteProperty(process.env, 'GENIE_HOME');
   else process.env.GENIE_HOME = savedGenieHome;
   rmSync(tmp, { recursive: true, force: true });
