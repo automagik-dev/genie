@@ -70,7 +70,8 @@ that carries the fix.
 **What an affected host should do.** Your genie keeps working. To get updates again, install the latest version once from automagik-si/genie.
 
 **Skills installed with `npx skills add automagik-dev/genie`.** They keep updating, because GitHub redirects the old
-name. Running `npx skills add automagik-si/genie` once replaces them in place under the new name, with no duplicates.
+name. Running `npx skills add automagik-si/genie -g` once replaces a global install, the `-g` form these docs gave, in
+place under the new name with no duplicates; for a project install, run the same command without `-g` in that project.
 
 ### MCP retirement
 
