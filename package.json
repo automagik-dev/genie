@@ -1,6 +1,6 @@
 {
   "name": "@automagik/genie",
-  "version": "6.261113.3",
+  "version": "6.261113.4",
   "description": "Collaborative terminal toolkit for human + AI workflows. NOTE: npm distribution discontinued 2026-05-09 — install via `curl -fsSL https://raw.githubusercontent.com/automagik-si/genie/main/install.sh | bash` (cosign + SLSA verified). See https://docs.automagik.dev/genie/security",
   "license": "Apache-2.0",
   "type": "module",
