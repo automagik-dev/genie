@@ -29,11 +29,34 @@ const STATE_WORDS = {
 export const markOf = (outcome) =>
   outcome.state === 'done' ? '✓' : outcome.state === 'local-only' || outcome.state === 'no-change' ? '•' : '✕';
 
+// These read bots-dsh's work.stops, which lives in memory only.
+// Open and closed stops both count as a wish's history.
+export function permissionStopped(work, sessionId) {
+  return (
+    typeof sessionId === 'string' &&
+    Array.isArray(work?.stops) &&
+    work.stops.some((entry) => entry?.taskId === sessionId)
+  );
+}
+
+export const stoppedKeyOf = (work, sessionIds) => sessionIds.filter((id) => permissionStopped(work, id)).join(',');
+
+const PERMISSION_STOP_SUFFIX = '; a step stopped on a permission';
+const PERMISSION_STOP_SENTENCE = ' A step stopped on a permission.';
+
 /**
- * How an ended wish turned out: `short` fits its row, `full` names a failure's reason
- * (the first line of the error the team kept as the task's summary).
+ * How an ended wish turned out: `short` keeps its row's outcome, while `full` names a
+ * failure's reason and any permission stop in the tooltip and accessible name.
+ * A step's permission stop is history beside the outcome, never why the wish ended.
  */
-export function outcomeOf(wish) {
+export function outcomeOf(wish, stopped = false) {
+  const base = endedOutcome(wish);
+  if (stopped !== true) return base;
+  const end = /[.!?]$/.test(base.full) ? PERMISSION_STOP_SENTENCE : PERMISSION_STOP_SUFFIX;
+  return { ...base, full: `${base.full}${end}` };
+}
+
+function endedOutcome(wish) {
   const state = wish.state ?? wish.status;
   if (state === 'failed') {
     const reason = String(wish.summary ?? '')

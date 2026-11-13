@@ -384,7 +384,10 @@ test('T3/NEW-L3: the remote is branch.<base>.remote, else origin, else the only 
   const team = genieIn(bare);
   const { rt, tools } = compose(team);
   await rt.genieReady;
-  assert.match(await grant(tools, 'g', { title: 'x', wish: 'y' }), /git remote set-head origin --auto/);
+  assert.match(
+    await grant(tools, 'g', { title: 'x', wish: 'y' }),
+    /^The wish did not start: .*git remote set-head origin --auto/,
+  );
   assert.equal(team.record.tasks.length, 0);
 });
 
@@ -706,14 +709,17 @@ test('T7: a scoped follow-up keeps publish and its #3184 brief; credentials in i
   gitIn(repo, 'switch', '-q', 'wish/earlier');
   assert.match(
     await grant(tools, 'g', { title: 'Base', wish: 'w', branches: ['dev'] }),
-    /dev is the branch wishes start from/,
+    /^The wish did not start: dev is the branch wishes start from/,
   );
   gitIn(repo, 'switch', '-q', 'dev');
 
   for (const url of ['https://user:ghp_FAKEtoken@127.0.0.1:1/o/r.git', 'https://ghp_FAKEtoken@127.0.0.1:1/o/r.git']) {
     gitIn(repo, 'remote', 'set-url', 'origin', url);
     const answer = await grant(tools, 'g', { title: 'Leaky', wish: 'w', branches: ['wish/earlier'] });
-    assert.match(answer, /has a user name or password written into it/);
+    assert.match(
+      answer,
+      /^The wish did not start: the URL of the remote origin has a user name or password written into it/,
+    );
     assert.match(answer, /git remote set-url origin https:\/\/127\.0\.0\.1:1\/o\/r\.git/);
     assert.match(answer, /credential helper/);
     assert.ok(!answer.includes('ghp_FAKE'));

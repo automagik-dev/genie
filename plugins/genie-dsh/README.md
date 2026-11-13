@@ -30,9 +30,13 @@ can have many Genies, one per repository, each in its own color.
   Then it makes a local clone in `<team workspace>/wishes/<project>/<name>`, on a new branch
   `wish/<name>` from that commit, and hands the wish to a Tasks session there (the Bot team's
   `startTask`). The thread plans, makes the change, runs the project's own checks, commits on its
-  branch and ends with a short report. A plain wish's copy has no push route: its `origin` (your
+  branch and ends with a short report. It reports a step refused for a permission at once, and
+  again in that report. A plain wish's copy has no push route: its `origin` (your
   checkout) has a push URL that goes nowhere and its credential helper is empty, and there is no
   `publish` remote. The real boundary against a URL an agent spells by hand is DSH's sandbox.
+  A start refused with `The wish did not start: …` (for example, a permission level the team
+  could not set) is also drawn as a line in Genie's chat, through the Bot team's tool-card
+  registry, not only in Genie's reply.
 - **A follow-up wish, scoped to branches**: a wish that must repair or publish branches an
   earlier wish made passes their names in `grant_wish`'s optional `branches` list. Those existing
   branches are created as local branches in the wish's copy, and the project's real remote becomes
@@ -48,7 +52,10 @@ can have many Genies, one per repository, each in its own color.
   commit it was given on), fetches the given branches back on every end, and the wish branch
   whenever it is ahead. The outcome is one of **Local branch** (`local-only`: a branch moved; it
   is in your repository as a local branch, not published), **No change** (no branch moved),
-  **Stopped**, **Failed** or **Lost** (the team no longer has the task's record). Nothing is
+  **Stopped**, **Failed** or **Lost** (the team no longer has the task's record). If the Bot team
+  saw a step of the wish stop on a permission (its permission stops, kept in memory for up to
+  six hours), the row keeps its outcome and its tooltip adds *a step stopped on a permission*.
+  A stop does not say why the wish ended. Nothing is
   called done or delivered. A wish that ended while DSH was closed is settled at the next start,
   from the team's task record, once the team's resume pass is over.
 - **In the sidebar**: a running wish shows as a thread under Genie (the team's task threads); the
