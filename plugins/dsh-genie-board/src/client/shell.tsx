@@ -1,7 +1,8 @@
-import { Button, IconRefreshOutline16 } from '@deepseek-ai/dsh-client-ui-primitives';
+import { Button } from '@deepseek-ai/dsh-client-ui-primitives';
 import type { ReactNode } from 'react';
 import { useCallback, useEffect, useState } from 'react';
 import { type Workspace, api, remembered } from './api';
+import { IconRefresh } from './icons';
 
 /** Loading, error and confirmation line under the panel header. */
 export interface Status {
@@ -97,7 +98,7 @@ export function PanelShell({
           ))}
         </select>
         {actions}
-        <Button size="sm" variant="outline" icon={<IconRefreshOutline16 />} onClick={onRefresh} disabled={busy}>
+        <Button size="sm" variant="outline" icon={<IconRefresh />} onClick={onRefresh} disabled={busy}>
           Refresh
         </Button>
       </header>

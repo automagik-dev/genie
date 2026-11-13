@@ -4,5 +4,5 @@
     "lib": ["ES2022"],
     "noEmit": true
   },
-  "include": ["dsh-prepare-node-floor.test.ts"]
+  "include": ["dsh-prepare-node-floor.test.ts", "dsh-engines.test.ts"]
 }

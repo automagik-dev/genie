@@ -71,6 +71,34 @@ above: an `http(s)` URL without its user name or password), its base commit, its
 the evidence: every git command the host ran for it as `{ step, argv, code, ms }` (the newest 40),
 with the base, head and ahead counts. Records written before v2 load and show as they did.
 
+## Host requirements
+
+DSH `>=0.2.1-rc.2 <0.3.0-0` (`engines.dsh` in `package.json`), with the Bot team
+(`@automagik/bots-dsh` >=3.3.0) mounted beside it.
+
+Verified Host: `@deepseek-ai/dsh@0.2.2-rc.2` (npm dist-tag `next`), on 2026-11-12. `npm test`
+passed (56 tests) with this plugin's `@deepseek-ai` peers resolved from that install (see
+*Develop*), and a `dsh web` Host of that version, under Node 24, booted a disposable profile
+holding the Bot team (bots-dsh 3.129.0) and this plugin: every row activated, and the Genie Bot
+was made. Every DSH member the plugin uses (`defineTool`, `ctx.tools.register`, `ctx.on`'s
+`session/event` with its `(session, event)` arguments, `ctx.effect`, and the `dsh.client.external`
+manifest field) is declared the same in 0.2.2-rc.1 and 0.2.2-rc.2.
+
+DSH enforces the range. From dsh-app-boot 0.2.1-alpha.4 (dsh 0.2.1-alpha.4), an unmet
+`engines.dsh` skips the plugin's bundle at profile load and disables its row in preflight,
+evaluated with prereleases included (`semver.satisfies(runtime, range, { includePrerelease:
+true })`), and a present `engines.dsh` decides alone, so the `@deepseek-ai` peers do not take
+part. The one bypass is an exact-version grant, `dsh plugin allow-version`.
+`@deepseek-ai/dsh-package-manifest`'s README still says loaders do not enforce `engines.dsh`,
+through 0.2.2-rc.2; the code is what runs. Under that rule the ceiling `<0.3.0` admitted every
+0.3.0 prerelease, so 0.2.2 spells it `<0.3.0-0`, as the other two Genie DSH plugins do: an
+untested 0.3.0 Host refuses all three together (`plugins/dsh-engines.test.ts`).
+
+The floor was not re-verified below 0.2.1-rc.2. Nothing in this plugin's own code needs it:
+`defineTool`, `tools.register`, `session/event` and `dsh.client.external` are all declared in
+0.1.7-rc.2 already. The Bot team it runs inside declares its own floor, which DSH enforces on that
+plugin too (bots-dsh 3.129.0: `>=0.2.2-rc.1 <0.3.0-0`).
+
 ## Host contract
 
 Every member of the Bot team's runtime (`rt`) and of DSH's context (`ctx`) this plugin uses, with
@@ -114,6 +142,14 @@ automagik's `apps/bots-dsh`, found beside this repository, or `BOTS_DSH` / `DSH_
 bun install                         # esbuild, for the client build
 node scripts/build-client.mjs       # src/client → client.js (committed; --check verifies it)
 npm test                            # node --test with the harness resolver
+```
+
+To run the tests against one exact DSH release, install it into a throwaway prefix with its
+install scripts off and point `DSH_HARNESS` at it:
+
+```sh
+npm install --prefix /tmp/dsh-0.2.2-rc.2 --ignore-scripts @deepseek-ai/dsh@0.2.2-rc.2
+DSH_HARNESS=/tmp/dsh-0.2.2-rc.2 npm test
 ```
 
 `client.js` is committed so git installs need no build. This package has its own gate, like

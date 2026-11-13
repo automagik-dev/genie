@@ -52,7 +52,11 @@ beforeAll(async () => {
 }, 120_000);
 afterAll(async () => {
   service?.dispose();
-  Object.assign(process.env, environment);
+  // An unset GENIE_HOME is deleted again, never assigned: Bun would store the string "undefined".
+  if (environment.GENIE_HOME === undefined) Reflect.deleteProperty(process.env, 'GENIE_HOME');
+  else process.env.GENIE_HOME = environment.GENIE_HOME;
+  expect(process.env.GENIE_HOME).toBe(environment.GENIE_HOME);
+  expect(process.env.HOME).not.toBe('undefined');
   if (workspace) await rm(workspace, { recursive: true, force: true });
 });
 const list = () => service.request({ action: 'list', workspaceId: 'w' });
