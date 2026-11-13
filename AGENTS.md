@@ -20,6 +20,7 @@ The full gate runs type checking, Biome, dead-code analysis, skill/wish/council 
 - `plugins/genie/` is retired with the Orca integration: the source tree carries none, and release tarballs keep an empty `plugins/genie/` compat directory only because earlier binaries' update path requires it. `genie orca` is a one-release stub that prints a retirement notice and exits 2.
 - `skills/` is shared runtime-neutral workflow guidance, delivered to every agent home by the skills channel. `genie install`/`genie update` run the pinned skills.sh CLI over the local delivered tree and record the result in `<GENIE_HOME>/skills-install.json`; without the Genie binary the same skills install with `npx skills add automagik-dev/genie`, which serves the repository's default branch rather than a release.
 - `.genie/` contains git-tracked wishes, reviewed designs (`brainstorms/*/DESIGN.md`) and the index, plus gitignored brainstorm working notes and operational SQLite files.
+- Brand: brand/ is a byte copy of Automagik's (the skill's SOURCE.json names the commit). Never edit it; change it in automagik and copy again. Agents use the automagik-brand skill for colours, type and logos.
 
 Genie is zero-daemon: every command is fork-and-exit and there is no resident process, optional or otherwise. Do not use telemetry presence as integration health.
 

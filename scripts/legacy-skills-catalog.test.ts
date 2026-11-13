@@ -632,6 +632,24 @@ describe('catalog CLI over isolated Git histories', () => {
     },
   );
 
+  test("the Automagik brand skill copy is never catalogued, while genie's own .claude/skills history is", () => {
+    const repo = seedRepo('catalog-brand-copy-');
+    skill(repo, 'skills/kept', 'Current genuine Genie skill.');
+    // Genie really shipped skills at this path early on (genie-base, genie-forge, ...).
+    skill(repo, '.claude/skills/genie-early', 'Historical Genie .claude skill.');
+    skill(repo, '.claude/skills/automagik-brand', 'The Automagik brand, a byte copy.');
+    commit(repo, 'early genie skill beside the brand copy');
+    rmSync(join(repo, '.claude', 'skills', 'genie-early'), { recursive: true });
+    commit(repo, 'retire the early genie skill; the brand copy stays');
+    expect([...collectCatalog(repo).keys()].sort()).toEqual(['genie-early', 'kept']);
+    const run = runCheck(repo, '--write');
+    expect(run.code).toBe(0);
+    const written = readFileSync(join(repo, 'src', 'lib', 'legacy-skills-catalog.ts'), 'utf8');
+    expect(written).toContain(legacySkillDigest('genie-early'));
+    expect(written).not.toContain(legacySkillDigest('automagik-brand'));
+    expect(written).not.toContain(legacySkillDigest('The Automagik brand, a byte copy.'));
+  });
+
   test.each([
     [false, 'tip', false],
     [false, 'ancestor', false],

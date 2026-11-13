@@ -315,6 +315,17 @@ jobs:
           done
           bun scripts/skills-inventory-parity.ts --repo . --list-file "${RUNNER_TEMP}/skills-list.txt"
 
+      # brand/, .claude/skills/automagik-brand/ and scripts/brand-sync.mjs are a
+      # byte copy of Automagik's brand: --check exits 1 naming each file that
+      # differs from the copy's record, is missing, or is not recorded. It then
+      # looks at Automagik's dev over the network, which is why it runs in this
+      # job and not in `unit`; that look only prints (a ::warning when dev holds
+      # a newer brand) and never changes the exit code. `!cancelled()` so a red
+      # inventory step above never hides this verdict.
+      - name: Brand copy matches its record
+        if: ${{ !cancelled() }}
+        run: node scripts/brand-sync.mjs --check
+
   # The DSH plugins build themselves on a git install with `node build.mjs`,
   # and both manifests claim `engines.node >=22.12.0` (#3275). This job runs
   # that real prepare under exactly Node 22.12.0. It is its OWN job because the

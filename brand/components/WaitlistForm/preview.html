@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>WaitlistForm</title><meta name="viewport" content="width=device-width, initial-scale=1"><link rel="stylesheet" href="../../tokens/tokens.css"><link rel="stylesheet" href="../bundle.css"><style>*,*::before,*::after{animation:none!important}</style></head>
+<body>
+<div class="wrap" style="padding-block:20px;max-width:820px"><div class="form-card"><form class="waitlist-form">
+    
+    <label>What would you like to do?<textarea name="goal" required="" maxlength="1000" rows="3" placeholder="Tell us the work you want your agents to take on."></textarea></label>
+    <div class="field-row"><label>Where would you use it?<select name="platform" required=""><option value="android">Android</option><option value="linux">Linux</option><option value="both">Android and Linux</option></select></label><label>Apps or tools <span class="muted">(optional)</span><input name="apps" maxlength="200" placeholder="The tools involved in your work"></label></div>
+    <label>What would a good result look like?<textarea name="expected_result" required="" maxlength="500" rows="2" placeholder="Describe the outcome you would like."></textarea></label>
+    <div class="field-row"><label>Confirm through<select name="channel" required=""><option value="email">Email</option><option value="whatsapp">WhatsApp — you send the first message</option></select></label><label>Confirmation language<select name="language"><option value="en">English</option><option value="pt-BR">Português</option></select></label></div>
+    <p class="fine">WhatsApp confirmation may take a little while. <span lang="pt-BR">A confirmação pelo WhatsApp pode demorar um pouco.</span></p>
+    <label>Your email <span class="muted">(required for email confirmation)</span><input type="email" name="email" autocomplete="email" maxlength="254" placeholder="you@example.com"></label>
+    <label class="consent"><input type="checkbox" name="consent" value="yes" required=""><span>I agree to the use of my contact details and answers to record and review my interest in Automagik Cloud, and to one confirmation through my chosen channel. This does not create an account or sign me up for marketing. <a href="#">Privacy and removal</a>.</span></label>
+    <button class="button primary" type="submit">Register my interest <span aria-hidden="true">→</span></button>
+    <p class="fine">Email sends a confirmation link. WhatsApp shows a code for you to send to our support Bot. We never message you first on WhatsApp, and send nothing else.</p>
+  </form></div></div>
+</body>
+</html>
