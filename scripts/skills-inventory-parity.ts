@@ -9,7 +9,7 @@
  * two must agree, or `genie uninstall` removes the wrong set and `doctor`
  * reports freshness against a list nobody published.
  *
- * REF CAVEAT: the source is the LOCAL checkout, never `automagik-dev/genie@<ref>`
+ * REF CAVEAT: the source is the LOCAL checkout, never `automagik-si/genie@<ref>`
  * — `skills@1.5.23` binds the third capture of its source spec to `skillFilter`,
  * not to a ref, so an `@<ref>` suffix is ignored and the repository's DEFAULT
  * branch is served (verified 2026-08-31). The ref-pinned form made this check
