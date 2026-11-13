@@ -362,8 +362,12 @@ export default class Tasks extends View {
   drawer(x, t) {
     const open = isOpen(x.lane);
     const section = (label) => text(label.toUpperCase(), 10.5, t.dim, BOLD).mt(16).mb(6);
-    const kv = (k, v, color) =>
-      v_flex()
+    // The value truncates in a narrow cell. A mark (a partial cost's "partial", styled as on the
+    // card) rides the label line, which never truncates, so a clipped amount cannot pass for a
+    // complete one.
+    const kv = (k, v, color, mark = null) => {
+      const label = text(k, 10.5, t.dim);
+      return v_flex()
         .flex_1()
         .min_w(0)
         .gap(2)
@@ -371,8 +375,17 @@ export default class Tasks extends View {
         .py(8)
         .rounded(7)
         .bg(t.background)
-        .child(text(k, 10.5, t.dim))
+        .child(
+          mark
+            ? h_flex()
+                .items_center()
+                .gap(6)
+                .child(label)
+                .child(text(mark, 10.5, AMBER, MONO).flex_none())
+            : label,
+        )
         .child(text(v, 13, color ?? t.foreground, MONO_BOLD).truncate());
+    };
     // A reason wraps (its full text lives here; the card truncates it); other lines truncate.
     const line = (k, v, wrap = false) => {
       const value = text(v, 11.5, t.muted, MONO).flex_1().min_w(0);
@@ -438,13 +451,12 @@ export default class Tasks extends View {
 
     const time = open ? kv('Elapsed', fmtMin(x.elapsed)) : kv('Lead time', fmtMin(x.lead_min));
     const basis = x.est?.basis != null ? `${x.est.basis} of ${x.merges} merges` : `${x.merges} merges`;
-    const costLabel = x.cost_badge === 'partial' ? `${x.cost} (partial)` : x.cost;
     el = el
       .child(section('Time and cost'))
       .child(
         h_flex()
           .gap(6)
-          .child(kv('Cost', costLabel))
+          .child(kv('Cost', x.cost, null, x.cost_badge))
           .child(kv('Work', fmtMin(x.work_min)))
           .child(time),
       )
@@ -484,12 +496,17 @@ export default class Tasks extends View {
 
     if (x.branch_usage) {
       const bu = x.branch_usage;
-      const buCost = bu.cost_badge === 'partial' ? `${bu.cost_text} (partial)` : bu.cost_text;
       const buTokens = bu.tokens_text ?? fmtTokens(bu.tokens_total);
       el = el
         .child(section('Branch usage (d30, not task-isolated)'))
         .child(line('branch', bu.branch))
-        .child(h_flex().gap(6).mt(4).child(kv('Cost', buCost)).child(kv('Tokens', buTokens)))
+        .child(
+          h_flex()
+            .gap(6)
+            .mt(4)
+            .child(kv('Cost', bu.cost_text, null, bu.cost_badge))
+            .child(kv('Tokens', buTokens)),
+        )
         .when(Boolean(bu.reason), (e) => e.child(line('reason', bu.reason, true)));
     }
 
