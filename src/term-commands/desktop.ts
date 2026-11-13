@@ -4,11 +4,11 @@
  *   genie desktop [--path <file>] [--tag <tag>] [--dry-run]
  *
  * Mirrors Omni's `omni desktop`: the build for this machine comes from the GitHub releases of
- * automagik-dev/automagik (tags `v<version>`: the newest with this machine's build and its
+ * automagik-si/automagik (tags `v<version>`: the newest with this machine's build and its
  * SHA256SUMS; on macOS also latest-mac.yml, which only a signed build carries), is checked
  * against SHA256SUMS, is kept in the same cache `omni desktop` uses (the app's home's app/<tag>/:
  * one app, one download), and is opened. Releases from before the
- * app moved there (automagik-dev/omni-desktop) are taken only when Automagik has no build for
+ * app moved there (automagik-si/omni-desktop) are taken only when Automagik has no build for
  * this machine yet; they update themselves into Automagik's. `--path` opens a build you
  * already have instead.
  *
@@ -31,9 +31,9 @@ import type { Command } from 'commander';
 import { z } from 'zod';
 
 /** The Automagik desktop app's releases. */
-const RELEASES_URL = 'https://api.github.com/repos/automagik-dev/automagik/releases?per_page=50';
+const RELEASES_URL = 'https://api.github.com/repos/automagik-si/automagik/releases?per_page=50';
 /** Builds released before the app moved to Automagik; taken only when Automagik has none for this machine. */
-const LEGACY_RELEASES_URL = 'https://api.github.com/repos/automagik-dev/omni-desktop/releases?per_page=50';
+const LEGACY_RELEASES_URL = 'https://api.github.com/repos/automagik-si/omni-desktop/releases?per_page=50';
 const TAG_PREFIX = 'v';
 const SUMS_ASSET = 'SHA256SUMS';
 /** What `genie desktop` opens the app for: its welcome lists Genie first and starts with it chosen. */
@@ -205,14 +205,14 @@ function open(file: string, target: Supported): void {
 
 type DesktopOptions = { path?: string; tag?: string; dryRun?: boolean };
 
-async function buildFromReleases(target: Supported, options: DesktopOptions): Promise<string | null> {
+export async function buildFromReleases(target: Supported, options: DesktopOptions): Promise<string | null> {
   const list = async (url: string) =>
     z.array(ReleaseSchema).parse(await (await fetchOk(url, 'application/vnd.github+json')).json());
   let release = pickRelease(await list(RELEASES_URL), target, options.tag);
   if (!release && !options.tag) {
     // No Automagik build for this machine yet (a macOS one is published only signed).
     release = pickRelease(await list(LEGACY_RELEASES_URL), target);
-    if (release) say(`Taking ${release.tag_name} from automagik-dev/omni-desktop; it updates itself.`);
+    if (release) say(`Taking ${release.tag_name} from automagik-si/omni-desktop; it updates itself.`);
   }
   if (!release) {
     fail(options.tag ? `There is no release ${options.tag}.` : `There is no desktop release for ${target.label} yet.`);
