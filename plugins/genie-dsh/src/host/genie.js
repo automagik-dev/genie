@@ -11,21 +11,12 @@
 // A follow-up wish may be scoped to branches an earlier wish made (`branches`), so it can
 // repair and publish exactly those and nothing else.
 import { createHash } from 'node:crypto';
-import {
-  closeSync,
-  existsSync,
-  fsyncSync,
-  mkdirSync,
-  openSync,
-  readFileSync,
-  renameSync,
-  rmSync,
-  writeSync,
-} from 'node:fs';
+import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, writeSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, join } from 'node:path';
 import { defineTool } from '@deepseek-ai/dsh-tools';
 import { fetchBase, hasHttpUserinfo, remoteDisplay, resolveBinding } from './binding.js';
+import { claimCopy, removeCopy, stillClaimed } from './copy.js';
 import {
   addPublishRemote,
   aheadOf,
@@ -380,7 +371,26 @@ export function install(rt) {
     return scope;
   }
 
-  async function grantWish({ bot, title, wish, branches }) {
+  // After a failed startTask the wish's copy is removed for one failure only: the team's
+  // refusal of a start whose permission level did not hold, an error whose own `levelNotSet` is
+  // exactly true (not a truthy value, not a flag on its `cause`). The team throws it before the
+  // first turn, so nothing ran in the copy. No other throw says that: the turn may have been
+  // queued, worked there and ended, and the team may even have forgotten its task since, so
+  // every other failed start keeps the copy. The flag is taken on trust, with no check of who
+  // set it: a plugin that put it on an error thrown after a turn would cause a removal. None
+  // in the Bot team's source does.
+  // `left` is filled when a failed grant keeps its copy, for the tool's answer: `why` is `ran`
+  // (work may have run there), `failed` (the removal failed) or `uncertain` (the folder at its
+  // path could not be shown to be the one this grant made, so the path is not to be trusted).
+  function keptNote({ folder, why }) {
+    if (folder === undefined) return '';
+    if (why === 'uncertain')
+      return " A copy of the project made for this wish may remain among Genie's wish copies: it was not removed, because Genie could not confirm which folder is the one it made. Tell the user that, and do not delete any folder on this message alone.";
+    const reason = why === 'failed' ? 'it could not be removed' : 'work may have run there';
+    return ` Its copy of the project was kept at ${folder}, because ${reason}. Tell the user; delete that folder by hand once nothing is working in it.`;
+  }
+
+  async function grantWish({ bot, title, wish, branches }, left = {}) {
     const problem = await gitProblem();
     if (problem !== null) return problem;
     const where = await repositoryFor(bot);
@@ -420,12 +430,16 @@ export function install(rt) {
       slug = `${slugOf(title)}-${n}`;
     }
     const branch = `wish/${slug}`;
-    mkdirSync(root, { recursive: true });
-    const folder = join(root, slug);
+    // Claimed in the same tick as the last look above: a path that exists throws. The two
+    // set-up failures below remove their partial copy as they always did, now through the
+    // same check as every removal (copy.js): nothing has been handed to a task yet.
+    const copy = claimCopy(root, slug);
+    const { folder } = copy;
     const made = await cloneForWish(repo, folder, branch, baseSha, { g, plain: scope.length === 0 });
     if (!made.ok) {
-      rmSync(folder, { recursive: true, force: true });
-      return `The wish did not start: ${made.error}`;
+      const why = removeCopy(copy);
+      const note = why === 'removed' ? '' : keptNote({ folder, why });
+      return `The wish did not start: ${made.error}${note}`;
     }
     // The given branches become local branches in the wish's copy; the binding's remote
     // becomes its `publish` remote, since the copy's origin is only the project folder.
@@ -435,8 +449,9 @@ export function install(rt) {
       const given = await grantBranches(folder, scope, g);
       const published = publishTo === null ? { ok: true } : await addPublishRemote(folder, publishTo, g);
       if (!given.ok || !published.ok) {
-        rmSync(folder, { recursive: true, force: true });
-        return `The wish did not start: ${given.error ?? published.error}`;
+        const why = removeCopy(copy);
+        const note = why === 'removed' ? '' : keptNote({ folder, why });
+        return `The wish did not start: ${given.error ?? published.error}${note}`;
       }
       for (const name of scope) starts[name] = await commitOf(folder, `refs/heads/${name}`, g, 'given-start');
     }
@@ -452,13 +467,28 @@ export function install(rt) {
     });
     // bots-dsh with startTask's cwd (automagik PR #9) opens the thread in its folder with
     // the Bots' preset; an older one ignores both and the brief's absolute path still holds.
-    const sessionId = await rt.startTask({
-      title: `Wish: ${title}`,
-      text,
-      from: bot.id,
-      cwd: folder,
-      agentPreset: 'standard',
-    });
+    let sessionId;
+    try {
+      sessionId = await rt.startTask({
+        title: `Wish: ${title}`,
+        text,
+        from: bot.id,
+        cwd: folder,
+        agentPreset: 'standard',
+      });
+    } catch (error) {
+      // The error thrown is always the start's own, whatever becomes of the copy.
+      let why = 'uncertain';
+      try {
+        if (error?.levelNotSet === true) why = removeCopy(copy);
+        else if (stillClaimed(copy)) why = 'ran';
+      } catch {}
+      if (why !== 'removed') {
+        Object.assign(left, { folder, why });
+        rt.warn?.('genie: the wish %s did not start and its copy was kept (%s): %s', branch, why, folder);
+      }
+      throw error;
+    }
     const entry = {
       v: WISH_VERSION,
       slug,
@@ -658,10 +688,12 @@ export function install(rt) {
         const title = String(args.title ?? '').trim();
         const wish = String(args.wish ?? '').trim();
         if (title === '' || wish === '') return 'A wish needs a title and the wish itself.';
+        const left = {};
         try {
-          return await grantWish({ bot, title, wish, branches: args.branches });
+          return await grantWish({ bot, title, wish, branches: args.branches }, left);
         } catch (error) {
-          return `The wish did not start: ${error?.message ?? error}`;
+          const said = `The wish did not start: ${error?.message ?? error}`;
+          return `${said}${keptNote(left)}`;
         }
       },
     }),
