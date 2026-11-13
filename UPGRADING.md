@@ -3,7 +3,7 @@
 Genie ships exactly two surfaces, and nothing else:
 
 1. **The signed binary** — installed and updated by `install.sh` and `genie update`.
-2. **The skills, and the saved-workflow catalog beside them** — delivered by the [skills.sh](https://skills.sh) channel. `genie install` and `genie update` run the pinned skills CLI over the tree the signed release put on disk, deliver `.claude/workflows/*.js` into `~/.claude/workflows`, then record what landed in `~/.genie/skills-install.json`. Without the binary, the same skills install with `npx skills add automagik-dev/genie` (add `-g` for a machine-wide install; never `--all`, which asks the skills CLI to write a product home for every one of the 77 agents in its registry — 57 of them materialized on the measured dogfood host (2026-08-30, re-confirmed 2026-09-01; only 4 were recorded, leaving 53 unrecorded homes).
+2. **The skills, and the saved-workflow catalog beside them** — delivered by the [skills.sh](https://skills.sh) channel. `genie install` and `genie update` run the pinned skills CLI over the tree the signed release put on disk, deliver `.claude/workflows/*.js` into `~/.claude/workflows`, then record what landed in `~/.genie/skills-install.json`. Without the binary, the same skills install with `npx skills add automagik-si/genie` (add `-g` for a machine-wide install; never `--all`, which asks the skills CLI to write a product home for every one of the 77 agents in its registry — 57 of them materialized on the measured dogfood host (2026-08-30, re-confirmed 2026-09-01; only 4 were recorded, leaving 53 unrecorded homes).
 
 There is no Claude marketplace plugin, no Codex plugin, no Orca plugin, no Genie-installed hooks, and no role-agent profiles.
 
@@ -69,6 +69,10 @@ that carries the fix.
 
 **What an affected host should do.** Your genie keeps working. To get updates again, install the latest version once from automagik-si/genie.
 
+**Skills installed with `npx skills add automagik-dev/genie`.** They keep updating, because GitHub redirects the old
+name. Running `npx skills add automagik-si/genie -g` once replaces a global install, the `-g` form these docs gave, in
+place under the new name with no duplicates; for a project install, run the same command without `-g` in that project.
+
 ### MCP retirement
 
 The legacy Genie MCP server is retired, and v6 removed the `genie mcp` stub that stood in for it — the verb no longer
@@ -122,7 +126,7 @@ host makes no network call. To keep the old behavior, export `MIKRO_PHOENIX_PROJ
 
 `genie install` and `genie update` run the pinned skills.sh CLI over the delivered tree under `~/.genie/skills`,
 never over a GitHub ref — the signed tarball's own bytes are the only source genuinely pinned to your binary. The
-public `npx skills add automagik-dev/genie` command serves the repository's default branch instead, so it can be
+public `npx skills add automagik-si/genie` command serves the repository's default branch instead, so it can be
 ahead of or behind any release.
 
 Retirement runs **before** the install pass, so a home the skills CLI replaces has already been backed up. Removed

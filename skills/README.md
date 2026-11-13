@@ -3,7 +3,7 @@
 `skills/` is the canonical, runtime-neutral source for Genie's product skills. Each directory contains a
 `SKILL.md`, optional bundled resources, and `agents/openai.yaml` for Codex UI metadata.
 
-Shared skill bodies name semantic routes without a host-specific prefix. Skills are installed into each agent's own global skills home by skills.sh (`npx skills add automagik-dev/genie`, or `genie update`), and every runtime discovers them from there. Invoke them the way the active runtime surfaces a discovered skill:
+Shared skill bodies name semantic routes without a host-specific prefix. Skills are installed into each agent's own global skills home by skills.sh (`npx skills add automagik-si/genie`, or `genie update`), and every runtime discovers them from there. Invoke them the way the active runtime surfaces a discovered skill:
 
 - Codex: `$brainstorm`, `$wish`, `$review`, `$work`
 - A runtime with slash commands: `/brainstorm`, `/wish`, `/review`, `/work`
@@ -45,7 +45,7 @@ against the top-level `skills/<name>/SKILL.md` set. Adding or removing a shipped
 the directory itself — the inventory is derived from the tree, never hand-listed.
 
 Skills reach a host through exactly one channel: the pinned skills.sh CLI, run for you by `genie update` against the
-delivered tree, or run by hand as `npx skills add automagik-dev/genie`. The manual command publishes from the
+delivered tree, or run by hand as `npx skills add automagik-si/genie`. The manual command publishes from the
 repository's default branch, so it can be ahead of or behind any release; `genie update` installs the exact delivered
 release. Genie writes skills nowhere else, and skills a user installed themselves stay user-owned — the installer
 records what it wrote so `genie uninstall` removes only that set. A separately installed personal copy of a skill is

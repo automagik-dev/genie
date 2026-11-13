@@ -1049,7 +1049,14 @@ describe('hazards and residue — npx pinning', () => {
   test('the two shipped installer forms pass', () => {
     expect(hasUnpinnedNpxInstaller("npx -y skills@1.5.23 add ~/.genie/skills --skill '*' -y --copy -g")).toBe(false);
     expect(hasUnpinnedNpxInstaller('npx -y skills@<version> add <dir>')).toBe(false);
-    expect(hasUnpinnedNpxInstaller('npx skills add automagik-dev/genie')).toBe(false);
+    expect(hasUnpinnedNpxInstaller('npx skills add automagik-si/genie')).toBe(false);
+  });
+
+  test('the pre-rename address is no longer the documented installer', () => {
+    // It still installs through GitHub's redirect, but a skills CLI before 1.8.0 reports the install to skills.sh
+    // under the old name, which keeps the stale automagik-dev/genie listing alive.
+    expect(hasUnpinnedNpxInstaller('npx skills add automagik-dev/genie')).toBe(true);
+    expect(hasUnpinnedNpxInstaller('npx skills add automagik-dev/genie -g')).toBe(true);
   });
 
   test('any other npx installer is unpinned', () => {
@@ -1081,7 +1088,8 @@ describe('hazards and residue — one test per pattern family', () => {
   test('unpinned installers', () => {
     expect(fenced('npx create-thing@latest')).toEqual(['unpinned npx installer']);
     expect(fenced('npx -y skills@1.5.23 add <dir>')).toEqual([]);
-    expect(fenced('npx skills add automagik-dev/genie')).toEqual([]);
+    expect(fenced('npx skills add automagik-si/genie')).toEqual([]);
+    expect(fenced('npx skills add automagik-dev/genie')).toEqual(['unpinned npx installer']);
     expect(fenced('pip install requests')).toEqual(['pip install']);
     expect(fenced('pip3 install --break-system-packages requests')).toEqual(['pip install', '--break-system-packages']);
   });
@@ -1209,6 +1217,30 @@ describe('end-to-end: the hazard gate on a fixture tree', () => {
     expect(stderr).toContain('[hazard] unpinned npx installer — pin the package');
   });
 
+  test('the pre-rename installer address fails and names the current one', () => {
+    writeSkillIn(
+      dir,
+      'renamed',
+      [
+        '---',
+        'name: renamed',
+        'description: "Use renamed for this test workflow."',
+        '---',
+        '',
+        '# renamed',
+        '',
+        '```bash',
+        'npx skills add automagik-dev/genie -g',
+        '```',
+        '',
+      ].join('\n'),
+    );
+    const { code, stderr } = runLintIn(dir);
+    expect(code).toBe(1);
+    expect(stderr).toContain('renamed/SKILL.md:9: [hazard] unpinned npx installer — pin the package');
+    expect(stderr).toContain('the documented `npx skills add automagik-si/genie` form');
+  });
+
   test('a hazard in references/ fails too, and the ignore marker does not exempt it', () => {
     const skillDir = writeSkillIn(
       dir,
@@ -1250,7 +1282,7 @@ describe('end-to-end: the hazard gate on a fixture tree', () => {
         'Never run git stash in a shared checkout, and never stage with git add -A.',
         '',
         '```bash',
-        'npx skills add automagik-dev/genie',
+        'npx skills add automagik-si/genie',
         'git add skills/clean/SKILL.md',
         'git merge-base HEAD origin/dev',
         '```',
