@@ -19,7 +19,7 @@ Loaded after `claude.md` when the destination is a worker prompt for Claude Fabl
 - "Hold all findings for the final response" and other lines that suppress narration.
 - Anti-formatting rules written to curb bullets and bold in earlier models, when they are tuning rather than a deliberate format restriction. An explicit minimal-format request survives.
 - "Think very hard" style lines, and "answer directly without deliberating" style lines: effort is the control, and the latter does not stop thinking at `medium` and above.
-- Any request to put reasoning, a rationale or a chain of thought in the answer. It invites `reasoning_extraction` refusals; read reasoning from thinking blocks with `display: "summarized"` instead. Keep schema fields that report evidence or findings the task asks for.
+- Any request to reproduce its internal reasoning or a chain of thought in the answer. It invites `reasoning_extraction` refusals; read reasoning from thinking blocks with `display: "summarized"` instead. Keep a user-facing rationale, evidence or finding field the output schema requires.
 - "Treat that answer as done" lines, where the model should keep re-examining its earlier answers.
 - A token budget shown to the model, unless the task is to configure one; it changes how much the model spends.
 
