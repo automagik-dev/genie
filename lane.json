@@ -2,22 +2,22 @@
   "schemaVersion": 1,
   "publisher": "genie",
   "keyId": "genie-2026-10",
-  "sequence": 20001,
-  "issuedAt": "2026-11-09T21:30:39Z",
+  "sequence": 20002,
+  "issuedAt": "2026-11-13T02:03:15Z",
   "repository": "https://github.com/automagik-dev/genie",
-  "version": "0.2.1",
-  "commit": "4bb84bb1bf5a7ff8473b60bfb1351a5a5791289e",
+  "version": "0.2.2",
+  "commit": "d84cbd7a2f196bc06b4b28a3d0a2f5751c65137a",
   "base": "3.3.0",
   "plugins": [
     {
       "name": "@automagik/genie-dsh",
-      "version": "0.2.1",
-      "url": "https://github.com/automagik-dev/genie/releases/download/genie-dsh-v0.2.1/automagik-genie-dsh-0.2.1.tgz",
-      "integrity": "sha512-cIMVFVI2kEVP3XCN8MbHBWfKk7wLc1MzMe5G2qXh20HHI+XckeZr/RjnhtUvjYv4sXziewv/7ayoXWO9DtNARA==",
-      "sha256": "23fad9eca05059d1b2b42a68b020f2fabd3c218326e39760299893fd6c0ab6b5",
-      "size": 29552,
+      "version": "0.2.2",
+      "url": "https://github.com/automagik-dev/genie/releases/download/genie-dsh-v0.2.2/automagik-genie-dsh-0.2.2.tgz",
+      "integrity": "sha512-LJGxKZ3aEvThccKVHXOkiScu/GFxwQRwUImvsO8QygtU+kBLwlsSyX+rZDAqfclamnUp2rAM+jbX7NWtizHKnQ==",
+      "sha256": "a67e2de4de60fd1e2db799fd9d0e104b883ee4c0f40f0aeea747aa570b655742",
+      "size": 30413,
       "engines": {
-        "dsh": ">=0.2.1-rc.2 <0.3.0"
+        "dsh": ">=0.2.1-rc.2 <0.3.0-0"
       }
     }
   ]
