@@ -1583,8 +1583,12 @@ describe('the mod', () => {
     ]);
   });
 
-  test('main.js card and drawer render compact tokens beside cost, expose reason on "–" cards, truncate kv values, and print branch_usage reason once', async () => {
-    type GNode = { kind: string; props: Record<string, unknown>; children: (GNode | string)[] };
+  type GNode = { kind: string; props: Record<string, unknown>; children: (GNode | string)[] };
+  const textsOf = (n: GNode | string): string[] =>
+    typeof n === 'string' ? [n] : n.children.flatMap((c) => textsOf(c));
+  const nodesOf = (n: GNode | string): GNode[] => (typeof n === 'string' ? [] : [n, ...n.children.flatMap(nodesOf)]);
+  /** main.js's view under a recording stub of Herdr's builder API: a call sets a prop, `child`/`when` build the tree. */
+  const loadBoard = async () => {
     const mk = (kind: string, extra: Record<string, unknown> = {}): GNode => {
       const node: GNode = { kind, props: { ...extra }, children: [] };
       const proxy: GNode = new Proxy(node, {
@@ -1598,8 +1602,6 @@ describe('the mod', () => {
       });
       return proxy;
     };
-    const textsOf = (n: GNode | string): string[] =>
-      typeof n === 'string' ? [n] : n.children.flatMap((c) => textsOf(c));
     mock.module('gpui-base', () => ({ h_flex: () => mk('h_flex'), v_flex: () => mk('v_flex') }));
     mock.module('gpui-kit', () => ({
       View: class {},
@@ -1616,15 +1618,18 @@ describe('the mod', () => {
     }));
     const mainPath = './main.js';
     const { default: Tasks } = await import(mainPath);
-    const board = Object.assign(Object.create(Tasks.prototype), {
+    return Object.assign(Object.create(Tasks.prototype), {
       m: D.newModel(),
       terms: [],
       selected: {},
       copied: null,
     });
-    const t = { foreground: '#fff', muted: '#aaa', dim: '#777', accent: '#0af', border: '#333', surface: '#181818' };
-    const cardFrom = (over: Record<string, unknown>, hist: number[] = []) =>
-      D.cardOf(P, D.normalizeRow(row(over)), hist);
+  };
+  const t = { foreground: '#fff', muted: '#aaa', dim: '#777', accent: '#0af', border: '#333', surface: '#181818' };
+  const cardFrom = (over: Record<string, unknown>, hist: number[] = []) => D.cardOf(P, D.normalizeRow(row(over)), hist);
+
+  test('main.js card and drawer render compact tokens beside cost, expose reason on "–" cards, truncate kv values, and print branch_usage reason once', async () => {
+    const board = await loadBoard();
 
     const renderedMeasured = board.card(
       cardFrom(
@@ -1684,12 +1689,45 @@ describe('the mod', () => {
     expect(drawerTexts.some((s) => s.includes('– ('))).toBe(false);
     expect(drawerTexts.filter((s) => s === 'needs usagemeter >= 3.129.2')).toHaveLength(1);
     expect(drawerTexts.filter((s) => s === 'ingestion_stale')).toHaveLength(1);
-    const nodesOf = (n: GNode | string): GNode[] => (typeof n === 'string' ? [] : [n, ...n.children.flatMap(nodesOf)]);
     const isReason = (c: GNode | string) => c === 'needs usagemeter >= 3.129.2' || c === 'ingestion_stale';
     const reasons = nodesOf(drawer).filter((n) => isReason(n.children[0]));
     expect(reasons.map((n) => [n.props.whitespace_normal, n.props.truncate])).toEqual([
       [true, undefined],
       [true, undefined],
     ]);
+  });
+
+  test('a partial cost keeps its marker outside every truncated node, on the card and in the drawer', async () => {
+    const board = await loadBoard();
+    const cardWith = (state: string) =>
+      cardFrom({
+        task: 'gn-5',
+        branch: 'feat/gn-5',
+        meter_state: 'measured',
+        tokens: tokensOf(1500),
+        cost: costOf(state, 1.23),
+        branch_usage: { branch: 'feat/gn-5', state: 'measured', tokens: tokensOf(4200), cost: costOf(state, 4.56) },
+      });
+    /** Every string in the tree, with the nodes above it (root first). */
+    const pathsOf = (n: GNode | string, above: GNode[] = []): { s: string; above: GNode[] }[] =>
+      typeof n === 'string' ? [{ s: n, above }] : n.children.flatMap((c) => pathsOf(c, [...above, n]));
+    const truncatedTexts = (n: GNode) => nodesOf(n).flatMap((x) => (x.props.truncate ? textsOf(x) : []));
+
+    // The card's cost, the drawer's task cost and the drawer's branch cost: three marks, none clipped.
+    const partial = cardWith('partial');
+    const drawer = board.drawer(partial, t) as GNode;
+    const marks = [...pathsOf(board.card(partial, t, null) as GNode), ...pathsOf(drawer)].filter(({ s }) =>
+      s.includes('partial'),
+    );
+    expect(marks.map(({ s }) => s)).toEqual(['partial', 'partial', 'partial']);
+    for (const { above } of marks) expect(above.filter((n) => n.props.truncate)).toEqual([]);
+    expect(truncatedTexts(drawer)).toEqual(expect.arrayContaining(['$1.23', '$4.56']));
+
+    // A complete cost renders no mark, and its drawer cell is still the label over the truncated amount.
+    const complete = board.drawer(cardWith('priced'), t) as GNode;
+    expect(textsOf(complete).filter((s) => s.includes('partial'))).toEqual([]);
+    expect(truncatedTexts(complete)).toEqual(expect.arrayContaining(['$1.23', '$4.56']));
+    const costCells = pathsOf(complete).filter(({ s }) => s === 'Cost');
+    expect(costCells.map(({ above }) => above.at(-2)?.kind)).toEqual(['v_flex', 'v_flex']);
   });
 });
