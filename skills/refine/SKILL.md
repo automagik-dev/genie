@@ -19,12 +19,12 @@ Exactly two provider switches, plus one Claude-only target modifier, with model 
 | `--for claude` | `prompts/claude.md` | Claude Opus 5.5 (default baseline): [Opus 5.5 guide](https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/prompting-claude-opus-5-5), [Claude best practices](https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/claude-prompting-best-practices) |
 | `--for claude --target sonnet` | `prompts/claude.md` + `prompts/claude-sonnet-5-5.md` | Claude Sonnet 5.5: [Sonnet 5.5 guide](https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/prompting-claude-sonnet-5-5) |
 | `--for claude --target opus` | `prompts/claude.md` + `prompts/claude-opus-5-5.md` | Claude Opus 5.5: [Opus 5.5 guide](https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/prompting-claude-opus-5-5) |
-| `--for claude --target fable` | `prompts/claude.md` + `prompts/claude-fable-5-1.md` | Claude Fable 5.1: [Fable 5.1 guide](https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/prompting-claude-fable-5-1) |
+| `--for claude --target fable` | `prompts/claude.md` + `prompts/claude-fable-5-2.md` | Claude Fable 5.2: [overview](https://platform.claude.com/docs/en/models/fable-5-2/overview), [Fable 5.2 guide](https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/prompting-claude-fable-5-2) |
 
 This table is drift-prone: documentation URLs move, model baselines are superseded, and the bundled guides go stale without announcing it. The freshness claim is therefore one line, on its own, in exactly this shape, and it covers every URL, every baseline, and every bundled guide:
 
 ```text
-Checked: 2026-10-01
+Checked: 2026-11-13
 ```
 
 Compare that date before promising the guidance is current. If it predates the release these skills shipped with, or either URL no longer resolves, the guidance is unverified: re-read the official pages, refresh the bundled guide deliberately, and update the line in the same edit. Keep the provider switches stable either way — a stale date narrows what may be claimed, never the switch surface.

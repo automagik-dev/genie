@@ -123,6 +123,8 @@ describe('annotationRows', () => {
 describe('usd', () => {
   test('prices by model and falls back to the opus-5 row', () => {
     expect(usd('claude-sonnet-5', 1e6, 0, 0, 0)).toBeCloseTo(0.2, 10);
+    expect(usd('claude-fable-5-2', 1e6, 0, 0, 0)).toBeCloseTo(0.2, 10);
+    expect(usd('claude-fable-5-2', 0, 1e6, 1e6, 1e6)).toBeCloseTo(58, 10);
     expect(usd('unknown-model', 0, 0, 0, 1e6)).toBeCloseTo(25, 10);
   });
 });

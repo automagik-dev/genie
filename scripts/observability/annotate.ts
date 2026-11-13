@@ -20,7 +20,7 @@ import { basename, join } from 'node:path';
 import { type ContentBlock, type TranscriptRecord, readJsonl } from './backfill.js';
 
 export const ANNOTATOR_ID = 'code-annotator/v1';
-export const PRICING_VERSION = 'phoenix-list-2026-09';
+export const PRICING_VERSION = 'phoenix-list-2026-11';
 export const ANNOTATION_NAMES = [
   'polling_share',
   'tool_error_rate',
@@ -37,6 +37,7 @@ export type AnnotationName = (typeof ANNOTATION_NAMES)[number];
 const PRICE: Record<string, [number, number, number, number]> = {
   'claude-fable-5': [1.0, 12.5, 10, 50],
   'claude-fable-5-1': [0.25, 12.5, 10, 50],
+  'claude-fable-5-2': [0.2, 10, 8, 40],
   'claude-opus-5': [0.5, 6.25, 5, 25],
   'claude-sonnet-5': [0.2, 2.5, 2, 10],
   'claude-opus-4-8': [0.5, 6.25, 5, 25],
