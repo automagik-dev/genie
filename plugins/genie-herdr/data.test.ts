@@ -1699,14 +1699,19 @@ describe('the mod', () => {
 
   test('a partial cost keeps its marker outside every truncated node, on the card and in the drawer', async () => {
     const board = await loadBoard();
-    const cardWith = (state: string) =>
+    const cardWith = (state: string, branchState = state) =>
       cardFrom({
         task: 'gn-5',
         branch: 'feat/gn-5',
         meter_state: 'measured',
         tokens: tokensOf(1500),
         cost: costOf(state, 1.23),
-        branch_usage: { branch: 'feat/gn-5', state: 'measured', tokens: tokensOf(4200), cost: costOf(state, 4.56) },
+        branch_usage: {
+          branch: 'feat/gn-5',
+          state: 'measured',
+          tokens: tokensOf(4200),
+          cost: costOf(branchState, 4.56),
+        },
       });
     /** Every string in the tree, with the nodes above it (root first). */
     const pathsOf = (n: GNode | string, above: GNode[] = []): { s: string; above: GNode[] }[] =>
@@ -1729,5 +1734,18 @@ describe('the mod', () => {
     expect(truncatedTexts(complete)).toEqual(expect.arrayContaining(['$1.23', '$4.56']));
     const costCells = pathsOf(complete).filter(({ s }) => s === 'Cost');
     expect(costCells.map(({ above }) => above.at(-2)?.kind)).toEqual(['v_flex', 'v_flex']);
+
+    // Task and branch costs differ: the chip lands only on the cell whose own cost is partial, named by the
+    // amount in that cell (task $1.23, branch $4.56); the card carries the task cost's chip alone.
+    const chips = (task: string, branch: string) => {
+      const x = cardWith(task, branch);
+      const card = pathsOf(board.card(x, t, null) as GNode).filter(({ s }) => s === 'partial').length;
+      const drawer = pathsOf(board.drawer(x, t) as GNode)
+        .filter(({ s }) => s.includes('partial'))
+        .map(({ above }) => truncatedTexts(above.at(-3) as GNode));
+      return { card, drawer };
+    };
+    expect(chips('partial', 'priced')).toEqual({ card: 1, drawer: [['$1.23']] });
+    expect(chips('priced', 'partial')).toEqual({ card: 0, drawer: [['$4.56']] });
   });
 });
