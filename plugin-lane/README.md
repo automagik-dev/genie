@@ -1,11 +1,11 @@
 # Genie's plugin lane
 
 genie-dsh releases reach the Automagik desktop app without a Genie CLI release or an
-Automagik one. The shape is Automagik's lane, schemaVersion 1 (automagik-dev/automagik
+Automagik one. The shape is Automagik's lane, schemaVersion 1 (automagik-si/automagik
 `plugin-lane/README.md`), with `publisher: "genie"`:
 
-- https://raw.githubusercontent.com/automagik-dev/genie/lane/lane.json
-- https://raw.githubusercontent.com/automagik-dev/genie/lane/lane.json.sig
+- https://raw.githubusercontent.com/automagik-si/genie/lane/lane.json
+- https://raw.githubusercontent.com/automagik-si/genie/lane/lane.json.sig
 
 - The `lane` branch holds those two files only, a new commit on every publish. Unlike
   Automagik's, Genie's lane is not a rolling release: this repository's releases are
