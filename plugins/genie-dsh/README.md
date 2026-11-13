@@ -1,7 +1,7 @@
 # @automagik/genie-dsh
 
 Genie for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (DSH), on the
-Automagik Bot team ([`@automagik/bots-dsh`](https://github.com/automagik-dev/automagik/tree/dev/apps/bots-dsh)).
+Automagik Bot team ([`@automagik/bots-dsh`](https://github.com/automagik-si/automagik/tree/dev/apps/bots-dsh)).
 It adds **Genies**, Bots that grant wishes in a project: each wish runs as its own thread, in its
 own copy of the project on a `wish/<name>` branch, and reports back to that Genie's chat. A team
 can have many Genies, one per repository, each in its own color.
@@ -63,7 +63,7 @@ under its folder, and a worktree's commits land in the project's own `.git`, out
 
 - In the Automagik desktop app: the welcome's Genie card installs it.
 - In your own DSH, next to `@automagik/bots-dsh`: add it from a git source pinned to a commit,
-  `git+https://github.com/automagik-dev/genie.git#<commit>&path:/plugins/genie-dsh`.
+  `git+https://github.com/automagik-si/genie.git#<commit>&path:/plugins/genie-dsh`.
 
 Its data is one file beside the team's, `genie.json` in the team home (`~/.omni/ui`): the wishes
 and whether Genie was made. A wish record (v2) keeps its binding (the remote only in the form
@@ -102,7 +102,7 @@ plugin too (bots-dsh 3.129.0: `>=0.2.2-rc.1 <0.3.0-0`).
 ## Host contract
 
 Every member of the Bot team's runtime (`rt`) and of DSH's context (`ctx`) this plugin uses, with
-what provides it (bots-dsh files are under `apps/bots-dsh` in automagik-dev/automagik). The test
+what provides it (bots-dsh files are under `apps/bots-dsh` in automagik-si/automagik). The test
 fake fails on any member that is not in this table, so a new use has to be added here first.
 
 | Member | Provided by | Used for |
