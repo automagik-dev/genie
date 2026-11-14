@@ -29,6 +29,8 @@
  * Cache writes: legacy kept one `cacheWrite` sum (it priced the 1-hour part per call); the meter keeps the
  * 5-minute and 1-hour writes apart, and their sum agrees. The meter rounds USD to 4 decimals, so cost agrees
  * within half of that last digit.
+ * Reported cost: Claude Code and Codex logs carry no price, so neither side has one — legacy priced every
+ * call from the table, and the meter reports `usd_reported` 0 (null where it priced nothing).
  *
  * Regeneration. The legacy side is history: it was produced at cb5a8be2, the last commit whose export read
  * session logs, by running `buildIntervals` over one whole-day `claim→report` interval per task with a price
@@ -105,6 +107,7 @@ interface MeterRow {
     usd_reported: number | null;
     usd_estimated: number | null;
     tokens_priced: number;
+    tokens_reported: number;
     tokens_unpriced: number;
     unpriced_models: string[];
   };
@@ -183,6 +186,20 @@ describe('meter parity fixtures', () => {
       expect(sameUsd(cost.usd, usage.costUsd)).toBe(true);
       expect(cost.usd_estimated).toBe(cost.usd);
       expect(cost.tokens_priced).toBe(tokens.total);
+    }
+  });
+
+  test('no runtime-reported cost on either side: Claude Code and Codex logs carry none, so all USD is a list-price estimate', () => {
+    for (const { task, usage } of legacy.tasks) {
+      const { cost } = rowOf(task);
+      // Legacy took a runtime price only from pi/OMP logs; every priced call here came from the table.
+      expect({ task, legacySource: usage.costSource === 'runtime' || usage.costSource === 'mixed' }).toEqual({
+        task,
+        legacySource: false,
+      });
+      expect(cost.tokens_reported).toBe(0);
+      // Reported USD is 0 wherever the meter priced anything, and unknown (null) where it priced nothing.
+      expect({ task, reported: cost.usd_reported }).toEqual({ task, reported: cost.state === 'unpriced' ? null : 0 });
     }
   });
 

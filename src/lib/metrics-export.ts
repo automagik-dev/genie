@@ -281,7 +281,7 @@ export function readTaskUsage(project: string, window: MeterWindow, bin: GenieRs
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   if (result.error) return missingUsage(project, window, `genie_rs_unavailable: ${result.error.message}`);
-  if (result.status !== 0) return missingUsage(project, window, `genie_rs_exit_${result.status ?? 'signal'}`);
+  if (result.status !== 0) return missingUsage(project, window, failedGenieRsReason(result.status, result.stderr));
   let body: Omit<RepoTaskUsage, 'project'>;
   try {
     body = JSON.parse(result.stdout);
@@ -291,6 +291,25 @@ export function readTaskUsage(project: string, window: MeterWindow, bin: GenieRs
   if (body?.meter_state === 'measured' && Array.isArray(body.rows)) return { ...body, project, window };
   if (body?.meter_state !== 'missing') return missingUsage(project, window, 'invalid_json');
   return { ...body, project, window, meter: null, rows: null, meter_reason: body.meter_reason ?? 'missing' };
+}
+
+/** genie-rs's own refusal of a verb it does not have (`Failure::usage("unknown verb '…'")`, exit 2). */
+const NO_USAGE_VERB = "unknown verb 'usage'";
+
+/**
+ * Why a `genie-rs usage` call failed, in words the operator can act on: a genie-rs built before the verb
+ * existed says so and names the update; any other exit carries genie-rs's first stderr line.
+ */
+function failedGenieRsReason(status: number | null, stderr: string): string {
+  if (status === 2 && stderr.includes(NO_USAGE_VERB)) {
+    return 'genie_rs_without_usage: this genie-rs predates `genie-rs usage`; update it with `genie update` (or `cargo build --release -p genie-rs` in a genie checkout)';
+  }
+  const first = stderr
+    .split('\n')
+    .find((line) => line.trim() !== '')
+    ?.trim()
+    .slice(0, 200);
+  return `genie_rs_exit_${status ?? 'signal'}${first ? `: ${first}` : ''}`;
 }
 
 const dash = '–';

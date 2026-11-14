@@ -479,14 +479,15 @@ describe('Phoenix projection', () => {
 
 describe('task usage from the Rust meter (genie-rs usage)', () => {
   /** A stand-in genie-rs: logs its argv, prints `answer.json`, exits with `exit.code` (0 by default). */
-  function stubGenieRs(answer: string, code = 0): { path: string; calls: () => string[] } {
+  function stubGenieRs(answer: string, code = 0, stderr = ''): { path: string; calls: () => string[] } {
     const dir = join(root, 'bin');
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, 'answer.json'), answer);
+    writeFileSync(join(dir, 'stderr.txt'), stderr);
     const path = join(dir, 'genie-rs');
     writeFileSync(
       path,
-      `#!/bin/sh\nprintf '%s\\n' "$*" >> "${dir}/calls.log"\ncat "${dir}/answer.json"\nexit ${code}\n`,
+      `#!/bin/sh\nprintf '%s\\n' "$*" >> "${dir}/calls.log"\ncat "${dir}/answer.json"\ncat "${dir}/stderr.txt" >&2\nexit ${code}\n`,
       { mode: 0o755 },
     );
     const calls = () => readFileSync(join(dir, 'calls.log'), 'utf8').trim().split('\n');
@@ -575,12 +576,28 @@ describe('task usage from the Rust meter (genie-rs usage)', () => {
     );
     expect(reasonOf({ path: join(root, 'no-such-genie-rs') })).toStartWith('genie_rs_unavailable: ');
     expect(reasonOf({ path: stubGenieRs('', 2).path })).toBe('genie_rs_exit_2');
+    expect(reasonOf({ path: stubGenieRs('', 1, 'genie-rs: disk full\nmore\n').path })).toBe(
+      'genie_rs_exit_1: genie-rs: disk full',
+    );
     expect(reasonOf({ path: stubGenieRs('not json').path })).toBe('invalid_json');
     expect(reasonOf({ path: stubGenieRs(JSON.stringify({ ...measured, rows: 'x' })).path })).toBe('invalid_json');
     expect(reasonOf({ path: stubGenieRs('null').path })).toBe('invalid_json');
     for (const bin of [{ missing: 'x' }, { path: stubGenieRs('not json').path }]) {
       expect(readTaskUsage('/w', 'd30', bin)).toMatchObject({ meter_state: 'missing', rows: null, meter: null });
     }
+  });
+
+  test('a genie-rs from before the usage verb says to update it: – with that reason, never 0', () => {
+    // What an installed genie-rs without `usage` prints: its own refusal, exit 2, and its usage text.
+    const old = stubGenieRs('', 2, "genie-rs: unknown verb 'usage'\nusage: genie-rs <verb> [options]\n");
+    const usage = readTaskUsage('/w', 'd30', { path: old.path });
+    expect(usage).toMatchObject({ meter_state: 'missing', rows: null, meter: null });
+    expect(usage.meter_reason).toBe(
+      'genie_rs_without_usage: this genie-rs predates `genie-rs usage`; update it with `genie update` (or `cargo build --release -p genie-rs` in a genie checkout)',
+    );
+    expect(formatTaskUsage([usage])).toBe(
+      `task usage /w (usagemeter query --by task, d30)\n–\t${usage.meter_reason}\n`,
+    );
   });
 
   test('the repositories asked about are the verified ledger’s, each once', () => {

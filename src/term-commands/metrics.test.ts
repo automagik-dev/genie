@@ -197,26 +197,33 @@ describe('genie metrics', () => {
   );
 
   test('export reads no runtime session log and no price table; prices update and status still answer', () => {
-    // The opening session's own logs sit where the pre-cutover export read them, with usage inside the window.
+    // The opening session's own log sits where the pre-cutover export read it, with one call INSIDE the
+    // interval: that export summed it (meanTokens 424242 in the summary, usage.input in --out). Tokens are
+    // the meter's now, so the sentinel must appear nowhere.
     const claude = join(root, 'claude');
     const codex = join(root, 'codex');
     const env = { CLAUDE_CODE_SESSION_ID: 's', CLAUDE_CONFIG_DIR: claude, CODEX_HOME: codex };
     execFileSync('mkdir', ['-p', join(claude, 'projects', '-repo'), join(codex, 'sessions')]);
+    expect(run(['metrics', 'enable']).code).toBe(0);
+    const id = run(['task', 'create', '--title', 'probe']).stdout.match(/Created task (\S+)/)?.[1] as string;
+    expect(run(['task', 'comment', id, 'one'], env).code).toBe(0);
     const call = {
       type: 'assistant',
       timestamp: new Date().toISOString(),
-      message: { id: 'm1', model: 'claude-opus-5-5', usage: { input_tokens: 424242, output_tokens: 100 } },
+      message: { id: 'm1', model: 'claude-opus-5-5', usage: { input_tokens: 424242, output_tokens: 0 } },
     };
-    captureOneCard(env);
     writeFileSync(join(claude, 'projects', '-repo', 's.jsonl'), `${JSON.stringify(call)}\n`);
+    expect(run(['task', 'comment', id, 'two'], env).code).toBe(0);
+    const out = join(root, 'intervals.jsonl');
     const exportJson = (extra: Record<string, string> = {}) => {
-      const exported = run(['metrics', 'export', '--json'], { ...env, ...extra });
+      const exported = run(['metrics', 'export', '--json', '--out', out], { ...env, ...extra });
       expect(exported.code).toBe(0);
       expect(exported.stderr).toBe('');
       return exported.stdout;
     };
     const readable = exportJson();
     expect(readable).not.toContain('424242');
+    expect(readFileSync(out, 'utf8')).not.toContain('424242');
     const summary = JSON.parse(readable).summary;
     expect(Object.keys(summary[0])).toEqual(['transition', 'n', 'p50Minutes', 'p90Minutes', 'offloadUsd']);
 
