@@ -16,7 +16,8 @@ use std::path::PathBuf;
 
 use genie_forge::SyncOptions;
 use genie_tasks::meter::{
-    BranchUsageSummary, MAX_QUERY_BRANCHES, MeterRowState, MeterTaskRow, query_repo_by_branches, query_repo_by_task,
+    BranchUsageSummary, MAX_QUERY_BRANCHES, MeterRowState, MeterTaskRow, QUERY_WINDOWS, query_repo_by_branches,
+    query_repo_by_task, query_repo_by_task_in, repo_aliases_for_query, repo_slug_of_project,
 };
 use genie_tasks::store::{Listed, Store, open_store_read};
 use genie_tasks::{Lane, StartOptions, StoredEvent, VerbError, genie_home, rebuild};
@@ -32,6 +33,10 @@ pub const USAGE: &str = "usage: genie-rs <verb> [options]
   export --rebuild --project <path>... [--json]   rewrite those projects' rows in GENIE_HOME/tasks.jsonl
   status <id> [--project <path>] [--json]         one v7 task: its state, lane and events
   list [--project <path>] [--json]                the project's v7 tasks with their lanes
+  usage [--window d1|d7|d30|d90] [--project <path>] [--json]
+                                                  the project's per-task tokens and cost: one
+                                                  usagemeter query --by task (default d30); a meter
+                                                  that cannot answer is meter_state missing, exit 0
   start (<gh-N|gl-N> | --title <t>) --lead <bot id> [--type fix|feat|docs|...] [--title <t>] [--project <path>]
                                                   cut a task worktree from the freshly fetched base;
                                                   prints {task, branch, worktree, lead, base_sha}
@@ -84,6 +89,7 @@ struct Flags {
     projects: Vec<PathBuf>,
     positional: Vec<String>,
     target: Option<genie_tasks::link::Target>,
+    window: Option<String>,
 }
 
 impl Flags {
@@ -104,6 +110,7 @@ enum Extra {
     Rebuild,
     Full,
     Link,
+    Window,
 }
 
 /// `--json`, `--project <path>` (or `--project=<path>`), `--rebuild` or `--full` where `extra` names
@@ -126,6 +133,13 @@ fn parse(args: &[String], extra: Extra) -> Result<Flags, Failure> {
                 } else {
                     genie_tasks::link::Target::Branch(value.clone())
                 });
+            }
+            "--window" if extra == Extra::Window => {
+                let window = it.next().ok_or_else(|| Failure::usage("--window needs a value"))?;
+                if !QUERY_WINDOWS.contains(&window.as_str()) {
+                    return Err(Failure::usage(format!("--window takes d1, d7, d30 or d90, not '{window}'")));
+                }
+                flags.window = Some(window.clone());
             }
             "--json" => flags.json = true,
             "--rebuild" if extra == Extra::Rebuild => flags.rebuild = true,
@@ -383,6 +397,51 @@ fn list(args: &[String], out: &mut dyn Write) -> Result<(), Failure> {
     Ok(())
 }
 
+/// The project's per-task usage from one `usagemeter query --by task` call (`D5`, `D6`). It needs no
+/// `genie.db`: only the `origin` remote. A meter that cannot answer is `meter_state: "missing"` with
+/// its reason and `rows: null` (unknown, never an empty list), exit 0, as `list` treats it.
+fn usage(args: &[String], out: &mut dyn Write) -> Result<(), Failure> {
+    let flags = parse(args, Extra::Window)?;
+    no_positionals(&flags)?;
+    let window = flags.window.as_deref().unwrap_or("d30");
+    let slug = repo_slug_of_project(&flags.project()?);
+    let aliases = slug.as_deref().map_or(&[][..], repo_aliases_for_query);
+    let answer = match &slug {
+        Some(slug) => query_repo_by_task_in(slug, window).map_err(|e| e.reason),
+        None => Err("no_repo_slug".to_string()),
+    };
+    let (state, reason) = match &answer {
+        Ok(_) => ("measured", None),
+        Err(reason) => ("missing", Some(reason.as_str())),
+    };
+    if flags.json {
+        let mut body = json!({
+            "repo": slug, "repo_aliases": aliases, "window": window, "meter_state": state, "meter_reason": reason,
+            "meter": Value::Null, "rows": Value::Null,
+        });
+        if let Ok(a) = &answer {
+            body["meter"] = json!({
+                "meter_version": a.meter_version, "window": a.window, "ingestion": a.ingestion, "sources": a.sources,
+                "unattributed": a.unattributed, "actor_unattributed": a.actor_unattributed, "pricing": a.pricing,
+            });
+            body["rows"] = json!(a.rows);
+        }
+        writeln!(out, "{body}")?;
+        return Ok(());
+    }
+    let Ok(a) = &answer else {
+        writeln!(out, "usage {window}: – ({})", reason.unwrap_or_default())?;
+        return Ok(());
+    };
+    for r in &a.rows {
+        let tokens = r.tokens.as_ref().map_or("–".to_string(), |t| t.total.to_string());
+        let usd = r.cost.as_ref().and_then(|c| c.usd).map_or("–".to_string(), |u| format!("${u:.4}"));
+        let line = format!("{}  {tokens} tokens  {usd}  {}", r.task, r.reason.as_deref().unwrap_or(""));
+        writeln!(out, "{}", line.trim_end())?;
+    }
+    Ok(())
+}
+
 /// `start`'s own options: the id, `--title`, `--lead`, `--type`, `--project`, and `--json`, which is
 /// accepted for symmetry (the output is always one JSON object).
 fn start(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> Result<(), Failure> {
@@ -476,6 +535,7 @@ pub fn run(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
             "export" => export(rest, out),
             "status" => status(rest, out),
             "list" => list(rest, out),
+            "usage" => usage(rest, out),
             "start" => start(rest, out, err),
             "push" => push(rest, out),
             "link" | "unlink" => link(rest, out, verb == "unlink"),

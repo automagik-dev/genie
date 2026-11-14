@@ -98,9 +98,8 @@ export interface PhoenixSpan {
   attributes: Record<string, string | number | boolean>;
 }
 
+/** A span carries the interval's time and offload; per-transition tokens left the export with the meter cutover (D5). */
 export function intervalSpan(interval: Interval, salt: string): PhoenixSpan {
-  const usage = interval.usage;
-  const prompt = usage ? usage.input + usage.cacheRead + usage.cacheWrite : null;
   const attributes: Record<string, string | number | boolean> = {
     'openinference.span.kind': 'CHAIN',
     'genie.export_id': salt,
@@ -110,24 +109,9 @@ export function intervalSpan(interval: Interval, salt: string): PhoenixSpan {
     'genie.from_event': interval.fromEvent,
     'genie.to_event': interval.toEvent,
     'genie.duration_ms': interval.durationMs,
-    'genie.shared_session': interval.sharedSession,
-    'genie.session_match': interval.sessionMatch ?? 'none',
-    'genie.usage_known': usage !== null,
   };
   if (interval.session.id) attributes['session.id'] = interval.session.id;
   if (interval.session.source) attributes['genie.runtime'] = interval.session.source;
-  if (usage && prompt !== null) {
-    attributes['llm.token_count.prompt'] = prompt;
-    attributes['llm.token_count.completion'] = usage.output;
-    attributes['llm.token_count.total'] = prompt + usage.output;
-    attributes['llm.token_count.prompt_details.cache_read'] = usage.cacheRead;
-    attributes['llm.token_count.prompt_details.cache_write'] = usage.cacheWrite;
-    attributes['genie.model_calls'] = usage.calls;
-    if (usage.costUsd !== null) attributes['llm.cost.total'] = usage.costUsd;
-    if (usage.costSource) attributes['genie.cost_source'] = usage.costSource;
-    // Coverage of a partial sum, beside `genie.model_calls`; only while a price table is loaded.
-    if (usage.pricedCalls !== undefined) attributes['genie.cost.priced_calls'] = usage.pricedCalls;
-  }
   if (interval.offload) {
     attributes['genie.offload.attempts'] = interval.offload.attempts;
     attributes['genie.offload.failed'] = interval.offload.failed;

@@ -1394,3 +1394,136 @@ fn meter_query_uses_repo_alias_isolates_branch_usage_and_keeps_db_readonly() {
     }
     assert_pid_dead("meter.pid");
 }
+
+/// `usage` (meter wish Group 2): the one `usagemeter query --by task` call `genie metrics export` makes
+/// per repository, with `--repo-alias` from `KNOWN_PREVIOUS_REPO_SLUGS` and the asked window, and every
+/// meter that cannot answer as `meter_state: "missing"` with its reason and `rows: null`, exit 0.
+#[test]
+fn usage_queries_by_task_with_the_alias_and_window_and_reports_a_meter_that_cannot_answer() {
+    let fx = fixture("usage", false);
+    let set_origin = |url: &str| {
+        assert!(
+            Command::new("git")
+                .args(["remote", "set-url", "origin", url])
+                .current_dir(&fx.repo)
+                .status()
+                .unwrap()
+                .success()
+        );
+    };
+    set_origin("https://github.com/automagik-si/genie.git");
+    // Shell builtins only: PATH holds git and the fakes, nothing else.
+    let script = format!(
+        "#!/bin/sh\ndir=\"{}\"\nprintf '%s\\n' \"$*\" >> \"$dir/meter.log\"\nrc=0\nif [ -f \"$dir/exit.code\" ]; then IFS= read -r rc < \"$dir/exit.code\"; fi\nwhile IFS= read -r l || [ -n \"$l\" ]; do printf '%s\\n' \"$l\"; done < \"$dir/envelope.json\"\nexit \"$rc\"\n",
+        fx.bin.display()
+    );
+    fs::write(fx.bin.join("usagemeter"), script).unwrap();
+    fs::set_permissions(fx.bin.join("usagemeter"), fs::Permissions::from_mode(0o755)).unwrap();
+    let serve = |envelope: &str, exit: i32| {
+        fs::write(fx.bin.join("envelope.json"), envelope).unwrap();
+        fs::write(fx.bin.join("exit.code"), exit.to_string()).unwrap();
+    };
+    let calls = || {
+        fs::read_to_string(fx.bin.join("meter.log")).unwrap_or_default().lines().map(String::from).collect::<Vec<_>>()
+    };
+    let tok = |n: u64| json!({"input": n, "cache_read": 0, "cache_write_5m": 0, "cache_write_1h": 0, "output": 0, "reasoning": 0, "unsplit": 0, "total": n});
+    let cost = |state: &str, usd: Value, unpriced: Value| json!({"state": state, "usd": usd, "usd_reported": 0, "usd_estimated": usd, "tokens_priced": 0, "tokens_reported": 0, "tokens_unpriced": 0, "unpriced_models": unpriced, "unpriced_models_omitted": 0});
+    let row = |task: &str, c: Value| json!({"task": task, "actors": [{"bot": "b-1", "kind": "worker", "role": "dev", "squad": null, "unrecorded": [], "harness": "claude-code"}], "actors_omitted": 0, "state": "measured", "reason": null, "tokens": tok(900), "cost": c, "activity": {"first_hour": "2026-11-13T10:00:00Z", "last_hour": "2026-11-13T10:00:00Z", "hours": 1, "harnesses": ["claude-code"]}});
+    let envelope = |version: &str, status: &str, rows: Value| {
+        json!({"contract": "usagemeter.query", "contract_version": 1, "capability": "meter.usage@1", "meter_version": version,
+            "status": status, "error": if status == "ok" { Value::Null } else { json!({"code": status, "message": "x"}) },
+            "window": {"name": "d7"}, "ingestion": {"complete": true}, "sources": [], "unattributed": {"tokens_total": 0, "harnesses": []},
+            "actor_unattributed": {"tokens_total": 0}, "pricing": {"table": {"origin": "bundled"}}, "rows": rows})
+        .to_string()
+    };
+    let alias_call = |window: &str| {
+        format!(
+            "query --repo github.com/automagik-si/genie --repo-alias github.com/automagik-dev/genie --by task --window {window} --json"
+        )
+    };
+
+    // 1. Renamed repository: one call with the alias and the window; rows as the meter gave them.
+    serve(
+        &envelope(
+            "3.138.5",
+            "ok",
+            json!([
+                row("gn-1", cost("priced", json!(0.0275), json!([]))),
+                row("gn-4", cost("unpriced", Value::Null, json!(["acme-local-1"])))
+            ]),
+        ),
+        0,
+    );
+    let ok = json_out(&fx.run(&["usage", "--window", "d7", "--json"]));
+    assert_eq!(calls(), [alias_call("d7")]);
+    assert_eq!(
+        (ok["repo"].as_str(), ok["repo_aliases"].clone(), ok["window"].as_str(), ok["meter_state"].as_str()),
+        (
+            Some("github.com/automagik-si/genie"),
+            json!(["github.com/automagik-dev/genie"]),
+            Some("d7"),
+            Some("measured")
+        )
+    );
+    assert!(ok["meter_reason"].is_null());
+    assert_eq!(ok["meter"]["meter_version"], "3.138.5");
+    assert_eq!(ok["meter"]["pricing"], json!({"table": {"origin": "bundled"}}));
+    assert_eq!(ok["rows"][0]["cost"]["usd"], 0.0275);
+    assert_eq!(
+        (ok["rows"][1]["reason"].as_str(), ok["rows"][1]["cost"]["usd"].is_null()),
+        (Some("unpriced_models"), true)
+    );
+    assert_eq!(ok["rows"][1]["tokens"]["total"], 900);
+    let text = fx.run(&["usage", "--window", "d7"]);
+    assert_eq!(code(&text), 0);
+    assert!(String::from_utf8_lossy(&text.stdout).contains("gn-4  900 tokens  –  unpriced_models"));
+
+    let missing = |args: &[&str]| -> (Value, Value) {
+        let out = json_out(&fx.run(args));
+        assert_eq!(out["meter_state"], "missing");
+        assert!(out["rows"].is_null() && out["meter"].is_null(), "unknown is never an empty list: {out}");
+        (out["meter_reason"].clone(), out["repo_aliases"].clone())
+    };
+    // 2. d90 needs 3.129.5: a 3.129.2 answer is refused, and nothing is asked again.
+    serve(&envelope("3.129.2", "ok", json!([row("gn-1", cost("priced", json!(1.0), json!([])))])), 0);
+    assert_eq!(missing(&["usage", "--window", "d90", "--json"]).0, "needs usagemeter >= 3.129.5");
+    assert_eq!(calls().len(), 3);
+    assert_eq!(calls().last().unwrap(), &alias_call("d90"));
+    // 3. A meter older than the alias exits 2 with a usage envelope: never a call without the alias.
+    serve(&envelope("3.128.0", "usage", json!([])), 2);
+    assert_eq!(missing(&["usage", "--json"]).0, "needs usagemeter >= 3.129.2");
+    serve("", 2);
+    assert_eq!(missing(&["usage", "--json"]).0, "needs usagemeter >= 3.129.2");
+    assert_eq!(calls().len(), 5);
+    assert!(calls().iter().all(|c| c.contains("--repo-alias github.com/automagik-dev/genie")), "{:?}", calls());
+    // 4. Top-level errors: a non-ok status, unreadable JSON, a missing binary.
+    serve(&envelope("3.138.5", "internal_error", json!([])), 1);
+    assert_eq!(missing(&["usage", "--json"]).0, "internal_error");
+    serve("{not json", 0);
+    assert_eq!(missing(&["usage", "--json"]).0, "invalid_json");
+    // 5. A repository with no previous name passes no alias and keeps the 3.126.1 floor.
+    set_origin("https://github.com/o/r.git");
+    serve(&envelope("3.126.1", "ok", json!([])), 0);
+    let plain = json_out(&fx.run(&["usage", "--json"]));
+    assert_eq!(
+        (plain["meter_state"].as_str(), plain["rows"].clone(), plain["repo_aliases"].clone()),
+        (Some("measured"), json!([]), json!([]))
+    );
+    assert_eq!(calls().last().unwrap(), "query --repo github.com/o/r --by task --window d30 --json");
+    let before = calls().len();
+    fs::remove_file(fx.bin.join("usagemeter")).unwrap();
+    assert_eq!(missing(&["usage", "--json"]).0, "usagemeter_unavailable");
+    assert!(Command::new("git").args(["remote", "remove", "origin"]).current_dir(&fx.repo).status().unwrap().success());
+    assert_eq!(missing(&["usage", "--json"]), (json!("no_repo_slug"), json!([])));
+
+    // 6. Refusals of the request itself: exit 2, nothing asked of the meter.
+    for args in
+        [&["usage", "--window", "d14"][..], &["usage", "--window"], &["usage", "extra"], &["usage", "--rebuild"]]
+    {
+        let out = fx.run(args);
+        assert_eq!(code(&out), 2, "{args:?}");
+        assert!(out.stdout.is_empty());
+    }
+    assert!(stderr(&fx.run(&["usage", "--window", "d14"])).contains("--window takes d1, d7, d30 or d90, not 'd14'"));
+    assert_eq!(calls().len(), before);
+}
