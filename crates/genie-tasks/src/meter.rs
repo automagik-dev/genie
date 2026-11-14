@@ -20,6 +20,9 @@ pub const KNOWN_PREVIOUS_REPO_SLUGS: &[(&str, &[&str])] =
 /// Maximum branches per `usagemeter query --branch` invocation (`envelope.schema.json` `maxItems: 500`).
 pub const MAX_QUERY_BRANCHES: usize = 500;
 
+/// The `usagemeter query --window` values Genie passes. `d90` (`REQUEST-6a`) needs `usagemeter >= 3.129.5`.
+pub const QUERY_WINDOWS: &[&str] = &["d1", "d7", "d30", "d90"];
+
 /// Maximum `usagemeter query` stdout payload accepted by Genie (`512 KiB = 524,288 bytes`).
 /// Per `docs/rfcs/0018-meter-query-contract.md` §"The byte budget", the meter whole-envelope ceiling
 /// on stdout is `448 KiB` (`458,752 bytes`), and Genie's documented stdout cap is `512 KiB`,
@@ -432,25 +435,40 @@ fn classify_query_failure(code: i32, status: &str, error_code: Option<&str>) -> 
     }
 }
 
-fn run_query_rows(args: &[String], has_aliases: bool) -> Result<Value, MeterQueryError> {
-    run_query_rows_with(&usagemeter_bin(), args, has_aliases)
+/// The oldest `usagemeter` a call needs: `3.126.1`, `3.129.2` with `--repo-alias` (`D6`), `3.129.5` for
+/// `--window d90` (`REQUEST-6a`). An older meter's answer is refused as `"needs usagemeter >= <floor>"`.
+fn meter_floor(has_aliases: bool, window: &str) -> (u64, u64, u64) {
+    match (has_aliases, window) {
+        (_, "d90") => (3, 129, 5),
+        (true, _) => (3, 129, 2),
+        (false, _) => (3, 126, 1),
+    }
 }
 
-fn run_query_rows_with(bin: &Path, args: &[String], has_aliases: bool) -> Result<Value, MeterQueryError> {
+fn run_query_rows(args: &[String], has_aliases: bool) -> Result<Value, MeterQueryError> {
+    run_query_with(&usagemeter_bin(), args, meter_floor(has_aliases, "d30"))?
+        .get_mut("rows")
+        .map(Value::take)
+        .ok_or_else(|| MeterQueryError { reason: "invalid_json".to_string() })
+}
+
+/// Runs one `usagemeter query` and returns its whole Contract 1 envelope once it is an `ok` answer from a
+/// meter at or above `floor`; every other outcome is a [`MeterQueryError`] with its reason.
+fn run_query_with(bin: &Path, args: &[String], floor: (u64, u64, u64)) -> Result<Value, MeterQueryError> {
     let (code, buf) = run_bounded_process(bin, args, None, MAX_METER_OUTPUT_BYTES)?;
-    let floor = if has_aliases { "needs usagemeter >= 3.129.2" } else { "needs usagemeter >= 3.126.1" };
+    let needs = format!("needs usagemeter >= {}.{}.{}", floor.0, floor.1, floor.2);
     // RFC 0018 §"Exit codes": a meter older than v1 exits 2 with no envelope, so it is too old.
     let parsed: Value = serde_json::from_slice(&buf).map_err(|_| MeterQueryError {
         reason: match code {
             0 => "invalid_json".to_string(),
-            2 => floor.to_string(),
+            2 => needs.clone(),
             _ => classify_query_failure(code, "error", None),
         },
     })?;
     if let Some(meter_version) = parsed.get("meter_version").and_then(Value::as_str)
-        && !version_at_least(meter_version, if has_aliases { (3, 129, 2) } else { (3, 126, 1) })
+        && !version_at_least(meter_version, floor)
     {
-        return Err(MeterQueryError { reason: floor.to_string() });
+        return Err(MeterQueryError { reason: needs });
     }
 
     let status = parsed.get("status").and_then(Value::as_str).unwrap_or("error");
@@ -464,30 +482,68 @@ fn run_query_rows_with(bin: &Path, args: &[String], has_aliases: bool) -> Result
     if !contract_ok {
         return Err(MeterQueryError { reason: "unsupported_contract".to_string() });
     }
-    parsed.get("rows").cloned().ok_or_else(|| MeterQueryError { reason: "invalid_json".to_string() })
+    match parsed.get("rows") {
+        Some(Value::Array(_)) => Ok(parsed),
+        _ => Err(MeterQueryError { reason: "invalid_json".to_string() }),
+    }
 }
 
-fn by_subject_args(slug: &str, by: &str) -> (Vec<String>, bool) {
+fn by_subject_args(slug: &str, by: &str, window: &str) -> (Vec<String>, bool) {
     let aliases = repo_aliases_for_query(slug);
     let mut args = Vec::with_capacity(9 + aliases.len() * 2);
     push_repo_and_aliases(&mut args, slug, aliases);
-    for flag in ["--by", by, "--window", "d30", "--json"] {
+    for flag in ["--by", by, "--window", window, "--json"] {
         args.push(flag.to_string());
     }
     (args, !aliases.is_empty())
 }
 
+/// One `--by task` answer: the rows plus the envelope fields a report carries beside them, passed
+/// through as the meter wrote them (`meter/schema/query/v1/envelope.schema.json`).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct MeterTaskAnswer {
+    pub meter_version: String,
+    pub window: Value,
+    pub ingestion: Value,
+    pub sources: Value,
+    pub unattributed: Value,
+    pub actor_unattributed: Value,
+    pub pricing: Value,
+    pub rows: Vec<MeterTaskRow>,
+}
+
 /// Queries `usagemeter query --repo <slug> [--repo-alias <previous> ...] --by task --window d30 --json`.
 pub fn query_repo_by_task(slug: &str) -> Result<Vec<MeterTaskRow>, MeterQueryError> {
-    let (args, has_aliases) = by_subject_args(slug, "task");
-    let rows_val = run_query_rows(&args, has_aliases)?;
+    query_repo_by_task_in(slug, "d30").map(|answer| answer.rows)
+}
+
+/// Queries `usagemeter query --repo <slug> [--repo-alias <previous> ...] --by task --window <window> --json`
+/// (`window` in [`QUERY_WINDOWS`]) in one call and keeps the envelope fields beside the rows.
+pub fn query_repo_by_task_in(slug: &str, window: &str) -> Result<MeterTaskAnswer, MeterQueryError> {
+    query_repo_by_task_with_bin(slug, window, &usagemeter_bin())
+}
+
+fn query_repo_by_task_with_bin(slug: &str, window: &str, bin: &Path) -> Result<MeterTaskAnswer, MeterQueryError> {
+    let (args, has_aliases) = by_subject_args(slug, "task", window);
+    let mut envelope = run_query_with(bin, &args, meter_floor(has_aliases, window))?;
+    let mut take = |key: &str| envelope.get_mut(key).map(Value::take).unwrap_or(Value::Null);
+    let rows_val = take("rows");
     let mut rows: Vec<MeterTaskRow> =
         serde_json::from_value(rows_val).map_err(|_| MeterQueryError { reason: "invalid_json".to_string() })?;
     for r in &mut rows {
         r.reason = display_reason(r.reason.take(), &r.cost);
         sanitize_cost(r.state, &mut r.cost);
     }
-    Ok(rows)
+    Ok(MeterTaskAnswer {
+        meter_version: take("meter_version").as_str().unwrap_or_default().to_string(),
+        window: take("window"),
+        ingestion: take("ingestion"),
+        sources: take("sources"),
+        unattributed: take("unattributed"),
+        actor_unattributed: take("actor_unattributed"),
+        pricing: take("pricing"),
+        rows,
+    })
 }
 
 /// Queries `usagemeter query --repo <slug> [--repo-alias <previous> ...] --window d30 --branch <b1> ... --json`
@@ -521,8 +577,11 @@ pub fn query_repo_by_bot(slug: &str) -> Result<Vec<MeterBotRow>, MeterQueryError
 }
 
 fn query_repo_by_bot_with_bin(slug: &str, bin: &Path) -> Result<Vec<MeterBotRow>, MeterQueryError> {
-    let (args, has_aliases) = by_subject_args(slug, "bot");
-    let rows_val = run_query_rows_with(bin, &args, has_aliases)?;
+    let (args, has_aliases) = by_subject_args(slug, "bot", "d30");
+    let rows_val = run_query_with(bin, &args, meter_floor(has_aliases, "d30"))?
+        .get_mut("rows")
+        .map(Value::take)
+        .unwrap_or(Value::Null);
     let mut rows: Vec<MeterBotRow> =
         serde_json::from_value(rows_val).map_err(|_| MeterQueryError { reason: "invalid_json".to_string() })?;
     for r in &mut rows {
@@ -581,6 +640,15 @@ mod tests {
         assert!(!version_at_least("3.129.1", (3, 129, 2)) && !version_at_least("3.126.1", (3, 129, 2)));
         assert!(version_at_least("3.126.1", (3, 126, 1)) && !version_at_least("3.125.9", (3, 126, 1)));
         assert!(!version_at_least("invalid", (3, 126, 1)));
+    }
+
+    #[test]
+    fn meter_floor_rises_with_the_alias_and_the_d90_window() {
+        assert_eq!(meter_floor(false, "d30"), (3, 126, 1));
+        assert_eq!(meter_floor(true, "d7"), (3, 129, 2));
+        assert_eq!(meter_floor(false, "d90"), (3, 129, 5));
+        assert_eq!(meter_floor(true, "d90"), (3, 129, 5));
+        assert_eq!(QUERY_WINDOWS, ["d1", "d7", "d30", "d90"]);
     }
 
     #[test]
