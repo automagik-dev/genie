@@ -4,7 +4,8 @@
  *   metrics enable    create <GENIE_HOME>/metrics/capture.on (the one switch)
  *   metrics disable   remove the switch; the ledger is kept
  *   metrics status    what is on, where the ledger is, which runtime session this shell is in
- *   metrics export    ledger + task_events + runtime session logs → per-transition time and tokens;
+ *   metrics export    ledger + task_events → per-transition time (and mikro offload cost); per-task
+ *                     tokens and USD from the Rust meter (`genie-rs usage` → `usagemeter query --by task`);
  *                     `--phoenix` projects the intervals to a Phoenix the operator configured
  *   metrics prices    update|status the optional price table that derives USD where the runtime
  *                     did not price a call; only `prices update` fetches it (export never does)
@@ -24,9 +25,14 @@ import {
   enableCapture,
 } from '../lib/metrics-capture.js';
 import {
+  METER_WINDOWS,
+  type MeterWindow,
   buildIntervals,
   formatSummary,
+  formatTaskUsage,
+  ledgerRepos,
   readCaptureLedger,
+  readTaskUsage,
   summarize,
   verifyAgainstTaskEvents,
 } from '../lib/metrics-export.js';
@@ -40,9 +46,12 @@ import {
 } from '../lib/metrics-phoenix.js';
 import { type PriceTable, loadPriceTable, pricesPath, updatePriceTable } from '../lib/metrics-prices.js';
 import { printErr, printOut } from '../lib/term-output.js';
+import { registerMetricsLearnSubcommand } from './metrics-learn.js';
+import { resolveGenieRsBin } from './v5-task.js';
 
 interface ExportOptions {
   since?: string;
+  window: string;
   json?: boolean;
   out?: string;
   phoenix?: boolean;
@@ -80,6 +89,10 @@ const fail = (code: number, message: string): number => {
 async function runExport(options: ExportOptions): Promise<number> {
   const since = parseSince(options.since);
   if (since === null) return fail(2, `--since takes 7d, 12h, 30m or an ISO date, not ${options.since}`);
+  const meterWindow = options.window as MeterWindow;
+  if (!METER_WINDOWS.includes(meterWindow)) {
+    return fail(2, `--window takes ${METER_WINDOWS.join(', ')}, not ${options.window}`);
+  }
   const timeoutSeconds = Number(options.verifyTimeout);
   if (!Number.isFinite(timeoutSeconds) || timeoutSeconds < 0) return fail(2, '--verify-timeout takes seconds');
   const target = options.phoenix || options.save ? resolveExportTarget(options) : null;
@@ -94,9 +107,11 @@ async function runExport(options: ExportOptions): Promise<number> {
 
   const ledger = readCaptureLedger(captureLedgerPath(), since);
   const { matched, unmatched } = verifyAgainstTaskEvents(ledger.lines);
-  const prices = loadPriceTable();
-  const intervals = buildIntervals(matched, process.env, prices);
-  const summary = summarize(intervals, prices !== null);
+  const intervals = buildIntervals(matched);
+  const summary = summarize(intervals);
+  // Task tokens and USD: one meter call per repository the verified ledger names (D5, D6).
+  const bin = resolveGenieRsBin();
+  const taskUsage = ledgerRepos(matched).map((root) => readTaskUsage(root, meterWindow, bin));
   // `ignored` (lines of a database that is not `<root>/.genie/genie.db`) is reported only when non-zero:
   // a ledger with none keeps the exact text line and JSON object it always produced.
   const stats = {
@@ -116,8 +131,8 @@ async function runExport(options: ExportOptions): Promise<number> {
   }
   printOut(
     options.json
-      ? JSON.stringify({ ...stats, intervals: intervals.length, summary })
-      : formatSummary(summary, stats).trimEnd(),
+      ? JSON.stringify({ ...stats, intervals: intervals.length, summary, taskUsage })
+      : `${formatSummary(summary, stats)}${formatTaskUsage(taskUsage)}`.trimEnd(),
   );
 
   if (!options.phoenix || !target) return 0;
@@ -223,8 +238,15 @@ export function registerMetricsCommand(program: Command): void {
 
   metrics
     .command('export')
-    .description('Measure time and tokens per lifecycle transition from the ledger; --phoenix sends it to your Phoenix')
+    .description(
+      'Measure time per lifecycle transition from the ledger, and task tokens and USD from the usage meter; --phoenix sends the intervals to your Phoenix',
+    )
     .option('--since <when>', 'Only events from this window: 7d, 12h, 30m or an ISO date')
+    .option(
+      '--window <d1|d7|d30|d90>',
+      'The usage meter window for task tokens and USD (d90 needs usagemeter >= 3.129.5)',
+      'd30',
+    )
     .option('--json', 'Emit the summary as JSON')
     .option('--out <file>', 'Also write every interval as JSON lines to this file')
     .option('--phoenix', 'Project the intervals into the configured Phoenix and wait until every span reads back')
@@ -247,4 +269,5 @@ export function registerMetricsCommand(program: Command): void {
     });
 
   registerPricesCommand(metrics);
+  registerMetricsLearnSubcommand(metrics);
 }

@@ -49,7 +49,7 @@ export interface PriceTable {
   models: Record<string, unknown>;
 }
 
-/** The token counts a price applies to — a `UsageSample` satisfies it. */
+/** The token counts a price applies to. */
 export interface PricedTokens {
   input: number;
   cacheRead: number;

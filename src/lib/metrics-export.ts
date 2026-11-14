@@ -7,48 +7,29 @@
  *      `(db, task, event, kind, at)` — a line whose transaction rolled back, or
  *      whose database is gone, is counted unmatched and never used.
  *   3. Per card, consecutive matched events form intervals (`claim→report`,
- *      `report→move`, …). An interval's usage is every model call the opening
- *      event's runtime session logged inside it (`metrics-usage.ts`); no session
- *      or no log on this host means usage null — unknown, never zero.
- *   4. Optionally, the operator's price table (`metrics-prices.ts`, read from
- *      disk, never fetched here) prices the calls the runtime left unpriced.
+ *      `report→move`, …) with their wall-clock time and the mikro offload cost
+ *      inside them (`metrics-offload.ts`).
+ *   4. Per repository the verified ledger names, task tokens and USD come from the
+ *      Rust meter: one `genie-rs usage` call (`usagemeter query --by task`, with
+ *      the repository's previous names as `--repo-alias`, owned by
+ *      `genie_tasks::meter`). A meter that cannot answer is unknown, never 0.
+ *
+ * Per-transition tokens are not reported (meter wish D5): the meter serves task
+ * totals, not slices of one session's log, until its `--since/--until` query is
+ * adopted. Genie no longer reads any runtime session log here. Historical usage
+ * the meter has not seen is imported by the meter itself:
+ * `usagemeter sync --backfill [--days <N>] [--budget-secs <S>]` and
+ * `usagemeter sync --evidence-backfill --days <N>`; genie adds no wrapper.
  *
  * The optional Phoenix projection lives in `metrics-phoenix.ts`; this module
  * never touches the network.
  */
 
 import { Database } from 'bun:sqlite';
+import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { type CaptureLine, type RuntimeSession, isCanonicalRepoDb } from './metrics-capture.js';
 import { type OffloadUsage, offloadInWindow, readOffloadRows, repoRootOfDb } from './metrics-offload.js';
-import { type PriceTable, hasTokens, tableCost } from './metrics-prices.js';
-import {
-  type OmpEvidenceCache,
-  type UsageSample,
-  matchOmpSessionByCwd,
-  matchOmpSessionByEvidence,
-  newOmpEvidenceCache,
-  readUsageSamples,
-} from './metrics-usage.js';
-
-export interface UsageTotals {
-  calls: number;
-  input: number;
-  cacheRead: number;
-  cacheWrite: number;
-  output: number;
-  /** Sum over calls the runtime (or, with a price table, the table) priced; null when none was priced. */
-  costUsd: number | null;
-  /**
-   * Present only while a price table is loaded, so a host without one exports byte-identically.
-   * Who priced `costUsd`: the runtime, the table, both ('mixed'); null when `costUsd` is null.
-   */
-  costSource?: CostSource | null;
-  /** Present only while a price table is loaded: the calls `costUsd` covers, out of `calls`. */
-  pricedCalls?: number;
-}
-
-export type CostSource = 'runtime' | 'table' | 'mixed';
 
 export interface Interval {
   db: string;
@@ -59,20 +40,10 @@ export interface Interval {
   startAt: number;
   endAt: number;
   durationMs: number;
+  /** The runtime session the opening event was written in, as captured. */
   session: RuntimeSession;
-  usage: UsageTotals | null;
-  /** Another interval of the same session overlaps this one, so its usage is shared, not exclusive. */
-  sharedSession: boolean;
   /** mikro runs this repository logged inside the window (another provider, priced by mikro); null when no ledger. */
   offload: OffloadUsage | null;
-  /**
-   * How the session was tied to this interval: 'exact' — the runtime exported its id; 'window' — an
-   * OMP shell exported none and exactly one OMP session overlapped the interval in the same cwd or,
-   * when none has that cwd, exactly one live OMP session was running a genie write for this card
-   * when the event was written and no other session's running call named it; 'ambiguous' — several
-   * remained, so no usage is attributed; null — no runtime session at all.
-   */
-  sessionMatch: 'exact' | 'window' | 'ambiguous' | null;
 }
 
 export interface LedgerRead {
@@ -143,129 +114,24 @@ function storedEventKeys(path: string, group: CaptureLine[]): Set<string> {
   return keys;
 }
 
-function sumUsage(samples: UsageSample[], startAt: number, endAt: number, prices: PriceTable | null): UsageTotals {
-  const inside = samples.filter((sample) => sample.at >= startAt && sample.at < endAt);
-  // The runtime's own price always wins; the table only fills calls the runtime left unpriced. A call
-  // that used no tokens costs nothing either way, so it is never evidence that the interval was priced.
-  const runtime = inside.filter((s) => s.costUsd !== null).map((s) => s.costUsd as number);
-  const table = prices
-    ? inside
-        .filter((s) => s.costUsd === null && hasTokens(s))
-        .map((s) => tableCost(prices, s.model, s))
-        .filter((c): c is number => c !== null)
-    : [];
-  const priced = [...runtime, ...table];
-  const costUsd = finiteSum(priced);
-  const totals: UsageTotals = {
-    calls: inside.length,
-    input: inside.reduce((sum, s) => sum + s.input, 0),
-    cacheRead: inside.reduce((sum, s) => sum + s.cacheRead, 0),
-    cacheWrite: inside.reduce((sum, s) => sum + s.cacheWrite, 0),
-    output: inside.reduce((sum, s) => sum + s.output, 0),
-    costUsd,
-  };
-  if (!prices) return totals;
-  if (costUsd === null) return { ...totals, costSource: null, pricedCalls: 0 };
-  const source = combineSources([runtime.length > 0 ? 'runtime' : null, table.length > 0 ? 'table' : null]);
-  return { ...totals, costSource: source, pricedCalls: priced.length };
-}
-
-/** The sum, or null when there is nothing to sum or it overflows — never Infinity. */
-const finiteSum = (values: number[]): number | null => {
-  if (values.length === 0) return null;
-  const sum = values.reduce((total, v) => total + v, 0);
-  return Number.isFinite(sum) ? sum : null;
-};
-
-/** Who priced a set of costs: one source, or 'mixed' when they differ; null when none priced. */
-const combineSources = (sources: Array<CostSource | null | undefined>): CostSource | null => {
-  const known = new Set(sources.filter((s): s is CostSource => !!s));
-  if (known.size === 0) return null;
-  return known.size === 1 ? ([...known][0] as CostSource) : 'mixed';
-};
-
-const sessionKey = (session: RuntimeSession) => `${session.source}:${session.id ?? session.file ?? ''}`;
-
-/**
- * The opening event's session, or — for an OMP shell that exported no id — the one OMP session that
- * matches by cwd and window, then (only when none has that cwd) by its logged genie write of the card.
- */
-function resolveIntervalSession(
-  from: CaptureLine,
-  env: NodeJS.ProcessEnv,
-  evidence: OmpEvidenceCache,
-): { session: RuntimeSession; match: Interval['sessionMatch'] } {
-  const session = from.session;
-  if (session.source === null) return { session, match: null };
-  if (session.ambiguous) return { session, match: 'ambiguous' };
-  if (session.source !== 'pi' || session.id !== null || session.file !== null) return { session, match: 'exact' };
-  if (!from.cwd) return { session, match: null };
-  const found =
-    matchOmpSessionByCwd(from.cwd, from.at, env) ??
-    matchOmpSessionByEvidence({ cwd: from.cwd, db: from.db, task: from.task, at: from.at }, env, evidence);
-  if (found === 'ambiguous') return { session, match: 'ambiguous' };
-  if (found === null) return { session, match: null };
-  return { session: { source: 'pi', id: found.id, file: found.file }, match: 'window' };
-}
-
-/**
- * Usage inside the window, or null when unknown. A 'window' match that holds NO call inside the
- * interval is null too: the matched OMP session may have been idle while another runtime did the
- * work, so its 0 would be a guess dressed as a measurement.
- */
-function usageFor(
-  samples: UsageSample[] | null,
-  startAt: number,
-  endAt: number,
-  match: Interval['sessionMatch'],
-  prices: PriceTable | null,
-): UsageTotals | null {
-  if (!samples) return null;
-  const usage = sumUsage(samples, startAt, endAt, prices);
-  return match === 'window' && usage.calls === 0 ? null : usage;
-}
-
-/**
- * Consecutive matched events of one card → intervals, with the opening session's usage inside each.
- * `prices` (the operator's optional table, read from disk, never fetched) prices calls the runtime left unpriced.
- */
-export function buildIntervals(
-  matched: CaptureLine[],
-  env: NodeJS.ProcessEnv = process.env,
-  prices: PriceTable | null = null,
-): Interval[] {
+/** Consecutive matched events of one card → intervals, with the mikro offload cost inside each. */
+export function buildIntervals(matched: CaptureLine[]): Interval[] {
   const byCard = new Map<string, CaptureLine[]>();
   for (const line of matched) {
     const key = `${line.db}\u0000${line.task}`;
     byCard.set(key, [...(byCard.get(key) ?? []), line]);
   }
-  const samplesBySession = new Map<string, UsageSample[] | null>();
-  const samplesFor = (session: RuntimeSession): UsageSample[] | null => {
-    if (session.source === null) return null;
-    const key = sessionKey(session);
-    if (!samplesBySession.has(key)) {
-      const samples = readUsageSamples(session, env);
-      samplesBySession.set(key, samples.length > 0 ? samples : null);
-    }
-    return samplesBySession.get(key) ?? null;
-  };
   const offloadRows = new Map<string, ReturnType<typeof readOffloadRows>>();
   const rowsFor = (root: string) => {
     if (!offloadRows.has(root)) offloadRows.set(root, readOffloadRows(root));
     return offloadRows.get(root) ?? null;
   };
-  // The cards an id-less OMP line asks about: the evidence index keeps only tool calls naming one of them.
-  const ompEvidence: OmpEvidenceCache = newOmpEvidenceCache(
-    matched.filter((l) => l.session.source === 'pi' && l.session.id === null).map((l) => l.task),
-  );
   const intervals: Interval[] = [];
   for (const events of byCard.values()) {
     events.sort((a, b) => a.at - b.at || a.event - b.event);
     for (let i = 0; i + 1 < events.length; i++) {
       const from = events[i] as CaptureLine;
       const to = events[i + 1] as CaptureLine;
-      const { session, match } = resolveIntervalSession(from, env, ompEvidence);
-      const samples = match === 'ambiguous' ? null : samplesFor(session);
       intervals.push({
         db: from.db,
         task: from.task,
@@ -275,15 +141,11 @@ export function buildIntervals(
         startAt: from.at,
         endAt: to.at,
         durationMs: to.at - from.at,
-        session,
-        usage: usageFor(samples, from.at, to.at, match, prices),
-        sharedSession: false,
-        sessionMatch: match,
+        session: from.session,
         offload: null,
       });
     }
   }
-  markSharedSessions(intervals);
   // mikro rows carry a repository, not a session: an attempt inside two cards' windows of one repo is ambiguous.
   for (const interval of intervals) {
     const root = repoRootOfDb(interval.db);
@@ -293,73 +155,34 @@ export function buildIntervals(
   return intervals;
 }
 
-function markSharedSessions(intervals: Interval[]): void {
-  const bySession = new Map<string, Interval[]>();
-  for (const interval of intervals) {
-    if (interval.session.source === null) continue;
-    const key = sessionKey(interval.session);
-    bySession.set(key, [...(bySession.get(key) ?? []), interval]);
-  }
-  for (const group of bySession.values()) {
-    for (const a of group) {
-      a.sharedSession = group.some((b) => b !== a && b.task !== a.task && b.startAt < a.endAt && a.startAt < b.endAt);
-    }
-  }
-}
-
 export interface TransitionSummary {
   transition: string;
   n: number;
   p50Minutes: number;
   p90Minutes: number;
-  /** Intervals whose usage is known, out of n. */
-  withUsage: number;
-  meanTokens: number | null;
-  costUsd: number | null;
   /** mikro offload cost summed over the transition's intervals; null when any interval's offload is unknown (a partial sum is not a total). */
   offloadUsd: number | null;
-  /** Present only while a price table is loaded: model calls inside intervals with known usage. */
-  calls?: number;
-  /** Present only while a price table is loaded: how many of `calls` `costUsd` covers (a partial sum shows here). */
-  pricedCalls?: number;
-  /** Present only while a price table is loaded: who priced `costUsd` across the rows' intervals; null when unpriced. */
-  costSource?: CostSource | null;
 }
 
 const quantile = (sorted: number[], q: number) =>
   sorted[Math.min(sorted.length - 1, Math.floor(q * sorted.length))] ?? 0;
 const allOrNull = (values: Array<number | null>): number | null =>
   values.length > 0 && !values.includes(null) ? (values as number[]).reduce((sum, v) => sum + v, 0) : null;
-const totalTokens = (usage: UsageTotals) => usage.input + usage.cacheRead + usage.cacheWrite + usage.output;
 
-/** `coverage` (set while a price table is loaded) adds `calls`/`pricedCalls`; without it every row keeps its shape. */
-export function summarize(intervals: Interval[], coverage = false): TransitionSummary[] {
+export function summarize(intervals: Interval[]): TransitionSummary[] {
   const groups = new Map<string, Interval[]>();
   for (const interval of intervals)
     groups.set(interval.transition, [...(groups.get(interval.transition) ?? []), interval]);
   return [...groups.entries()]
     .map(([transition, group]) => {
       const minutes = group.map((i) => i.durationMs / 60000).sort((a, b) => a - b);
-      const known = group.map((i) => i.usage).filter((u): u is UsageTotals => u !== null);
-      const pricedUsage = known.filter((u) => u.costUsd !== null);
-      const costUsd = finiteSum(pricedUsage.map((u) => u.costUsd as number));
       return {
         transition,
         n: group.length,
         p50Minutes: quantile(minutes, 0.5),
         p90Minutes: quantile(minutes, 0.9),
-        withUsage: known.length,
-        meanTokens: known.length > 0 ? Math.round(known.reduce((s, u) => s + totalTokens(u), 0) / known.length) : null,
-        costUsd,
         // A partial sum is not a total: one interval whose offload bill is unknown makes the transition's unknown.
         offloadUsd: allOrNull(group.map((i) => i.offload?.costUsd ?? null)),
-        ...(coverage
-          ? {
-              calls: known.reduce((sum, u) => sum + u.calls, 0),
-              pricedCalls: known.reduce((sum, u) => sum + (u.pricedCalls ?? 0), 0),
-              costSource: costUsd === null ? null : combineSources(pricedUsage.map((u) => u.costSource)),
-            }
-          : {}),
       };
     })
     .sort((a, b) => b.n - a.n || a.transition.localeCompare(b.transition));
@@ -372,15 +195,129 @@ export function formatSummary(
   // `ignored` appears only when it is not zero, so a ledger with nothing to ignore prints what it always did.
   const head = `ledger lines ${stats.lines}, unmatched ${stats.unmatched}, corrupt ${stats.corrupt}${stats.ignored ? `, ignored ${stats.ignored}` : ''}`;
   if (rows.length === 0) return `${head}\nno intervals yet: a card needs two captured events\n`;
-  const coverage = rows.some((r) => r.pricedCalls !== undefined);
-  const out = [
-    head,
-    `transition\tn\tp50min\tp90min\twithUsage\tmeanTokens\tcostUsd\toffloadUsd${coverage ? '\tpriced\tcostSource' : ''}`,
-  ];
+  const out = [head, 'transition\tn\tp50min\tp90min\toffloadUsd'];
   for (const r of rows) {
     out.push(
-      `${r.transition}\t${r.n}\t${r.p50Minutes.toFixed(1)}\t${r.p90Minutes.toFixed(1)}\t${r.withUsage}/${r.n}\t${r.meanTokens ?? '-'}\t${r.costUsd === null ? '-' : r.costUsd.toFixed(4)}\t${r.offloadUsd === null ? '-' : r.offloadUsd.toFixed(4)}${coverage ? `\t${r.pricedCalls ?? 0}/${r.calls ?? 0}\t${r.costSource ?? '-'}` : ''}`,
+      `${r.transition}\t${r.n}\t${r.p50Minutes.toFixed(1)}\t${r.p90Minutes.toFixed(1)}\t${r.offloadUsd === null ? '-' : r.offloadUsd.toFixed(4)}`,
     );
+  }
+  return `${out.join('\n')}\n`;
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Task usage from the Rust meter (D5, D6)
+// ---------------------------------------------------------------------------------------------------------------
+
+/** The `usagemeter query --window` values export accepts; `d90` needs `usagemeter >= 3.129.5`. */
+export const METER_WINDOWS = ['d1', 'd7', 'd30', 'd90'] as const;
+export type MeterWindow = (typeof METER_WINDOWS)[number];
+
+/** Contract 1 `$defs.taskRow`, as `genie-rs usage` passes it on (`usd` already null whenever it is unknown). */
+export interface MeterTaskRow {
+  task: string;
+  state: 'measured' | 'stale' | 'missing';
+  reason: string | null;
+  tokens: {
+    input: number;
+    cache_read: number;
+    cache_write_5m: number;
+    cache_write_1h: number;
+    output: number;
+    reasoning: number | null;
+    unsplit: number;
+    total: number;
+  } | null;
+  cost: {
+    state: 'priced' | 'partial' | 'unpriced' | 'zero';
+    usd: number | null;
+    unpriced_models: string[];
+  } | null;
+}
+
+/**
+ * One repository's task usage: `genie-rs usage --json` as it printed it, plus the checkout it was asked
+ * about. `meter_state: 'missing'` (with `meter_reason`) means the meter could not answer: `rows` is then
+ * null — unknown, never an empty list and never 0.
+ */
+export interface RepoTaskUsage {
+  project: string;
+  repo: string | null;
+  repo_aliases: string[];
+  window: MeterWindow;
+  meter_state: 'measured' | 'missing';
+  meter_reason: string | null;
+  /** `meter_version`, `window`, `ingestion`, `sources`, `unattributed`, `actor_unattributed` and `pricing`, as the meter wrote them. */
+  meter: Record<string, unknown> | null;
+  rows: MeterTaskRow[] | null;
+}
+
+/** Where the `genie-rs` binary is (`resolveGenieRsBin` in the task commands), or why there is none. */
+export type GenieRsBin = { path: string } | { missing: string };
+
+const GENIE_RS_TIMEOUT_MS = 15_000;
+const GENIE_RS_MAX_BYTES = 2 * 1024 * 1024;
+
+/** The repository roots the verified ledger names, each once, in first-seen order. */
+export function ledgerRepos(matched: CaptureLine[]): string[] {
+  return [...new Set(matched.map((line) => repoRootOfDb(line.db)))];
+}
+
+function missingUsage(project: string, window: MeterWindow, reason: string): RepoTaskUsage {
+  const empty = { repo: null, repo_aliases: [], meter: null, rows: null };
+  return { project, window, meter_state: 'missing', meter_reason: reason, ...empty };
+}
+
+/**
+ * Task tokens and USD of one repository from one `genie-rs usage --project <root> --window <w> --json` call.
+ * Every failure — no binary, a non-zero exit, unreadable JSON — is that repository's `missing` state with its
+ * reason; genie never falls back to another source or to a call without the repository's aliases.
+ */
+export function readTaskUsage(project: string, window: MeterWindow, bin: GenieRsBin): RepoTaskUsage {
+  if ('missing' in bin) return missingUsage(project, window, `genie_rs_unavailable: ${bin.missing}`);
+  const result = spawnSync(bin.path, ['usage', '--project', project, '--window', window, '--json'], {
+    encoding: 'utf8',
+    timeout: GENIE_RS_TIMEOUT_MS,
+    maxBuffer: GENIE_RS_MAX_BYTES,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  if (result.error) return missingUsage(project, window, `genie_rs_unavailable: ${result.error.message}`);
+  if (result.status !== 0) return missingUsage(project, window, `genie_rs_exit_${result.status ?? 'signal'}`);
+  let body: Omit<RepoTaskUsage, 'project'>;
+  try {
+    body = JSON.parse(result.stdout);
+  } catch {
+    return missingUsage(project, window, 'invalid_json');
+  }
+  if (body?.meter_state === 'measured' && Array.isArray(body.rows)) return { ...body, project, window };
+  if (body?.meter_state !== 'missing') return missingUsage(project, window, 'invalid_json');
+  return { ...body, project, window, meter: null, rows: null, meter_reason: body.meter_reason ?? 'missing' };
+}
+
+const dash = '–';
+
+/** The text form: one block per repository, `–` wherever the meter could not say (never 0). */
+export function formatTaskUsage(repos: RepoTaskUsage[]): string {
+  if (repos.length === 0) return '';
+  const out: string[] = [];
+  for (const r of repos) {
+    out.push(`task usage ${r.repo ?? r.project} (usagemeter query --by task, ${r.window})`);
+    if (r.rows === null) {
+      out.push(`${dash}\t${r.meter_reason ?? 'missing'}`);
+      continue;
+    }
+    if (r.rows.length === 0) {
+      out.push(`no task usage in ${r.window}`);
+      continue;
+    }
+    out.push('task\ttokens\tusd\tstate\treason');
+    for (const row of r.rows) {
+      // A stale or missing row says nothing about tokens either: `–` for both, with its reason.
+      const measured = row.state === 'measured';
+      const tokens = measured && row.tokens ? String(row.tokens.total) : dash;
+      const usd = measured && row.cost?.usd != null ? row.cost.usd.toFixed(4) : dash;
+      const state = measured && row.cost ? row.cost.state : row.state;
+      out.push(`${row.task}\t${tokens}\t${usd}\t${state}\t${row.reason ?? '-'}`);
+    }
   }
   return `${out.join('\n')}\n`;
 }

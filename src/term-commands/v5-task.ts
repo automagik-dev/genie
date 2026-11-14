@@ -818,7 +818,7 @@ const GENIE_RS_VERBS = [
 ] as const;
 
 /** `GENIE_RS_BIN`, else the installed payload's binary, else a checkout's release build. */
-function resolveGenieRsBin(): { path: string } | { missing: string } {
+export function resolveGenieRsBin(): { path: string } | { missing: string } {
   const explicit = process.env.GENIE_RS_BIN;
   if (explicit)
     return existsSync(explicit) ? { path: explicit } : { missing: `GENIE_RS_BIN=${explicit} does not exist` };

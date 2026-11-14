@@ -31,6 +31,9 @@ function run(args: string[], env: Record<string, string> = {}): { stdout: string
       PI_SESSION_ID: '',
       PI_SESSION_FILE: '',
       GENIE_METRICS: '',
+      // Never the operator's meter: a stand-in genie-rs answers, and a real one would find no usagemeter.
+      GENIE_RS_BIN: join(root, 'bin', 'genie-rs'),
+      USAGEMETER_BIN: join(root, 'no-usagemeter'),
       ...env,
     },
   });
@@ -47,7 +50,42 @@ beforeEach(() => {
   home = join(root, 'home');
   execFileSync('mkdir', ['-p', repo, home]);
   execFileSync('git', ['init', '-q'], { cwd: repo });
+  // The stand-in genie-rs: logs its argv, prints bin/answer.json when present, else a meter that cannot answer.
+  const bin = join(root, 'bin');
+  execFileSync('mkdir', ['-p', bin]);
+  const missing = JSON.stringify({ ...answer('missing'), meter_reason: 'no_repo_slug' });
+  writeFileSync(
+    join(bin, 'genie-rs'),
+    `#!/bin/sh\nprintf '%s\\n' "$*" >> "${bin}/calls.log"\nif [ -f "${bin}/answer.json" ]; then cat "${bin}/answer.json"; else printf '%s\\n' '${missing}'; fi\n`,
+    { mode: 0o755 },
+  );
 });
+
+/** A `genie-rs usage --json` answer for the stand-in to print. */
+function answer(state: 'measured' | 'missing', rows: unknown[] | null = null) {
+  return {
+    repo: state === 'measured' ? 'example.com/Acme/Widgets' : null,
+    repo_aliases: [],
+    window: 'd30',
+    meter_state: state,
+    meter_reason: null,
+    meter: state === 'measured' ? { meter_version: '3.138.5' } : null,
+    rows,
+  };
+}
+
+const genieRsCalls = () =>
+  readFileSync(join(root, 'bin', 'calls.log'), 'utf8')
+    .trim()
+    .split('\n');
+
+/** Enable capture and write two events on one card, so export has one interval and one repository. */
+function captureOneCard(env: Record<string, string> = {}): void {
+  expect(run(['metrics', 'enable']).code).toBe(0);
+  const id = run(['task', 'create', '--title', 'probe']).stdout.match(/Created task (\S+)/)?.[1] as string;
+  expect(run(['task', 'comment', id, 'one'], env).code).toBe(0);
+  expect(run(['task', 'comment', id, 'two'], env).code).toBe(0);
+}
 
 afterEach(() => {
   rmSync(root, { recursive: true, force: true });
@@ -158,35 +196,44 @@ describe('genie metrics', () => {
     60_000,
   );
 
-  test('prices: no table → export unchanged; update --from a local file prices Claude calls; a bad file is refused', () => {
+  test('export reads no runtime session log and no price table; prices update and status still answer', () => {
+    // The opening session's own logs sit where the pre-cutover export read them, with usage inside the window.
     const claude = join(root, 'claude');
-    const env = { CLAUDE_CODE_SESSION_ID: 's', CLAUDE_CONFIG_DIR: claude };
-    expect(run(['metrics', 'prices', 'status']).stdout).toContain('no price table — USD stays runtime-priced only');
-    expect(run(['metrics', 'enable']).code).toBe(0);
-    const id = run(['task', 'create', '--title', 'probe']).stdout.match(/Created task (\S+)/)?.[1] as string;
-    expect(run(['task', 'comment', id, 'one'], env).code).toBe(0);
-    execFileSync('mkdir', ['-p', join(claude, 'projects', '-repo')]);
+    const codex = join(root, 'codex');
+    const env = { CLAUDE_CODE_SESSION_ID: 's', CLAUDE_CONFIG_DIR: claude, CODEX_HOME: codex };
+    execFileSync('mkdir', ['-p', join(claude, 'projects', '-repo'), join(codex, 'sessions')]);
     const call = {
       type: 'assistant',
       timestamp: new Date().toISOString(),
-      message: { id: 'm1', model: 'claude-opus-5-5', usage: { input_tokens: 1000, output_tokens: 100 } },
+      message: { id: 'm1', model: 'claude-opus-5-5', usage: { input_tokens: 424242, output_tokens: 100 } },
     };
+    captureOneCard(env);
     writeFileSync(join(claude, 'projects', '-repo', 's.jsonl'), `${JSON.stringify(call)}\n`);
-    expect(run(['task', 'comment', id, 'two'], env).code).toBe(0);
-
-    const out = join(root, 'intervals.jsonl');
-    const exportUsage = () => {
-      const exported = run(['metrics', 'export', '--out', out], env);
+    const exportJson = (extra: Record<string, string> = {}) => {
+      const exported = run(['metrics', 'export', '--json'], { ...env, ...extra });
       expect(exported.code).toBe(0);
-      return { stdout: exported.stdout, usage: JSON.parse(readFileSync(out, 'utf8').trim()).usage };
+      expect(exported.stderr).toBe('');
+      return exported.stdout;
     };
-    const bare = exportUsage();
-    expect(bare.usage).toEqual({ calls: 1, input: 1000, cacheRead: 0, cacheWrite: 0, output: 100, costUsd: null });
-    expect(bare.stdout).toMatch(/comment→comment\t1\t.*\t1\/1\t1100\t-\t-$/m);
-    expect(bare.stdout).not.toContain('priced');
-    const bareJson = JSON.parse(run(['metrics', 'export', '--json'], env).stdout);
-    expect(Object.keys(bareJson.summary[0])).not.toContain('pricedCalls');
+    const readable = exportJson();
+    expect(readable).not.toContain('424242');
+    const summary = JSON.parse(readable).summary;
+    expect(Object.keys(summary[0])).toEqual(['transition', 'n', 'p50Minutes', 'p90Minutes', 'offloadUsd']);
 
+    // Unreadable session-log homes change nothing: export never opens them.
+    if (process.getuid?.() !== 0) {
+      chmodSync(claude, 0o000);
+      chmodSync(codex, 0o000);
+      try {
+        expect(exportJson()).toBe(readable);
+      } finally {
+        chmodSync(claude, 0o700);
+        chmodSync(codex, 0o700);
+      }
+    }
+
+    // A price table is the `prices` verbs' business; export reads none of it.
+    expect(run(['metrics', 'prices', 'status']).stdout).toContain('no price table — USD stays runtime-priced only');
     const table = join(root, 'litellm.json');
     writeFileSync(
       table,
@@ -196,14 +243,7 @@ describe('genie metrics', () => {
     expect(update.code).toBe(0);
     expect(update.stdout).toContain(`prices: 1 models from ${table}`);
     const stored = readFileSync(join(home, 'metrics', 'prices.json'));
-
-    const priced = exportUsage();
-    expect(priced.usage).toMatchObject({ costSource: 'table', pricedCalls: 1 });
-    expect(priced.usage.costUsd).toBeCloseTo(0.02, 12);
-    expect(priced.stdout).toMatch(/comment→comment\t1\t.*\t1\/1\t1100\t0\.0200\t-\t1\/1\ttable$/m);
-    expect(priced.stdout).toContain('\toffloadUsd\tpriced\tcostSource');
-    const pricedJson = JSON.parse(run(['metrics', 'export', '--json'], env).stdout);
-    expect(pricedJson.summary[0]).toMatchObject({ calls: 1, pricedCalls: 1, costSource: 'table' });
+    expect(exportJson()).toBe(readable);
 
     writeFileSync(table, 'not json');
     const refused = run(['metrics', 'prices', 'update', '--from', table]);
@@ -212,6 +252,97 @@ describe('genie metrics', () => {
     expect(readFileSync(join(home, 'metrics', 'prices.json')).equals(stored)).toBe(true);
     const status = JSON.parse(run(['metrics', 'prices', 'status', '--json']).stdout);
     expect(status).toMatchObject({ path: join(home, 'metrics', 'prices.json'), table: { source: table, models: 1 } });
+  }, 60_000);
+
+  test('export takes task tokens and USD from genie-rs usage: one call per ledger repository, with the window', () => {
+    captureOneCard();
+    const tokens = (total: number) => ({
+      input: total,
+      cache_read: 0,
+      cache_write_5m: 0,
+      cache_write_1h: 0,
+      output: 0,
+      reasoning: 0,
+      unsplit: 0,
+      total,
+    });
+    const rows = [
+      { task: 'gn-1', state: 'measured', reason: null, tokens: tokens(14450), cost: { state: 'priced', usd: 0.0275 } },
+      {
+        task: 'gn-4',
+        state: 'measured',
+        reason: 'unpriced_models',
+        tokens: tokens(900),
+        cost: { state: 'unpriced', usd: null },
+      },
+    ];
+    writeFileSync(join(root, 'bin', 'answer.json'), JSON.stringify(answer('measured', rows)));
+    const ledgerDb = JSON.parse(
+      readFileSync(join(home, 'metrics', 'events.jsonl'), 'utf8').split('\n')[0] as string,
+    ).db;
+    const project = join(ledgerDb, '..', '..');
+
+    const json = run(['metrics', 'export', '--json']);
+    expect(json.code).toBe(0);
+    const body = JSON.parse(json.stdout);
+    expect(Object.keys(body)).toEqual(['lines', 'unmatched', 'corrupt', 'intervals', 'summary', 'taskUsage']);
+    expect(body.taskUsage).toEqual([{ ...answer('measured', rows), project, window: 'd30' }]);
+    // genie names no previous repository name: genie-rs owns the aliases.
+    expect(genieRsCalls()).toEqual([`usage --project ${project} --window d30 --json`]);
+
+    const text = run(['metrics', 'export', '--window', 'd90']);
+    expect(text.code).toBe(0);
+    expect(genieRsCalls().at(-1)).toBe(`usage --project ${project} --window d90 --json`);
+    expect(text.stdout).toContain('task usage example.com/Acme/Widgets (usagemeter query --by task, d90)\n');
+    expect(text.stdout).toContain('gn-1\t14450\t0.0275\tpriced\t-\n');
+    expect(text.stdout).toMatch(/^gn-4\t900\t–\tunpriced\tunpriced_models$/m);
+
+    const bad = run(['metrics', 'export', '--window', 'd14']);
+    expect(bad.code).toBe(2);
+    expect(bad.stderr).toContain('--window takes d1, d7, d30, d90, not d14');
+    expect(bad.stdout).toBe('');
+    expect(genieRsCalls()).toHaveLength(2);
+  }, 60_000);
+
+  test('export: a meter too old for the alias, or no genie-rs at all, is – with the reason and exit 0', () => {
+    captureOneCard();
+    const tooOld = {
+      ...answer('missing'),
+      repo: 'github.com/automagik-si/genie',
+      meter_reason: 'needs usagemeter >= 3.129.2',
+    };
+    writeFileSync(join(root, 'bin', 'answer.json'), JSON.stringify(tooOld));
+    const old = run(['metrics', 'export', '--json']);
+    expect(old.code).toBe(0);
+    expect(JSON.parse(old.stdout).taskUsage[0]).toMatchObject({
+      repo: 'github.com/automagik-si/genie',
+      meter_state: 'missing',
+      meter_reason: 'needs usagemeter >= 3.129.2',
+      meter: null,
+      rows: null,
+    });
+    expect(run(['metrics', 'export']).stdout).toMatch(/^–\tneeds usagemeter >= 3\.129\.2$/m);
+    expect(genieRsCalls()).toHaveLength(2);
+
+    const absent = join(root, 'no-genie-rs');
+    const gone = run(['metrics', 'export', '--json'], { GENIE_RS_BIN: absent });
+    expect(gone.code).toBe(0);
+    expect(JSON.parse(gone.stdout).taskUsage[0]).toMatchObject({
+      meter_state: 'missing',
+      meter_reason: `genie_rs_unavailable: GENIE_RS_BIN=${absent} does not exist`,
+      rows: null,
+    });
+  }, 60_000);
+
+  test('metrics learn is a hidden seam until the learning loop lands: exit 2, one stderr line, nothing written', () => {
+    const before = listTree(home);
+    const learn = run(['metrics', 'learn', '--window', 'd7']);
+    expect(learn.code).toBe(2);
+    expect(learn.stdout).toBe('');
+    expect(learn.stderr).toBe('Error (genie metrics learn): not available yet; nothing was read or written.\n');
+    expect(run(['metrics', 'learn']).code).toBe(2);
+    expect(listTree(home)).toEqual(before);
+    expect(run(['metrics', '--help']).stdout).not.toContain('learn');
   }, 60_000);
 
   test('prices update over http: 200 stores it, a re-run is idempotent, non-2xx exits 1 and keeps the table', async () => {
@@ -277,7 +408,7 @@ describe('genie metrics', () => {
     const cleanJson = JSON.parse(run(['metrics', 'export', '--json']).stdout);
     const lines = captured.trim().split('\n').length;
     expect(cleanText.split('\n')[0]).toBe(`ledger lines ${lines}, unmatched 0, corrupt 0`);
-    expect(Object.keys(cleanJson)).toEqual(['lines', 'unmatched', 'corrupt', 'intervals', 'summary']);
+    expect(Object.keys(cleanJson)).toEqual(['lines', 'unmatched', 'corrupt', 'intervals', 'summary', 'taskUsage']);
     expect(cleanJson.intervals).toBeGreaterThan(0);
 
     // What a pre-#3134 suite run left behind: the same events, verifiable, under a test database path.
@@ -295,7 +426,15 @@ describe('genie metrics', () => {
     expect(text.split('\n')[0]).toBe(`ledger lines ${lines}, unmatched 0, corrupt 0, ignored ${lines}`);
     expect(text.split('\n').slice(1)).toEqual(cleanText.split('\n').slice(1));
     const json = JSON.parse(run(['metrics', 'export', '--json']).stdout);
-    expect(Object.keys(json)).toEqual(['lines', 'unmatched', 'corrupt', 'ignored', 'intervals', 'summary']);
+    expect(Object.keys(json)).toEqual([
+      'lines',
+      'unmatched',
+      'corrupt',
+      'ignored',
+      'intervals',
+      'summary',
+      'taskUsage',
+    ]);
     expect(json).toEqual({ ...cleanJson, ignored: lines, summary: json.summary });
     expect(json.summary.map((r: { transition: string; n: number }) => [r.transition, r.n])).toEqual(
       cleanJson.summary.map((r: { transition: string; n: number }) => [r.transition, r.n]),

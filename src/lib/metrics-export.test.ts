@@ -3,7 +3,6 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import {
   chmodSync,
   copyFileSync,
-  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -18,21 +17,20 @@ import {
   type Interval,
   buildIntervals,
   formatSummary,
+  formatTaskUsage,
+  ledgerRepos,
   readCaptureLedger,
+  readTaskUsage,
   summarize,
   verifyAgainstTaskEvents,
 } from './metrics-export.js';
 import { installSalt, intervalSpan, projectToPhoenix, validateTarget } from './metrics-phoenix.js';
-import type { PriceTable } from './metrics-prices.js';
-import { readUsageSamples } from './metrics-usage.js';
 
 let root: string;
-let env: NodeJS.ProcessEnv;
 let savedHome: string | undefined;
 
 beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), 'genie-metrics-export-'));
-  env = { HOME: root, CLAUDE_CONFIG_DIR: join(root, 'claude'), CODEX_HOME: join(root, 'codex') };
   // installSalt() persists under <GENIE_HOME>/metrics: never the operator's real home.
   savedHome = process.env.GENIE_HOME;
   process.env.GENIE_HOME = join(root, 'genie');
@@ -51,145 +49,6 @@ function write(path: string, body: string): void {
   mkdirSync(join(path, '..'), { recursive: true });
   writeFileSync(path, body);
 }
-
-describe('runtime session logs → usage samples', () => {
-  test('claude-code: one sample per message id (the last streamed record), subagent logs included', () => {
-    const base = join(root, 'claude', 'projects', '-repo');
-    const usage = (n: number) => ({
-      input_tokens: n,
-      cache_read_input_tokens: 10,
-      cache_creation_input_tokens: 5,
-      output_tokens: 2,
-    });
-    write(
-      join(base, 'sess-c.jsonl'),
-      jsonl([
-        { type: 'assistant', timestamp: '2026-10-04T10:00:01Z', message: { id: 'm1', usage: usage(1) } },
-        { type: 'assistant', timestamp: '2026-10-04T10:00:02Z', message: { id: 'm1', usage: usage(3) } },
-        { type: 'user', timestamp: '2026-10-04T10:00:03Z', message: { content: 'x' } },
-      ]),
-    );
-    write(
-      join(base, 'sess-c', 'subagents', 'agent-a.jsonl'),
-      jsonl([
-        // A fork subagent transcript repeats its parent's message: counted once across files.
-        { type: 'assistant', timestamp: '2026-10-04T10:00:02Z', message: { id: 'm1', usage: usage(3) } },
-        { type: 'assistant', timestamp: '2026-10-04T10:00:04Z', message: { id: 'm2', usage: usage(7) } },
-      ]),
-    );
-    const samples = readUsageSamples({ id: 'sess-c', source: 'claude-code', file: null }, env);
-    expect(samples.map((s) => s.input)).toEqual([3, 7]);
-    expect(samples[0]).toMatchObject({ cacheRead: 10, cacheWrite: 5, output: 2, costUsd: null, model: null });
-  });
-
-  test('codex: one sample per moved cumulative total (re-emitted token_count skipped), cached input split out', () => {
-    const event = (ts: string, total: number, input: number) => ({
-      timestamp: ts,
-      type: 'event_msg',
-      payload: {
-        type: 'token_count',
-        info: {
-          total_token_usage: { total_tokens: total },
-          last_token_usage: { input_tokens: input, cached_input_tokens: 60, output_tokens: 4 },
-        },
-      },
-    });
-    write(
-      join(root, 'codex', 'sessions', '2026', '10', '04', 'rollout-2026-10-04T10-00-00-thr-9.jsonl'),
-      jsonl([
-        event('2026-10-04T10:00:05Z', 104, 100),
-        event('2026-10-04T10:00:06Z', 104, 100), // the same turn re-emitted
-        { timestamp: '2026-10-04T10:00:07Z', type: 'response_item', payload: { type: 'message' } },
-        event('2026-10-04T10:00:08Z', 268, 160),
-      ]),
-    );
-    const samples = readUsageSamples({ id: 'thr-9', source: 'codex', file: null }, env);
-    expect(samples.map((s) => [s.input, s.cacheRead, s.output])).toEqual([
-      [40, 60, 4],
-      [100, 60, 4],
-    ]);
-    expect(samples[0]?.costUsd).toBeNull();
-    expect(samples.map((s) => s.model)).toEqual([null, null]);
-  });
-
-  test('model ids: Claude message.model (<synthetic> is none), Codex the latest turn_context, pi/OMP as written', () => {
-    const usage = { input_tokens: 1, output_tokens: 1 };
-    write(
-      join(root, 'claude', 'projects', '-repo', 'sess-m.jsonl'),
-      jsonl([
-        { type: 'assistant', timestamp: '2026-10-04T10:00:01Z', message: { id: 'a', model: 'claude-opus-5-5', usage } },
-        { type: 'assistant', timestamp: '2026-10-04T10:00:02Z', message: { id: 'b', model: '<synthetic>', usage } },
-      ]),
-    );
-    expect(readUsageSamples({ id: 'sess-m', source: 'claude-code', file: null }, env).map((s) => s.model)).toEqual([
-      'claude-opus-5-5',
-      null,
-    ]);
-
-    const tokens = (ts: string, total: number) => ({
-      timestamp: ts,
-      type: 'event_msg',
-      payload: {
-        type: 'token_count',
-        info: { total_token_usage: { total_tokens: total }, last_token_usage: { input_tokens: 5, output_tokens: 1 } },
-      },
-    });
-    const turn = (ts: string, model?: string) => ({ timestamp: ts, type: 'turn_context', payload: { model } });
-    write(
-      join(root, 'codex', 'sessions', '2026', '10', '04', 'rollout-2026-10-04T10-00-00-thr-m.jsonl'),
-      jsonl([
-        tokens('2026-10-04T10:00:00Z', 6),
-        turn('2026-10-04T10:00:01Z', 'gpt-5.6-sol'),
-        tokens('2026-10-04T10:00:02Z', 12),
-        turn('2026-10-04T10:00:03Z', 'gpt-6.1-sol'),
-        tokens('2026-10-04T10:00:04Z', 18),
-        turn('2026-10-04T10:00:05Z'),
-        tokens('2026-10-04T10:00:06Z', 24),
-      ]),
-    );
-    // Before any turn_context, and after one that names no model, the model is unknown — never carried over.
-    expect(readUsageSamples({ id: 'thr-m', source: 'codex', file: null }, env).map((s) => s.model)).toEqual([
-      null,
-      'gpt-5.6-sol',
-      'gpt-6.1-sol',
-      null,
-    ]);
-
-    const file = join(root, '.omp', 'agent', 'sessions', '-repo', '2026-10-04T10-00-00Z_pi-m.jsonl');
-    write(
-      file,
-      jsonl([
-        {
-          type: 'message',
-          timestamp: '2026-10-04T10:00:07Z',
-          message: { role: 'assistant', model: 'openai-codex/gpt-6.1-sol', usage: { input: 1, output: 1 } },
-        },
-      ]),
-    );
-    expect(readUsageSamples({ id: null, source: 'pi', file }, env).map((s) => s.model)).toEqual([
-      'openai-codex/gpt-6.1-sol',
-    ]);
-  });
-
-  test('pi/OMP: assistant message usage with the runtime’s own cost, sibling subagent logs included', () => {
-    const file = join(root, '.omp', 'agent', 'sessions', '-repo', '2026-10-04T10-00-00Z_pi-1.jsonl');
-    const usage = { input: 9, output: 1, cacheRead: 3, cacheWrite: 0, cost: { total: 0.25 } };
-    write(file, jsonl([{ type: 'message', timestamp: '2026-10-04T10:00:07Z', message: { role: 'assistant', usage } }]));
-    write(
-      join(file.replace(/\.jsonl$/, ''), 'Scout.jsonl'),
-      jsonl([{ type: 'message', timestamp: '2026-10-04T10:00:08Z', message: { role: 'assistant', usage } }]),
-    );
-    const byFile = readUsageSamples({ id: null, source: 'pi', file }, env);
-    expect(byFile.map((s) => s.costUsd)).toEqual([0.25, 0.25]);
-    // Without PI_SESSION_FILE the log is found by its session id.
-    expect(readUsageSamples({ id: 'pi-1', source: 'pi', file: null }, env)).toHaveLength(2);
-  });
-
-  test('no runtime, or no log on this host: no samples (unknown, never zero)', () => {
-    expect(readUsageSamples({ id: null, source: null, file: null }, env)).toEqual([]);
-    expect(readUsageSamples({ id: 'absent', source: 'claude-code', file: null }, env)).toEqual([]);
-  });
-});
 
 describe('ledger → verified intervals', () => {
   function seedDb(rows: Array<{ id: number; task: string; kind: string; at: number }>): string {
@@ -244,22 +103,18 @@ describe('ledger → verified intervals', () => {
     expect(matched.map((l) => l.at)).toEqual([at1, at2]);
   });
 
-  test('intervals carry the opening session’s usage inside the window; no log → usage null', () => {
+  test('intervals carry the card time and the opening session; no runtime session log is read', () => {
     const at1 = t('2026-10-04T10:00:00Z');
     const at2 = t('2026-10-04T10:10:00Z');
     const at3 = t('2026-10-04T10:20:00Z');
+    // The opening session's own log, with usage inside the window: before the meter cutover the export summed it.
     write(
       join(root, 'claude', 'projects', '-repo', 'sess-c.jsonl'),
       jsonl([
         {
           type: 'assistant',
           timestamp: '2026-10-04T10:05:00Z',
-          message: { id: 'in', usage: { input_tokens: 100, output_tokens: 10 } },
-        },
-        {
-          type: 'assistant',
-          timestamp: '2026-10-04T10:15:00Z',
-          message: { id: 'out', usage: { input_tokens: 999, output_tokens: 1 } },
+          message: { id: 'in', usage: { input_tokens: 424242, output_tokens: 10 } },
         },
       ]),
     );
@@ -274,449 +129,30 @@ describe('ledger → verified intervals', () => {
       line(db, 2, 'report', at2, silent),
       line(db, 3, 'move', at3),
     ]);
-    const intervals = buildIntervals(matched, env);
-    expect(intervals.map((i) => i.transition)).toEqual(['claim→report', 'report→move']);
-    expect(intervals[0]?.usage).toMatchObject({ calls: 1, input: 100, output: 10, costUsd: null });
-    expect(intervals[0]?.durationMs).toBe(600_000);
-    expect(intervals[1]?.usage).toBeNull();
-    const summary = summarize(intervals);
-    expect(summary.find((s) => s.transition === 'claim→report')).toMatchObject({ n: 1, withUsage: 1, meanTokens: 110 });
-    expect(summary.find((s) => s.transition === 'report→move')).toMatchObject({ n: 1, withUsage: 0, meanTokens: null });
-  });
-
-  test('an OMP shell exported no session id: its usage joins by the one OMP session in that cwd, else stays null', () => {
-    const at1 = t('2026-10-04T10:00:00Z');
-    const at2 = t('2026-10-04T10:10:00Z');
-    const omp = (name: string, cwd: string) => {
-      const file = join(root, '.omp', 'agent', 'sessions', '-repo', `2026-10-04T09-00-00Z_${name}.jsonl`);
-      write(
-        file,
-        jsonl([
-          { type: 'title', v: 1, title: name },
-          { type: 'session', id: name, timestamp: '2026-10-04T09:00:00Z', cwd },
-          {
-            type: 'message',
-            timestamp: '2026-10-04T10:05:00Z',
-            message: {
-              role: 'assistant',
-              usage: { input: 50, output: 5, cacheRead: 0, cacheWrite: 0, cost: { total: 0.01 } },
-            },
-          },
-        ]),
-      );
-      return file;
-    };
-    const ompFile = omp('omp-1', '/work/repo');
-    omp('omp-other-cwd', '/work/elsewhere');
-    const db = seedDb([
-      { id: 1, task: 't1', kind: 'claim', at: at1 },
-      { id: 2, task: 't1', kind: 'report', at: at2 },
+    const intervals = buildIntervals(matched);
+    expect(intervals.map((i) => [i.transition, i.durationMs, i.session])).toEqual([
+      ['claim→report', 600_000, session],
+      ['report→move', 600_000, silent],
     ]);
-    const anonymous: RuntimeSession = { id: null, source: 'pi', file: null };
-    const lines = [
-      { ...line(db, 1, 'claim', at1, anonymous), cwd: '/work/repo' },
-      { ...line(db, 2, 'report', at2, anonymous), cwd: '/work/repo' },
-    ];
-    const [windowed] = buildIntervals(verifyAgainstTaskEvents(lines).matched, env);
-    expect(windowed).toMatchObject({
-      sessionMatch: 'window',
-      session: { source: 'pi', id: 'omp-1', file: ompFile },
-      usage: { calls: 1, input: 50, output: 5, costUsd: 0.01 },
-    });
-    // The same unique match over a window in which that session made no call: unknown, not 0.
-    const quiet = [
-      { ...line(db, 1, 'claim', at1, anonymous), cwd: '/work/repo', at: at1 },
-      { ...line(db, 2, 'report', at2, anonymous), cwd: '/work/repo', at: at2 },
-    ];
-    expect(buildIntervals(quiet, env).length).toBe(1);
-    // A second OMP session in the same cwd over the same window: ambiguous, so no usage is attributed.
-    omp('omp-2', '/work/repo');
-    const [ambiguous] = buildIntervals(verifyAgainstTaskEvents(lines).matched, env);
-    expect(ambiguous).toMatchObject({ sessionMatch: 'ambiguous', usage: null });
-  });
-
-  test('a window match with no call inside the interval is unknown, never 0; a nested-shell line is ambiguous', () => {
-    const at1 = t('2026-10-04T11:00:00Z');
-    const at2 = t('2026-10-04T11:10:00Z');
-    write(
-      join(root, '.omp', 'agent', 'sessions', '-q', '2026-10-04T09-00-00Z_idle.jsonl'),
-      jsonl([{ type: 'session', id: 'idle', timestamp: '2026-10-04T09:00:00Z', cwd: '/work/quiet' }]),
+    expect(Object.keys(intervals[0] as Interval).sort()).toEqual(
+      [
+        'db',
+        'durationMs',
+        'endAt',
+        'fromEvent',
+        'offload',
+        'session',
+        'startAt',
+        'task',
+        'toEvent',
+        'transition',
+      ].sort(),
     );
-    const db = seedDb([
-      { id: 1, task: 't1', kind: 'claim', at: at1 },
-      { id: 2, task: 't1', kind: 'report', at: at2 },
+    expect(summarize(intervals)).toEqual([
+      { transition: 'claim→report', n: 1, p50Minutes: 10, p90Minutes: 10, offloadUsd: null },
+      { transition: 'report→move', n: 1, p50Minutes: 10, p90Minutes: 10, offloadUsd: null },
     ]);
-    const anonymous: RuntimeSession = { id: null, source: 'pi', file: null };
-    const [idle] = buildIntervals(
-      [{ ...line(db, 1, 'claim', at1, anonymous), cwd: '/work/quiet' }, line(db, 2, 'report', at2, anonymous)],
-      env,
-    );
-    expect(idle).toMatchObject({ sessionMatch: 'window', usage: null });
-    const nested: RuntimeSession = { id: null, source: 'codex', file: null, ambiguous: true };
-    const [ambiguous] = buildIntervals([line(db, 1, 'claim', at1, nested), line(db, 2, 'report', at2)], env);
-    expect(ambiguous).toMatchObject({ sessionMatch: 'ambiguous', usage: null });
-  });
-
-  test('the OMP window join needs a session alive at the opening event, and never reads pi logs', () => {
-    const at1 = t('2026-10-04T12:00:00Z');
-    const at2 = t('2026-10-04T12:10:00Z');
-    const usage = { input: 9, output: 1, cacheRead: 0, cacheWrite: 0 };
-    // Started AFTER the opening event: it cannot have written it.
-    write(
-      join(root, '.omp', 'agent', 'sessions', '-late', '2026-10-04T12-05-00Z_late.jsonl'),
-      jsonl([
-        { type: 'session', id: 'late', timestamp: '2026-10-04T12:05:00Z', cwd: '/work/late' },
-        { type: 'message', timestamp: '2026-10-04T12:06:00Z', message: { role: 'assistant', usage } },
-      ]),
-    );
-    // A pi (not OMP) log in the same cwd: never matched for an id-less OMP line.
-    write(
-      join(root, '.pi', 'agent', 'sessions', '-late', '2026-10-04T11-00-00Z_pi.jsonl'),
-      jsonl([
-        { type: 'session', id: 'pi', timestamp: '2026-10-04T11:00:00Z', cwd: '/work/late' },
-        { type: 'message', timestamp: '2026-10-04T12:06:00Z', message: { role: 'assistant', usage } },
-      ]),
-    );
-    const db = seedDb([
-      { id: 1, task: 't1', kind: 'claim', at: at1 },
-      { id: 2, task: 't1', kind: 'report', at: at2 },
-    ]);
-    const anonymous: RuntimeSession = { id: null, source: 'pi', file: null };
-    const [interval] = buildIntervals(
-      [{ ...line(db, 1, 'claim', at1, anonymous), cwd: '/work/late' }, line(db, 2, 'report', at2, anonymous)],
-      env,
-    );
-    expect(interval).toMatchObject({ sessionMatch: null, usage: null });
-  });
-
-  describe('an OMP shell whose cwd is not its session’s (a git worktree): matched by its logged genie call', () => {
-    const at1 = t('2026-10-04T10:00:00Z');
-    const at2 = t('2026-10-04T10:10:00Z');
-    const anonymous: RuntimeSession = { id: null, source: 'pi', file: null };
-    let repoRoot: string;
-    let worktree: string;
-    let db: string;
-
-    beforeEach(() => {
-      repoRoot = join(root, 'repo');
-      // Outside the repo root, as `git worktree add` registers it: <root>/.git/worktrees/<n>/gitdir.
-      worktree = join(root, 'elsewhere', 'wt');
-      write(join(repoRoot, '.git', 'worktrees', 'wt', 'gitdir'), `${join(worktree, '.git')}\n`);
-      db = seedDb([
-        { id: 1, task: 't1', kind: 'claim', at: at1 },
-        { id: 2, task: 't1', kind: 'report', at: at2 },
-      ]);
-    });
-
-    /** A bash tool-call record, shaped as OMP 18.6.1 writes it. */
-    const toolCall = (timestamp: string, command: string, id = 'call_1') => ({
-      type: 'message',
-      timestamp,
-      message: {
-        role: 'assistant',
-        content: [
-          { type: 'thinking', thinking: '' },
-          { type: 'toolCall', id, name: 'bash', arguments: { i: 'x', command, timeout: 30 } },
-        ],
-      },
-    });
-    /** The record OMP writes when a tool call returns. */
-    const toolResult = (timestamp: string, id = 'call_1') => ({
-      type: 'message',
-      timestamp,
-      message: { role: 'toolResult', toolCallId: id, toolName: 'bash', content: [{ type: 'text', text: 'ok' }] },
-    });
-    /** A call of OMP's `eval` tool: it can run genie, and its code is not a shell command line. */
-    const evalCall = (timestamp: string, code: string) => ({
-      type: 'message',
-      timestamp,
-      message: {
-        role: 'assistant',
-        content: [{ type: 'toolCall', id: 'call_e', name: 'eval', arguments: { language: 'bash', code } }],
-      },
-    });
-    const sessionFile = (name: string) =>
-      join(root, '.omp', 'agent', 'sessions', '-repo', `2026-10-04T09-00-00Z_${name}.jsonl`);
-    /** One OMP session log: header, one priced model call inside the interval, then `records`. */
-    const omp = (name: string, cwd: string, records: unknown[] = [], started = '2026-10-04T09:00:00Z') => {
-      write(
-        sessionFile(name),
-        jsonl([
-          { type: 'title', v: 1, title: name },
-          { type: 'session', id: name, timestamp: started, cwd },
-          {
-            type: 'message',
-            timestamp: '2026-10-04T10:05:00Z',
-            message: {
-              role: 'assistant',
-              usage: { input: 50, output: 5, cacheRead: 0, cacheWrite: 0, cost: { total: 0.01 } },
-            },
-          },
-          ...records,
-        ]),
-      );
-      return sessionFile(name);
-    };
-    const claimCall = (timestamp: string) => toolCall(timestamp, 'genie task checkout t1 --worker w');
-    const interval = (cwd = worktree, database = db) => {
-      const lines = [
-        { ...line(database, 1, 'claim', at1, anonymous), cwd },
-        { ...line(database, 2, 'report', at2, anonymous), cwd },
-      ];
-      return buildIntervals(verifyAgainstTaskEvents(lines).matched, env)[0];
-    };
-
-    test('the one session of the same repository WITHOUT a logged genie call for the card is not matched', () => {
-      omp('root-session', repoRoot);
-      expect(interval()).toMatchObject({ sessionMatch: null, session: anonymous, usage: null });
-    });
-
-    test('the one session whose log ran genie for the card just before the event is matched, labelled window', () => {
-      const file = omp('root-session', repoRoot, [claimCall('2026-10-04T09:59:58Z')]);
-      expect(interval()).toMatchObject({
-        sessionMatch: 'window',
-        session: { source: 'pi', id: 'root-session', file },
-        usage: { calls: 1, input: 50, output: 5, costUsd: 0.01 },
-      });
-    });
-
-    test('two sessions of the repository: the one whose log ran genie for this card just before the event', () => {
-      omp('idle', repoRoot);
-      const worker = omp('worker', repoRoot, [claimCall('2026-10-04T09:59:58Z')]);
-      expect(interval()).toMatchObject({
-        sessionMatch: 'window',
-        session: { source: 'pi', id: 'worker', file: worker },
-        usage: { calls: 1, input: 50 },
-      });
-    });
-
-    test('a genie call logged by a SUBAGENT of a session is that session’s evidence', () => {
-      omp('idle', repoRoot);
-      const parent = omp('parent', repoRoot);
-      write(
-        join(parent.replace(/\.jsonl$/, ''), 'G1Worker.jsonl'),
-        jsonl([toolCall('2026-10-04T09:59:59Z', 'cd /x && bun dist/genie.js task comment t1 "note"')]),
-      );
-      expect(interval()).toMatchObject({ sessionMatch: 'window', session: { id: 'parent', file: parent } });
-    });
-
-    test('two sessions and no tool call for the card in either log: no match', () => {
-      omp('a', repoRoot);
-      omp('b', repoRoot);
-      expect(interval()).toMatchObject({ sessionMatch: null, session: anonymous, usage: null });
-    });
-
-    test('two sessions that BOTH ran genie for the card near the event: ambiguous, no usage is attributed', () => {
-      omp('a', repoRoot, [claimCall('2026-10-04T09:59:58Z')]);
-      omp('b', worktree, [claimCall('2026-10-04T09:59:50Z')]);
-      expect(interval(join(repoRoot, 'src'))).toMatchObject({
-        sessionMatch: 'ambiguous',
-        session: anonymous,
-        usage: null,
-      });
-    });
-
-    test('a tool call is evidence only for this card, as a tool call, while it could still be running', () => {
-      omp('near-misses', repoRoot, [
-        toolCall('2026-10-04T09:58:00Z', 'genie task checkout t1 --worker w', 'old'), // no result, issued 2 min earlier
-        toolCall('2026-10-04T10:00:05Z', 'genie task checkout t1 --worker w', 'late'), // issued after the event
-        toolCall('2026-10-04T09:59:58Z', 'genie task checkout t2 --worker w', 'other'), // another card
-        // The card id in a user message is not a tool call.
-        {
-          type: 'message',
-          timestamp: '2026-10-04T09:59:58Z',
-          message: { role: 'user', content: 'genie task done t1' },
-        },
-      ]);
-      expect(interval()).toMatchObject({ sessionMatch: null, usage: null });
-    });
-
-    /** `command` in a lone session, then the same session beside one PROVEN to have written the card. */
-    const verdicts = (command: string) => {
-      rmSync(sessionFile('proven'), { force: true });
-      omp('only', repoRoot, [toolCall('2026-10-04T09:59:58Z', command)]);
-      const alone = interval()?.sessionMatch ?? null;
-      omp('proven', repoRoot, [claimCall('2026-10-04T09:59:58Z')]);
-      return [command, alone, interval()?.sessionMatch ?? null];
-    };
-
-    test('a genie executable at command position, a write verb, and the card as that verb’s operand: proven', () => {
-      const proven = [
-        'genie task checkout t1 --worker w',
-        'genie --no-interactive task checkout t1 --worker w',
-        'genie task checkout --worker=w t1',
-        'genie task block --reason "waiting on review" --hold t1',
-        'bun dist/genie.js task comment t1 "note"',
-        'cd /x\ngenie task done t1', // a second LINE of the command, not a word glued to the first
-        'cd /x && GENIE_HOME=/h ./dist/genie.js task done t1',
-        'env A=b flock /var/tmp/l node /opt/genie/dist/genie.js task release t1',
-        "genie task comment t1 --worker w -- 'a; b && c | d'",
-        'bun run check; genie task report t1 --worker w -- done',
-      ];
-      // Alone it is the writer; beside another proven session nobody is.
-      for (const command of proven) expect(verdicts(command)).toEqual([command, 'window', 'ambiguous']);
-    });
-
-    test('a call that names the card without proving a write is never the writer, and blocks any other session', () => {
-      const unproven = [
-        'genie task status t1', // a read-only verb: a concurrent poll costs the other session its match
-        'genie task heartbeat t1', // writes no card event
-        "genie task comment t2 --worker w -- 't1'", // t1 is the comment's text
-        'genie task comment t2 --worker t1 -- note', // t1 is an option's value
-        'genie task link t2 --wish t1', // likewise
-        'genie task done t1 --help', // prints help, writes nothing
-        'genie task done --force t1', // an option the verb does not register
-        'genie -V task done t1', // a global option that is not --no-interactive
-        'echo genie task done t1', // an argument of echo, not at command position
-        'echo "next: genie task checkout t1" >> notes.md',
-        'echo t1 | xargs genie task done', // the card reaches genie through a pipe
-        "echo 'genie task done t1' | sh",
-        'genie task status "$(genie task done t1)"', // inside a command substitution
-        "cat >> HANDOFF.md <<'EOF'\n  genie task report t1 --worker w -- done\nEOF", // a here-document body is data
-        'genie task done t1 <<< ""', // any here-document or here-string disqualifies the whole call
-        'mygenie task done t1', // not the genie executable
-        'grep -r t1 notes/', // no genie at all: a mention is a mention
-      ];
-      for (const command of unproven) expect(verdicts(command)).toEqual([command, null, 'ambiguous']);
-    });
-
-    test('a call that does not name the card as a whole word says nothing about it', () => {
-      const silent = [
-        'genie task checkout t10 --worker w', // another card whose id merely starts the same
-        'genie task done xt1',
-        'ID=t_1; genie task done "$ID"', // the log never names the card: invisible (an inherent limit)
-        './report.sh',
-      ];
-      for (const command of silent) expect(verdicts(command)).toEqual([command, null, 'window']);
-    });
-
-    test('the event must fall inside the call’s own execution: issued → result', () => {
-      // The writer's call was issued three minutes before the event and ran a gate first; a poller in
-      // another session asked for the card's status ten seconds before the event and returned at once.
-      const writer = omp('writer', repoRoot, [
-        toolCall('2026-10-04T09:57:00Z', 'bun run check && genie task checkout t1 --worker w', 'w'),
-        toolResult('2026-10-04T10:00:01Z', 'w'),
-      ]);
-      omp('poller', repoRoot, [
-        toolCall('2026-10-04T09:59:50Z', 'genie task status t1', 'p'),
-        toolResult('2026-10-04T09:59:51Z', 'p'),
-      ]);
-      expect(interval()).toMatchObject({ sessionMatch: 'window', session: { id: 'writer', file: writer } });
-    });
-
-    test('a write call that had already RETURNED before the event did not write it', () => {
-      omp('earlier', repoRoot, [
-        toolCall('2026-10-04T09:59:50Z', 'genie task checkout t1 --worker w', 'e'),
-        toolResult('2026-10-04T09:59:55Z', 'e'),
-      ]);
-      expect(interval()).toMatchObject({ sessionMatch: null, usage: null });
-      // The same call with its result a second before the event is inside the documented 2 s slack.
-      const edge = omp('earlier', repoRoot, [
-        toolCall('2026-10-04T09:59:50Z', 'genie task checkout t1 --worker w', 'e'),
-        toolResult('2026-10-04T09:59:59Z', 'e'),
-      ]);
-      expect(interval()).toMatchObject({ sessionMatch: 'window', session: { file: edge } });
-    });
-
-    test('a mention by ANOTHER tool (eval) is never proof, and never lets another session win', () => {
-      omp('eval-writer', repoRoot, [evalCall('2026-10-04T09:59:59Z', 'run(["genie", "task", "checkout", "t1"])')]);
-      expect(interval()).toMatchObject({ sessionMatch: null, usage: null });
-      omp('proven', repoRoot, [claimCall('2026-10-04T09:59:58Z')]);
-      expect(interval()).toMatchObject({ sessionMatch: 'ambiguous', session: anonymous, usage: null });
-    });
-
-    test('a mention that was not RUNNING at the event blocks nobody', () => {
-      const writer = omp('writer', repoRoot, [claimCall('2026-10-04T09:59:58Z')]);
-      omp('earlier-reader', repoRoot, [
-        toolCall('2026-10-04T09:59:40Z', 'genie task status t1', 'r'),
-        toolResult('2026-10-04T09:59:41Z', 'r'),
-        evalCall('2026-10-04T10:00:30Z', 'print("t1")'),
-      ]);
-      expect(interval()).toMatchObject({ sessionMatch: 'window', session: { id: 'writer', file: writer } });
-    });
-
-    test('a proven session is not blocked by its own other mentions of the card', () => {
-      const writer = omp('writer', repoRoot, [
-        toolCall('2026-10-04T09:59:58Z', 'genie --no-interactive task checkout t1 --worker w', 'a'),
-        toolCall('2026-10-04T09:59:59Z', 'genie task status t1', 'b'),
-        evalCall('2026-10-04T09:59:59Z', 'print("genie task t1")'),
-      ]);
-      write(
-        join(writer.replace(/\.jsonl$/, ''), 'G1Worker.jsonl'),
-        jsonl([toolCall('2026-10-04T09:59:59Z', 'grep t1 notes.md')]),
-      );
-      expect(interval()).toMatchObject({ sessionMatch: 'window', session: { id: 'writer', file: writer } });
-    });
-
-    test('a session whose cwd IS the capture cwd still wins, with no log evidence asked for', () => {
-      omp('root-session', repoRoot, [claimCall('2026-10-04T09:59:58Z')]);
-      const exact = omp('worktree-session', worktree);
-      expect(interval()).toMatchObject({
-        sessionMatch: 'window',
-        session: { id: 'worktree-session', file: exact },
-        usage: { calls: 1 },
-      });
-      // Two with the capture cwd stay ambiguous: the evidence fallback is only for NO equal-cwd session.
-      omp('worktree-session-2', worktree);
-      expect(interval()).toMatchObject({ sessionMatch: 'ambiguous', usage: null });
-    });
-
-    test('a session started in ANOTHER repository whose log ran genie for the card is matched', () => {
-      omp('same-repo-idle', repoRoot);
-      const writer = omp('other-repo-writer', join(root, 'other'), [claimCall('2026-10-04T09:59:58Z')]);
-      expect(interval()).toMatchObject({
-        sessionMatch: 'window',
-        session: { source: 'pi', id: 'other-repo-writer', file: writer },
-        usage: { calls: 1, input: 50 },
-      });
-    });
-
-    test('a session started in another repository WITHOUT the tool call is never matched', () => {
-      omp('other-repo', join(root, 'other'));
-      expect(interval()).toMatchObject({ sessionMatch: null, session: anonymous, usage: null });
-    });
-
-    test('a session that started after the event is not matched', () => {
-      // Its header is later than the event even though a record in it claims an earlier call.
-      omp('late', repoRoot, [claimCall('2026-10-04T09:59:58Z')], '2026-10-04T10:03:00Z');
-      expect(interval()).toMatchObject({ sessionMatch: null, usage: null });
-    });
-
-    test('a capture cwd outside every checkout of the repository never reaches the evidence fallback', () => {
-      omp('root-session', repoRoot, [claimCall('2026-10-04T09:59:58Z')]);
-      expect(interval(join(root, 'unrelated'))).toMatchObject({ sessionMatch: null, usage: null });
-      // A sibling directory that merely shares the root's name as a prefix is not inside it.
-      expect(interval(`${repoRoot}-copy`)).toMatchObject({ sessionMatch: null, usage: null });
-    });
-
-    test('a database that is not <root>/.genie/genie.db names no repository: never matched by evidence', () => {
-      const fixtures = join(root, 'fixtures');
-      const testDb = join(fixtures, 'run-1', 'race.db');
-      mkdirSync(join(testDb, '..'), { recursive: true });
-      const handle = new Database(testDb);
-      handle.run('CREATE TABLE task_events (id INTEGER PRIMARY KEY, task_id TEXT, kind TEXT, created_at INTEGER)');
-      handle.run("INSERT INTO task_events VALUES (1, 't1', 'claim', ?), (2, 't1', 'report', ?)", [at1, at2]);
-      handle.close();
-      // dirname(dirname(db)) is `fixtures`, and the capture cwd is inside it.
-      omp('test-runner', fixtures, [claimCall('2026-10-04T09:59:58Z')]);
-      expect(interval(join(fixtures, 'run-1'), testDb)).toMatchObject({ sessionMatch: null, usage: null });
-    });
-
-    test('a RELATIVE .genie/genie.db names no repository either: it never reaches the evidence fallback', () => {
-      const writer = omp('writer', repoRoot, [claimCall('2026-10-04T09:59:58Z')]);
-      // The absolute spelling of the same database is matched by that session's logged claim call.
-      expect(interval()).toMatchObject({ sessionMatch: 'window', session: { id: 'writer', file: writer } });
-      const saved = process.cwd();
-      process.chdir(repoRoot);
-      try {
-        // Relative to the repository root this IS the seeded database, so the interval exists.
-        const relativeDb = interval(worktree, join('.genie', 'genie.db'));
-        expect(relativeDb).toBeDefined();
-        expect(relativeDb).toMatchObject({ task: 't1', sessionMatch: null, usage: null });
-      } finally {
-        process.chdir(saved);
-      }
-    });
+    expect(JSON.stringify(intervals)).not.toContain('424242');
   });
 
   test('mikro offload runs inside the window are priced on the interval; a repo with no mikro ledger is unknown', () => {
@@ -736,7 +172,7 @@ describe('ledger → verified intervals', () => {
       footer: { tokensIn: 100, tokensOut: 20, cost },
     });
     const lines = [line(db, 1, 'claim', at1), line(db, 2, 'report', at2)];
-    const [unknown] = buildIntervals(verifyAgainstTaskEvents(lines).matched, env);
+    const [unknown] = buildIntervals(verifyAgainstTaskEvents(lines).matched);
     expect(unknown?.offload).toBeNull();
     write(
       join(repoRoot, '.mikro', 'runs', 'wish-context.jsonl'),
@@ -747,7 +183,7 @@ describe('ledger → verified intervals', () => {
         run('2026-10-04T13:04:00Z', true, 0.9, '/elsewhere/repo'), // another repository
       ]),
     );
-    const [priced] = buildIntervals(verifyAgainstTaskEvents(lines).matched, env);
+    const [priced] = buildIntervals(verifyAgainstTaskEvents(lines).matched);
     expect(priced?.offload).toEqual({ attempts: 2, failed: 1, ambiguous: 0, tokens: 240, costUsd: 0.05 });
     expect(summarize([priced as Interval])[0]?.offloadUsd).toBeCloseTo(0.05, 6);
   });
@@ -787,7 +223,7 @@ describe('ledger → verified intervals', () => {
       t1('t2', 3, 'claim', t('2026-10-04T14:04:00Z')),
       t1('t2', 4, 'report', t('2026-10-04T14:06:00Z')),
     ];
-    const intervals = buildIntervals(verifyAgainstTaskEvents(lines).matched, env);
+    const intervals = buildIntervals(verifyAgainstTaskEvents(lines).matched);
     const first = intervals.find((i) => i.task === 't1');
     // One attempt also sits inside t2's window: it may be t1's, so t1's bill is unknown, never a lower total.
     expect(first?.offload).toEqual({ attempts: 2, failed: 0, ambiguous: 1, tokens: null, costUsd: null });
@@ -798,7 +234,7 @@ describe('ledger → verified intervals', () => {
       join(repoRoot, '.mikro', 'runs', 'issue-triage.jsonl'),
       jsonl([attempt('2026-10-04T14:03:00Z', repoRoot, null)]),
     );
-    const again = buildIntervals(verifyAgainstTaskEvents(lines).matched, env).find((i) => i.task === 't1');
+    const again = buildIntervals(verifyAgainstTaskEvents(lines).matched).find((i) => i.task === 't1');
     expect(again?.offload).toMatchObject({ attempts: 3, tokens: null, costUsd: null });
   });
 
@@ -817,7 +253,7 @@ describe('ledger → verified intervals', () => {
       const repoRoot = join(root, 'repo');
       const runs = join(repoRoot, '.mikro', 'runs');
       const lines = [line(db, 1, 'claim', at1), line(db, 2, 'report', at2)];
-      const offload = () => buildIntervals(verifyAgainstTaskEvents(lines).matched, env)[0]?.offload;
+      const offload = () => buildIntervals(verifyAgainstTaskEvents(lines).matched)[0]?.offload;
       const readable = jsonl([
         { ts: '2026-10-04T15:02:00Z', dir: repoRoot, ok: true, footer: { tokensIn: 1, tokensOut: 1, cost: 0.01 } },
       ]);
@@ -876,7 +312,7 @@ describe('ledger → verified intervals', () => {
     ]);
     const runs = join(root, 'repo', '.mikro', 'runs');
     const lines = [line(db, 1, 'claim', at1), line(db, 2, 'report', at2)];
-    const offload = () => buildIntervals(verifyAgainstTaskEvents(lines).matched, env)[0]?.offload;
+    const offload = () => buildIntervals(verifyAgainstTaskEvents(lines).matched)[0]?.offload;
     // ONLY a directory named wish-context.jsonl: no ledger at all → unknown, not 0 attempts / $0.
     mkdirSync(join(runs, 'wish-context.jsonl'), { recursive: true });
     expect(offload()).toBeNull();
@@ -931,7 +367,7 @@ describe('ledger → verified intervals', () => {
       expect(ledger.lines.map((l) => l.db)).toEqual([repoDb, repoDb]);
       const { matched, unmatched } = verifyAgainstTaskEvents(ledger.lines);
       expect(unmatched).toBe(0);
-      const intervals = buildIntervals(matched, env);
+      const intervals = buildIntervals(matched);
       expect(intervals).toHaveLength(1);
       expect(intervals[0]).toMatchObject({ db: repoDb, transition: 'claim→report' });
       // The ledger is read, never rewritten.
@@ -952,227 +388,16 @@ describe('ledger → verified intervals', () => {
       write(path, jsonl(lines));
       const ledger = readCaptureLedger(path);
       expect(ledger).toEqual({ lines, corrupt: 0, ignored: 0 });
-      const summary = summarize(buildIntervals(verifyAgainstTaskEvents(ledger.lines).matched, env));
+      const summary = summarize(buildIntervals(verifyAgainstTaskEvents(ledger.lines).matched));
       const pinned =
         'ledger lines 2, unmatched 0, corrupt 0\n' +
-        'transition\tn\tp50min\tp90min\twithUsage\tmeanTokens\tcostUsd\toffloadUsd\n' +
-        'claim→report\t1\t10.0\t10.0\t0/1\t-\t-\t-\n';
+        'transition\tn\tp50min\tp90min\toffloadUsd\n' +
+        'claim→report\t1\t10.0\t10.0\t-\n';
       expect(formatSummary(summary, { lines: 2, unmatched: 0, corrupt: 0 })).toBe(pinned);
       expect(formatSummary(summary, { lines: 2, unmatched: 0, corrupt: 0, ignored: 0 })).toBe(pinned);
       expect(formatSummary([], { lines: 0, unmatched: 0, corrupt: 0, ignored: 0 })).toBe(
         'ledger lines 0, unmatched 0, corrupt 0\nno intervals yet: a card needs two captured events\n',
       );
-    });
-  });
-
-  describe('price table', () => {
-    const at1 = t('2026-10-04T10:00:00Z');
-    const at2 = t('2026-10-04T10:10:00Z');
-    const prices: PriceTable = {
-      meta: { source: 'test', fetchedAt: '2026-10-04T00:00:00Z', sha256: 'x', models: 2 },
-      models: {
-        'claude-opus-5-5': {
-          input_cost_per_token: 0.00001,
-          output_cost_per_token: 0.0001,
-          cache_read_input_token_cost: 0.000001,
-          cache_creation_input_token_cost: 0.00002,
-        },
-        'gpt-6.1-sol': { input_cost_per_token: 0.000002, output_cost_per_token: 0.00002 },
-      },
-    };
-    const claudeCall = (id: string, model: string, ts = '2026-10-04T10:05:00Z') => ({
-      type: 'assistant',
-      timestamp: ts,
-      message: {
-        id,
-        model,
-        usage: {
-          input_tokens: 100,
-          output_tokens: 10,
-          cache_read_input_tokens: 1000,
-          cache_creation_input_tokens: 50,
-        },
-      },
-    });
-    const claudeIntervals = (calls: unknown[], table: PriceTable | null) => {
-      write(join(root, 'claude', 'projects', '-repo', 'sess-c.jsonl'), jsonl(calls));
-      const seeded = join(root, 'repo', '.genie', 'genie.db');
-      const db = existsSync(seeded)
-        ? seeded
-        : seedDb([
-            { id: 1, task: 't1', kind: 'claim', at: at1 },
-            { id: 2, task: 't1', kind: 'report', at: at2 },
-          ]);
-      const { matched } = verifyAgainstTaskEvents([line(db, 1, 'claim', at1), line(db, 2, 'report', at2)]);
-      return buildIntervals(matched, env, table);
-    };
-
-    test('no table: the usage carries exactly the fields it always did — no costSource, no pricedCalls', () => {
-      const [interval] = claudeIntervals([claudeCall('m1', 'claude-opus-5-5')], null);
-      expect(interval?.usage).toEqual({
-        calls: 1,
-        input: 100,
-        cacheRead: 1000,
-        cacheWrite: 50,
-        output: 10,
-        costUsd: null,
-      });
-    });
-
-    test('a Claude call is priced by the table; an unknown model or <synthetic> stays unknown, never 0', () => {
-      const [priced] = claudeIntervals([claudeCall('m1', 'claude-opus-5-5')], prices);
-      expect(priced?.usage?.costUsd).toBeCloseTo(100 * 0.00001 + 1000 * 0.000001 + 50 * 0.00002 + 10 * 0.0001, 12);
-      expect(priced?.usage).toMatchObject({ costSource: 'table', pricedCalls: 1 });
-
-      const [unknown] = claudeIntervals([claudeCall('m1', 'claude-unreleased-9')], prices);
-      expect(unknown?.usage).toMatchObject({ calls: 1, costUsd: null, costSource: null, pricedCalls: 0 });
-
-      const [synthetic] = claudeIntervals([claudeCall('m1', '<synthetic>')], prices);
-      expect(synthetic?.usage?.costUsd).toBeNull();
-    });
-
-    test('the runtime’s own price beats the table; runtime + table calls are mixed', () => {
-      const file = join(root, '.omp', 'agent', 'sessions', '-repo', '2026-10-04T10-00-00Z_pi-1.jsonl');
-      const call = (ts: string, cost: { total: number } | undefined) => ({
-        type: 'message',
-        timestamp: ts,
-        message: {
-          role: 'assistant',
-          model: 'openai-codex/gpt-6.1-sol',
-          usage: { input: 1000, output: 100, cacheRead: 0, cacheWrite: 0, ...(cost ? { cost } : {}) },
-        },
-      });
-      write(file, jsonl([call('2026-10-04T10:01:00Z', { total: 0.5 }), call('2026-10-04T10:02:00Z', undefined)]));
-      const pi: RuntimeSession = { id: null, source: 'pi', file };
-      const db = seedDb([
-        { id: 1, task: 't1', kind: 'claim', at: at1 },
-        { id: 2, task: 't1', kind: 'report', at: at2 },
-      ]);
-      const { matched } = verifyAgainstTaskEvents([line(db, 1, 'claim', at1, pi), line(db, 2, 'report', at2, pi)]);
-      const [mixed] = buildIntervals(matched, env, prices);
-      // 0.5 from the runtime (never re-priced) + the table's price for the unpriced call, found by suffix.
-      expect(mixed?.usage?.costUsd).toBeCloseTo(0.5 + 1000 * 0.000002 + 100 * 0.00002, 12);
-      expect(mixed?.usage).toMatchObject({ costSource: 'mixed', pricedCalls: 2 });
-
-      write(file, jsonl([call('2026-10-04T10:01:00Z', { total: 0.5 })]));
-      const [runtimeOnly] = buildIntervals(matched, env, prices);
-      expect(runtimeOnly?.usage).toMatchObject({ costUsd: 0.5, costSource: 'runtime', pricedCalls: 1 });
-    });
-
-    test('a zero-token call is never evidence of a price: alone it leaves the interval unknown', () => {
-      const zero = {
-        type: 'assistant',
-        timestamp: '2026-10-04T10:04:00Z',
-        message: { id: 'z', model: '<synthetic>', usage: { input_tokens: 0, output_tokens: 0 } },
-      };
-      const [onlyZero] = claudeIntervals([zero], prices);
-      expect(onlyZero?.usage).toMatchObject({ calls: 1, costUsd: null, costSource: null, pricedCalls: 0 });
-      const [withReal] = claudeIntervals([zero, claudeCall('m1', 'claude-opus-5-5')], prices);
-      expect(withReal?.usage).toMatchObject({ calls: 2, costSource: 'table', pricedCalls: 1 });
-    });
-
-    test('Claude 1-hour cache writes ride the sample and are priced at the 1h rate', () => {
-      const ttl: PriceTable = {
-        ...prices,
-        models: {
-          'claude-opus-5-5': {
-            input_cost_per_token: 0.00001,
-            output_cost_per_token: 0.0001,
-            cache_creation_input_token_cost: 0.00002,
-            cache_creation_input_token_cost_above_1hr: 0.00004,
-          },
-        },
-      };
-      const call = {
-        type: 'assistant',
-        timestamp: '2026-10-04T10:05:00Z',
-        message: {
-          id: 'h',
-          model: 'claude-opus-5-5',
-          usage: {
-            input_tokens: 0,
-            output_tokens: 0,
-            cache_creation_input_tokens: 100,
-            cache_creation: { ephemeral_5m_input_tokens: 40, ephemeral_1h_input_tokens: 60 },
-          },
-        },
-      };
-      const [interval] = claudeIntervals([call], ttl);
-      // The token total is unchanged; only the price splits by TTL.
-      expect(interval?.usage).toMatchObject({ cacheWrite: 100, costSource: 'table' });
-      expect(interval?.usage?.costUsd).toBeCloseTo(40 * 0.00002 + 60 * 0.00004, 12);
-    });
-
-    test('summary coverage: with a table each row carries calls and pricedCalls, and the text grows a column', () => {
-      const intervals = claudeIntervals(
-        [claudeCall('m1', 'claude-opus-5-5'), claudeCall('m2', 'claude-unreleased-9', '2026-10-04T10:06:00Z')],
-        prices,
-      );
-      const [row] = summarize(intervals, true);
-      expect(row).toMatchObject({ calls: 2, pricedCalls: 1, costSource: 'table' });
-      const text = formatSummary(summarize(intervals, true), { lines: 2, unmatched: 0, corrupt: 0 });
-      expect(text).toContain('\tpriced\tcostSource\n');
-      expect(text).toMatch(/claim→report\t1\t.*\t1\/2\ttable\n/);
-
-      const bare = summarize(claudeIntervals([claudeCall('m1', 'claude-opus-5-5')], null));
-      expect(Object.keys(bare[0] ?? {})).not.toContain('pricedCalls');
-      expect(Object.keys(bare[0] ?? {})).not.toContain('costSource');
-      expect(formatSummary(bare, { lines: 2, unmatched: 0, corrupt: 0 })).not.toContain('priced');
-    });
-
-    test('summary provenance: runtime and table intervals make a mixed row; an unpriced row is null', () => {
-      const usage = (costUsd: number | null, costSource: 'runtime' | 'table' | null) => ({
-        calls: 1,
-        input: 1,
-        cacheRead: 0,
-        cacheWrite: 0,
-        output: 1,
-        costUsd,
-        costSource,
-        pricedCalls: costUsd === null ? 0 : 1,
-      });
-      const at = (task: string, u: ReturnType<typeof usage>) =>
-        ({
-          db: '/d',
-          task,
-          fromEvent: 1,
-          toEvent: 2,
-          transition: 'claim→report',
-          startAt: 0,
-          endAt: 1,
-          durationMs: 1,
-          session: { id: 's', source: 'claude-code', file: null },
-          usage: u,
-          sharedSession: false,
-          offload: null,
-          sessionMatch: 'exact',
-        }) as Interval;
-      expect(summarize([at('a', usage(1, 'runtime')), at('b', usage(2, 'table'))], true)[0]).toMatchObject({
-        costUsd: 3,
-        costSource: 'mixed',
-      });
-      expect(summarize([at('a', usage(null, null))], true)[0]).toMatchObject({ costUsd: null, costSource: null });
-      // Two finite interval costs whose sum overflows: unknown, never Infinity.
-      expect(summarize([at('a', usage(1e308, 'table')), at('b', usage(1e308, 'table'))], true)[0]?.costUsd).toBeNull();
-    });
-
-    test('an interval sum that overflows is null, never Infinity; a negative runtime price is no price', () => {
-      const huge: PriceTable = { ...prices, models: { 'claude-opus-5-5': { input_cost_per_token: 1e308 } } };
-      const call = (id: string) => ({
-        type: 'assistant',
-        timestamp: '2026-10-04T10:05:00Z',
-        message: { id, model: 'claude-opus-5-5', usage: { input_tokens: 1, output_tokens: 0 } },
-      });
-      const [overflow] = claudeIntervals([call('a'), call('b')], huge);
-      expect(overflow?.usage).toMatchObject({ costUsd: null, costSource: null });
-
-      const file = join(root, '.omp', 'agent', 'sessions', '-repo', '2026-10-04T10-00-00Z_pi-n.jsonl');
-      const usage = { input: 1, output: 1, cost: { total: -0.5 } };
-      write(
-        file,
-        jsonl([{ type: 'message', timestamp: '2026-10-04T10:00:07Z', message: { role: 'assistant', usage } }]),
-      );
-      expect(readUsageSamples({ id: null, source: 'pi', file }, env)[0]?.costUsd).toBeNull();
     });
   });
 });
@@ -1188,9 +413,6 @@ describe('Phoenix projection', () => {
     endAt: 1000,
     durationMs: 1000,
     session: { id: 's', source: 'claude-code' as const, file: null },
-    usage: { calls: 1, input: 1, cacheRead: 2, cacheWrite: 3, output: 4, costUsd: null },
-    sharedSession: false,
-    sessionMatch: 'exact' as const,
     offload: { attempts: 2, failed: 1, ambiguous: 0, tokens: 900, costUsd: 0.04 },
   };
 
@@ -1216,25 +438,9 @@ describe('Phoenix projection', () => {
     expect(intervalSpan(interval, 'salt').context).toEqual(a.context);
     expect(intervalSpan(interval, 'other').context.span_id).not.toBe(a.context.span_id);
     expect(JSON.stringify(a)).not.toContain('/repo/');
-    expect(a.attributes).toMatchObject({
-      'llm.token_count.prompt': 6,
-      'llm.token_count.completion': 4,
-      'genie.transition': 'claim→report',
-    });
-    expect(a.attributes['llm.cost.total']).toBeUndefined();
-    expect(a.attributes['genie.cost_source']).toBeUndefined();
-    const tabled = intervalSpan(
-      { ...interval, usage: { ...interval.usage, costUsd: 0.01, costSource: 'table' as const, pricedCalls: 1 } },
-      'salt',
-    );
-    expect(tabled.attributes).toMatchObject({
-      'llm.cost.total': 0.01,
-      'genie.cost_source': 'table',
-      'genie.cost.priced_calls': 1,
-      'genie.model_calls': 1,
-    });
-    // Without a table the span carries no coverage attribute at all.
-    expect(a.attributes['genie.cost.priced_calls']).toBeUndefined();
+    expect(a.attributes).toMatchObject({ 'genie.transition': 'claim→report', 'genie.duration_ms': 1000 });
+    // Per-transition tokens left the export with the meter cutover (D5): no span carries a token count or a cost.
+    expect(Object.keys(a.attributes).filter((k) => k.startsWith('llm.') || k.includes('usage'))).toEqual([]);
     expect(a.attributes).toMatchObject({
       'genie.offload.attempts': 2,
       'genie.offload.failed': 1,
@@ -1268,5 +474,111 @@ describe('Phoenix projection', () => {
     } finally {
       globalThis.fetch = realFetch;
     }
+  });
+});
+
+describe('task usage from the Rust meter (genie-rs usage)', () => {
+  /** A stand-in genie-rs: logs its argv, prints `answer.json`, exits with `exit.code` (0 by default). */
+  function stubGenieRs(answer: string, code = 0): { path: string; calls: () => string[] } {
+    const dir = join(root, 'bin');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'answer.json'), answer);
+    const path = join(dir, 'genie-rs');
+    writeFileSync(
+      path,
+      `#!/bin/sh\nprintf '%s\\n' "$*" >> "${dir}/calls.log"\ncat "${dir}/answer.json"\nexit ${code}\n`,
+      { mode: 0o755 },
+    );
+    const calls = () => readFileSync(join(dir, 'calls.log'), 'utf8').trim().split('\n');
+    return { path, calls };
+  }
+  const tokens = (total: number) => ({
+    input: total,
+    cache_read: 0,
+    cache_write_5m: 0,
+    cache_write_1h: 0,
+    output: 0,
+    reasoning: 0,
+    unsplit: 0,
+    total,
+  });
+  const measured = {
+    repo: 'example.com/Acme/Widgets',
+    repo_aliases: [],
+    window: 'd7',
+    meter_state: 'measured',
+    meter_reason: null,
+    meter: { meter_version: '3.138.5', pricing: { table: { origin: 'bundled' } } },
+    rows: [
+      { task: 'gn-1', state: 'measured', reason: null, tokens: tokens(14450), cost: { state: 'priced', usd: 0.0275 } },
+      {
+        task: 'gn-4',
+        state: 'measured',
+        reason: 'unpriced_models',
+        tokens: tokens(900),
+        cost: { state: 'unpriced', usd: null, unpriced_models: ['acme-local-1'] },
+      },
+      {
+        task: 'gn-6',
+        state: 'stale',
+        reason: 'ingestion_stale',
+        tokens: tokens(77),
+        cost: { state: 'priced', usd: null },
+      },
+      { task: 'gn-9', state: 'missing', reason: 'task_ambiguous', tokens: null, cost: null },
+    ],
+  };
+
+  test('one call per repository with the window, its rows as the meter gave them, and – wherever it cannot say', () => {
+    const bin = stubGenieRs(JSON.stringify(measured));
+    const usage = readTaskUsage('/work/Widgets', 'd7', { path: bin.path });
+    // genie never names a previous repository name: genie-rs owns the aliases (KNOWN_PREVIOUS_REPO_SLUGS).
+    expect(bin.calls()).toEqual(['usage --project /work/Widgets --window d7 --json']);
+    expect(usage).toMatchObject({ project: '/work/Widgets', meter_state: 'measured', meter_reason: null });
+    expect(usage.rows?.map((r) => r.task)).toEqual(['gn-1', 'gn-4', 'gn-6', 'gn-9']);
+    expect(usage.meter).toEqual(measured.meter);
+    expect(formatTaskUsage([usage])).toBe(
+      'task usage example.com/Acme/Widgets (usagemeter query --by task, d7)\n' +
+        'task\ttokens\tusd\tstate\treason\n' +
+        'gn-1\t14450\t0.0275\tpriced\t-\n' +
+        'gn-4\t900\t–\tunpriced\tunpriced_models\n' +
+        'gn-6\t–\t–\tstale\tingestion_stale\n' +
+        'gn-9\t–\t–\tmissing\ttask_ambiguous\n',
+    );
+    const empty = readTaskUsage('/work/Widgets', 'd1', {
+      path: stubGenieRs(JSON.stringify({ ...measured, rows: [] })).path,
+    });
+    expect(formatTaskUsage([empty])).toContain('no task usage in d1\n');
+    expect(formatTaskUsage([])).toBe('');
+  });
+
+  test('a meter that cannot answer, or a genie-rs that cannot run, is – with its reason: rows null, never 0', () => {
+    const tooOld = { ...measured, meter_state: 'missing', meter_reason: 'needs usagemeter >= 3.129.2', rows: null };
+    const old = readTaskUsage('/w', 'd30', { path: stubGenieRs(JSON.stringify(tooOld)).path });
+    expect(old).toMatchObject({ meter_state: 'missing', meter_reason: 'needs usagemeter >= 3.129.2', rows: null });
+    expect(old.meter).toBeNull();
+    expect(formatTaskUsage([old])).toBe(
+      'task usage example.com/Acme/Widgets (usagemeter query --by task, d30)\n–\tneeds usagemeter >= 3.129.2\n',
+    );
+    const reasonOf = (bin: { path: string } | { missing: string }) => readTaskUsage('/w', 'd30', bin).meter_reason;
+    expect(reasonOf({ missing: 'GENIE_RS_BIN=/x does not exist' })).toBe(
+      'genie_rs_unavailable: GENIE_RS_BIN=/x does not exist',
+    );
+    expect(reasonOf({ path: join(root, 'no-such-genie-rs') })).toStartWith('genie_rs_unavailable: ');
+    expect(reasonOf({ path: stubGenieRs('', 2).path })).toBe('genie_rs_exit_2');
+    expect(reasonOf({ path: stubGenieRs('not json').path })).toBe('invalid_json');
+    expect(reasonOf({ path: stubGenieRs(JSON.stringify({ ...measured, rows: 'x' })).path })).toBe('invalid_json');
+    expect(reasonOf({ path: stubGenieRs('null').path })).toBe('invalid_json');
+    for (const bin of [{ missing: 'x' }, { path: stubGenieRs('not json').path }]) {
+      expect(readTaskUsage('/w', 'd30', bin)).toMatchObject({ meter_state: 'missing', rows: null, meter: null });
+    }
+  });
+
+  test('the repositories asked about are the verified ledger’s, each once', () => {
+    const at = (db: string, event: number) => ({ db, event }) as CaptureLine;
+    expect(
+      ledgerRepos([at('/a/.genie/genie.db', 1), at('/b/.genie/genie.db', 2), at('/a/.genie/genie.db', 3)]),
+    ).toEqual(['/a', '/b']);
+    expect(ledgerRepos([])).toEqual([]);
   });
 });
