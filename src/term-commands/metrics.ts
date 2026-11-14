@@ -7,8 +7,9 @@
  *   metrics export    ledger + task_events → per-transition time (and mikro offload cost); per-task
  *                     tokens and USD from the Rust meter (`genie-rs usage` → `usagemeter query --by task`);
  *                     `--phoenix` projects the intervals to a Phoenix the operator configured
- *   metrics prices    update|status the optional price table that derives USD where the runtime
- *                     did not price a call; only `prices update` fetches it (export never does)
+ *   metrics prices    update|status a stored copy of LiteLLM's price table. Since the meter cutover
+ *                     nothing prices with it (export's USD is the meter's); only `prices status`
+ *                     reads it, and both verbs are kept one release until their retirement stubs
  *
  * Capture is OFF until `enable` runs: a host that never runs it sees no new
  * file, directory, latency or network call. Enabling sends nothing anywhere —
@@ -169,7 +170,7 @@ function renderStatus(status: CaptureStatus): string {
 }
 
 function renderPrices(table: PriceTable | null): string {
-  if (!table) return `prices:  no price table — USD stays runtime-priced only (${pricesPath()})`;
+  if (!table) return `prices:  no price table stored (${pricesPath()}); export takes USD from the usage meter`;
   const { source, fetchedAt, models, sha256 } = table.meta;
   return [
     `prices:  ${pricesPath()}`,
@@ -183,11 +184,13 @@ function renderPrices(table: PriceTable | null): string {
 function registerPricesCommand(metrics: Command): void {
   const prices = metrics
     .command('prices')
-    .description('The optional price table that derives USD where the runtime did not price a call');
+    .description(
+      "A stored copy of LiteLLM's price table; nothing prices with it since export takes USD from the usage meter",
+    );
 
   prices
     .command('update')
-    .description('Download (or copy) the LiteLLM price table into GENIE_HOME; export never fetches prices itself')
+    .description('Download (or copy) the LiteLLM price table into GENIE_HOME; only `prices status` reads it')
     .option('--from <url-or-file>', 'Where to read the table from (default: LiteLLM on GitHub)')
     .action(async (options: { from?: string }) => {
       const result = await updatePriceTable(options.from);
@@ -244,7 +247,7 @@ export function registerMetricsCommand(program: Command): void {
     .option('--since <when>', 'Only events from this window: 7d, 12h, 30m or an ISO date')
     .option(
       '--window <d1|d7|d30|d90>',
-      'The usage meter window for task tokens and USD (d90 needs usagemeter >= 3.129.5)',
+      'The usage meter window for task tokens and USD, independent of --since (d90 needs usagemeter >= 3.129.5)',
       'd30',
     )
     .option('--json', 'Emit the summary as JSON')

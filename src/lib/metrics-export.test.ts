@@ -519,6 +519,13 @@ describe('task usage from the Rust meter (genie-rs usage)', () => {
         cost: { state: 'unpriced', usd: null, unpriced_models: ['acme-local-1'] },
       },
       {
+        task: 'gn-5',
+        state: 'measured',
+        reason: null,
+        tokens: tokens(3450),
+        cost: { state: 'partial', usd: 0.0052, unpriced_models: ['acme-local-1'] },
+      },
+      {
         task: 'gn-6',
         state: 'stale',
         reason: 'ingestion_stale',
@@ -535,13 +542,15 @@ describe('task usage from the Rust meter (genie-rs usage)', () => {
     // genie never names a previous repository name: genie-rs owns the aliases (KNOWN_PREVIOUS_REPO_SLUGS).
     expect(bin.calls()).toEqual(['usage --project /work/Widgets --window d7 --json']);
     expect(usage).toMatchObject({ project: '/work/Widgets', meter_state: 'measured', meter_reason: null });
-    expect(usage.rows?.map((r) => r.task)).toEqual(['gn-1', 'gn-4', 'gn-6', 'gn-9']);
+    expect(usage.rows?.map((r) => r.task)).toEqual(['gn-1', 'gn-4', 'gn-5', 'gn-6', 'gn-9']);
     expect(usage.meter).toEqual(measured.meter);
     expect(formatTaskUsage([usage])).toBe(
       'task usage example.com/Acme/Widgets (usagemeter query --by task, d7)\n' +
         'task\ttokens\tusd\tstate\treason\n' +
         'gn-1\t14450\t0.0275\tpriced\t-\n' +
         'gn-4\t900\t–\tunpriced\tunpriced_models\n' +
+        // A partial cost prints the priced part with its state beside it: never a bare total.
+        'gn-5\t3450\t0.0052\tpartial\t-\n' +
         'gn-6\t–\t–\tstale\tingestion_stale\n' +
         'gn-9\t–\t–\tmissing\ttask_ambiguous\n',
     );

@@ -233,7 +233,7 @@ describe('genie metrics', () => {
     }
 
     // A price table is the `prices` verbs' business; export reads none of it.
-    expect(run(['metrics', 'prices', 'status']).stdout).toContain('no price table — USD stays runtime-priced only');
+    expect(run(['metrics', 'prices', 'status']).stdout).toContain('no price table stored (');
     const table = join(root, 'litellm.json');
     writeFileSync(
       table,

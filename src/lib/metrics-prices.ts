@@ -1,13 +1,14 @@
 /**
- * The optional, self-updatable price table that turns measured tokens into USD
- * where the runtime did not price the call (Claude Code and Codex logs carry
- * tokens but no price; pi/OMP prices its own calls and always wins).
+ * An optional stored copy of LiteLLM's price table, and the rules that price
+ * tokens with a table.
  *
- * Tokens stay the primary currency. Nothing here is on by default: with no
- * table at `<GENIE_HOME>/metrics/prices.json`, `genie metrics export` behaves
- * and prints exactly as it did before the table existed. The export reads the
- * table from disk and never fetches it; only `genie metrics prices update` does, and
- * only when the operator runs it.
+ * Since the meter cutover (meter wish D5) no genie command prices with the stored
+ * table: `genie metrics export` takes task USD from the usage meter. Only
+ * `genie metrics prices status` reads `<GENIE_HOME>/metrics/prices.json`, and only
+ * `genie metrics prices update` writes it, when the operator runs it; both verbs
+ * are kept one release until their retirement stubs. `tableCost` and `entryFor`
+ * are the rules `scripts/bench/accounting.ts` applies to a table its caller
+ * passes in; nothing reads the stored file for that.
  *
  * The table is LiteLLM's `model_prices_and_context_window.json`, stored
  * verbatim under `models` beside a small `genie` header (source, fetchedAt,
