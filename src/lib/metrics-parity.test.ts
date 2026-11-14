@@ -207,7 +207,12 @@ describe('meter parity fixtures', () => {
     const usage = legacy.tasks.find((t) => t.task === 'gn-4')?.usage as LegacyUsage;
     expect(usage).toMatchObject({ costUsd: null, pricedCalls: 0, costSource: null });
     const { cost, tokens } = rowOf('gn-4');
-    expect(cost).toMatchObject({ state: 'unpriced', usd: null, unpriced_models: ['acme-local-1'] });
+    expect(cost).toMatchObject({
+      state: 'unpriced',
+      usd: null,
+      usd_estimated: null,
+      unpriced_models: ['acme-local-1'],
+    });
     expect(cost.tokens_unpriced).toBe(tokens.total);
     expect(tokens.total).toBe(900);
   });
@@ -218,6 +223,8 @@ describe('meter parity fixtures', () => {
     const { cost, tokens } = rowOf('gn-5');
     expect(cost).toMatchObject({ state: 'partial', unpriced_models: ['acme-local-1'] });
     expect(sameUsd(cost.usd, usage.costUsd)).toBe(true);
+    // The priced part is a list-price estimate, as on the fully priced tasks.
+    expect(cost.usd_estimated).toBe(cost.usd);
     // The unpriced call's 500 input + 100 output are counted as unpriced, never dropped from the total.
     expect(cost.tokens_unpriced).toBe(600);
     expect(cost.tokens_priced + cost.tokens_unpriced).toBe(tokens.total);
