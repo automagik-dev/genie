@@ -1,0 +1,563 @@
+{
+  "contract": "usagemeter.query",
+  "contract_version": 1,
+  "capability": "meter.usage@1",
+  "meter_version": "3.138.5",
+  "status": "ok",
+  "error": null,
+  "generated_at": "2026-11-14T20:37:43Z",
+  "as_of": "2026-11-14T20:37:43Z",
+  "machine": {
+    "id": "m-000000000000000000000000",
+    "scope": "local"
+  },
+  "store": {
+    "schema_version": 3,
+    "location": "override"
+  },
+  "ingestion": {
+    "watermark": "2026-11-14T20:37:43Z",
+    "counted_from": "2026-10-16T00:00:00Z",
+    "evidence_from": "2026-10-16T00:00:00Z",
+    "complete": true,
+    "backlog": {
+      "bytes": 0,
+      "files": 0
+    },
+    "stale": false,
+    "stale_after_s": 7200
+  },
+  "window": {
+    "name": "d30",
+    "requested_start": "2026-10-15T21:00:00Z",
+    "start": "2026-10-16T00:00:00Z",
+    "end": "2026-11-14T21:00:00Z",
+    "clipped": true
+  },
+  "sources": [
+    {
+      "harness": "agy",
+      "status": "absent",
+      "reason": null,
+      "last_success": null,
+      "stale": false
+    },
+    {
+      "harness": "claude-code",
+      "status": "ok",
+      "reason": null,
+      "last_success": "2026-11-14T20:37:43Z",
+      "stale": false
+    },
+    {
+      "harness": "codex",
+      "status": "ok",
+      "reason": null,
+      "last_success": "2026-11-14T20:37:43Z",
+      "stale": false
+    },
+    {
+      "harness": "dsh-tui",
+      "status": "absent",
+      "reason": null,
+      "last_success": null,
+      "stale": false
+    },
+    {
+      "harness": "omp",
+      "status": "absent",
+      "reason": null,
+      "last_success": null,
+      "stale": false
+    }
+  ],
+  "unattributed": {
+    "tokens_total": 0,
+    "harnesses": []
+  },
+  "actor_unattributed": {
+    "tokens_total": 0,
+    "tokens_ambiguous": 0,
+    "tokens_unlinked": 0,
+    "tokens_before_evidence": 0,
+    "parts": [],
+    "absent_bot_is_zero": false
+  },
+  "pricing": {
+    "table": {
+      "origin": "bundled",
+      "date": "2026-10-06",
+      "source": "usagemeter bundled list prices",
+      "label": "list prices, an estimate",
+      "sha256": null
+    },
+    "reported_wins": true,
+    "long_prompt_tiers": false
+  },
+  "query": {
+    "repo": "example.com/Acme/Widgets",
+    "window": "d30",
+    "by": "task",
+    "branch_count": 0,
+    "branches": [],
+    "branches_complete": true,
+    "request_sha256": "d782f26580184a0db577dba4ee8bf5663630aeab7d4168244bea55af43798a40"
+  },
+  "rows": [
+    {
+      "task": "gn-1",
+      "actors": [
+        {
+          "bot": "b-parity-dev",
+          "kind": "worker",
+          "role": "dev",
+          "squad": "b-parity-lead",
+          "unrecorded": [],
+          "harness": "claude-code"
+        }
+      ],
+      "actors_omitted": 0,
+      "state": "measured",
+      "reason": null,
+      "tokens": {
+        "input": 1250,
+        "cache_read": 11000,
+        "cache_write_5m": 800,
+        "cache_write_1h": 400,
+        "output": 1000,
+        "reasoning": 0,
+        "unsplit": 0,
+        "total": 14450
+      },
+      "cost": {
+        "state": "priced",
+        "usd": 0.0275,
+        "usd_reported": 0,
+        "usd_estimated": 0.0275,
+        "tokens_priced": 14450,
+        "tokens_reported": 0,
+        "tokens_unpriced": 0,
+        "unpriced_models": [],
+        "unpriced_models_omitted": 0
+      },
+      "models": [
+        {
+          "model": "claude-sonnet-4-6",
+          "calls": 2,
+          "tokens": {
+            "input": 1250,
+            "cache_read": 11000,
+            "cache_write_5m": 800,
+            "cache_write_1h": 400,
+            "output": 1000,
+            "reasoning": 0,
+            "unsplit": 0,
+            "total": 14450
+          },
+          "cost_usd": 0.0275
+        }
+      ],
+      "models_omitted": 0,
+      "token_precision": "exact",
+      "attribution": {
+        "precision": "task_interval",
+        "exclusive": false,
+        "shared": false,
+        "coverage": "complete",
+        "actor": {
+          "tokens_attributed": 14450,
+          "tokens_ambiguous": 0,
+          "tokens_unlinked": 0,
+          "tokens_before_evidence": 0,
+          "tokens_by_basis": {
+            "session": 14450,
+            "label": 0,
+            "worktree": 0
+          },
+          "tokens_by_branch_basis": {
+            "log": 14450,
+            "ledger": 0,
+            "none": 0
+          }
+        }
+      },
+      "activity": {
+        "first_hour": "2026-11-13T10:00:00Z",
+        "last_hour": "2026-11-13T10:00:00Z",
+        "hours": 1,
+        "harnesses": ["claude-code"]
+      },
+      "incomplete_sources": []
+    },
+    {
+      "task": "gn-2",
+      "actors": [
+        {
+          "bot": "b-parity-dev",
+          "kind": "worker",
+          "role": "dev",
+          "squad": "b-parity-lead",
+          "unrecorded": [],
+          "harness": "codex"
+        }
+      ],
+      "actors_omitted": 0,
+      "state": "measured",
+      "reason": null,
+      "tokens": {
+        "input": 6000,
+        "cache_read": 15000,
+        "cache_write_5m": 0,
+        "cache_write_1h": 0,
+        "output": 1000,
+        "reasoning": 300,
+        "unsplit": 0,
+        "total": 22000
+      },
+      "cost": {
+        "state": "priced",
+        "usd": 0.0118,
+        "usd_reported": 0,
+        "usd_estimated": 0.0118,
+        "tokens_priced": 22000,
+        "tokens_reported": 0,
+        "tokens_unpriced": 0,
+        "unpriced_models": [],
+        "unpriced_models_omitted": 0
+      },
+      "models": [
+        {
+          "model": "gpt-6.1-terra",
+          "calls": 2,
+          "tokens": {
+            "input": 6000,
+            "cache_read": 15000,
+            "cache_write_5m": 0,
+            "cache_write_1h": 0,
+            "output": 1000,
+            "reasoning": 300,
+            "unsplit": 0,
+            "total": 22000
+          },
+          "cost_usd": 0.0118
+        }
+      ],
+      "models_omitted": 0,
+      "token_precision": "exact",
+      "attribution": {
+        "precision": "task_interval",
+        "exclusive": false,
+        "shared": false,
+        "coverage": "complete",
+        "actor": {
+          "tokens_attributed": 22000,
+          "tokens_ambiguous": 0,
+          "tokens_unlinked": 0,
+          "tokens_before_evidence": 0,
+          "tokens_by_basis": {
+            "session": 0,
+            "label": 0,
+            "worktree": 22000
+          },
+          "tokens_by_branch_basis": {
+            "log": 22000,
+            "ledger": 0,
+            "none": 0
+          }
+        }
+      },
+      "activity": {
+        "first_hour": "2026-11-13T10:00:00Z",
+        "last_hour": "2026-11-13T10:00:00Z",
+        "hours": 1,
+        "harnesses": ["codex"]
+      },
+      "incomplete_sources": []
+    },
+    {
+      "task": "gn-3",
+      "actors": [
+        {
+          "bot": "b-parity-dev",
+          "kind": "worker",
+          "role": "dev",
+          "squad": "b-parity-lead",
+          "unrecorded": [],
+          "harness": "claude-code"
+        }
+      ],
+      "actors_omitted": 0,
+      "state": "measured",
+      "reason": null,
+      "tokens": {
+        "input": 1200,
+        "cache_read": 5500,
+        "cache_write_5m": 800,
+        "cache_write_1h": 0,
+        "output": 340,
+        "reasoning": 0,
+        "unsplit": 0,
+        "total": 7840
+      },
+      "cost": {
+        "state": "priced",
+        "usd": 0.0111,
+        "usd_reported": 0,
+        "usd_estimated": 0.0111,
+        "tokens_priced": 7840,
+        "tokens_reported": 0,
+        "tokens_unpriced": 0,
+        "unpriced_models": [],
+        "unpriced_models_omitted": 0
+      },
+      "models": [
+        {
+          "model": "claude-sonnet-4-6",
+          "calls": 1,
+          "tokens": {
+            "input": 900,
+            "cache_read": 4000,
+            "cache_write_5m": 600,
+            "cache_write_1h": 0,
+            "output": 250,
+            "reasoning": 0,
+            "unsplit": 0,
+            "total": 5750
+          },
+          "cost_usd": 0.0099
+        },
+        {
+          "model": "claude-haiku-4-5",
+          "calls": 1,
+          "tokens": {
+            "input": 300,
+            "cache_read": 1500,
+            "cache_write_5m": 200,
+            "cache_write_1h": 0,
+            "output": 90,
+            "reasoning": 0,
+            "unsplit": 0,
+            "total": 2090
+          },
+          "cost_usd": 0.0012
+        }
+      ],
+      "models_omitted": 0,
+      "token_precision": "exact",
+      "attribution": {
+        "precision": "task_interval",
+        "exclusive": false,
+        "shared": false,
+        "coverage": "complete",
+        "actor": {
+          "tokens_attributed": 7840,
+          "tokens_ambiguous": 0,
+          "tokens_unlinked": 0,
+          "tokens_before_evidence": 0,
+          "tokens_by_basis": {
+            "session": 7840,
+            "label": 0,
+            "worktree": 0
+          },
+          "tokens_by_branch_basis": {
+            "log": 7840,
+            "ledger": 0,
+            "none": 0
+          }
+        }
+      },
+      "activity": {
+        "first_hour": "2026-11-13T10:00:00Z",
+        "last_hour": "2026-11-13T10:00:00Z",
+        "hours": 1,
+        "harnesses": ["claude-code"]
+      },
+      "incomplete_sources": []
+    },
+    {
+      "task": "gn-4",
+      "actors": [
+        {
+          "bot": "b-parity-dev",
+          "kind": "worker",
+          "role": "dev",
+          "squad": "b-parity-lead",
+          "unrecorded": [],
+          "harness": "claude-code"
+        }
+      ],
+      "actors_omitted": 0,
+      "state": "measured",
+      "reason": null,
+      "tokens": {
+        "input": 700,
+        "cache_read": 0,
+        "cache_write_5m": 0,
+        "cache_write_1h": 0,
+        "output": 200,
+        "reasoning": 0,
+        "unsplit": 0,
+        "total": 900
+      },
+      "cost": {
+        "state": "unpriced",
+        "usd": null,
+        "usd_reported": null,
+        "usd_estimated": null,
+        "tokens_priced": 0,
+        "tokens_reported": 0,
+        "tokens_unpriced": 900,
+        "unpriced_models": ["acme-local-1"],
+        "unpriced_models_omitted": 0
+      },
+      "models": [
+        {
+          "model": "acme-local-1",
+          "calls": 1,
+          "tokens": {
+            "input": 700,
+            "cache_read": 0,
+            "cache_write_5m": 0,
+            "cache_write_1h": 0,
+            "output": 200,
+            "reasoning": 0,
+            "unsplit": 0,
+            "total": 900
+          },
+          "cost_usd": null
+        }
+      ],
+      "models_omitted": 0,
+      "token_precision": "exact",
+      "attribution": {
+        "precision": "task_interval",
+        "exclusive": false,
+        "shared": false,
+        "coverage": "complete",
+        "actor": {
+          "tokens_attributed": 900,
+          "tokens_ambiguous": 0,
+          "tokens_unlinked": 0,
+          "tokens_before_evidence": 0,
+          "tokens_by_basis": {
+            "session": 900,
+            "label": 0,
+            "worktree": 0
+          },
+          "tokens_by_branch_basis": {
+            "log": 900,
+            "ledger": 0,
+            "none": 0
+          }
+        }
+      },
+      "activity": {
+        "first_hour": "2026-11-13T10:00:00Z",
+        "last_hour": "2026-11-13T10:00:00Z",
+        "hours": 1,
+        "harnesses": ["claude-code"]
+      },
+      "incomplete_sources": []
+    },
+    {
+      "task": "gn-5",
+      "actors": [
+        {
+          "bot": "b-parity-dev",
+          "kind": "worker",
+          "role": "dev",
+          "squad": "b-parity-lead",
+          "unrecorded": [],
+          "harness": "claude-code"
+        }
+      ],
+      "actors_omitted": 0,
+      "state": "measured",
+      "reason": null,
+      "tokens": {
+        "input": 900,
+        "cache_read": 2000,
+        "cache_write_5m": 300,
+        "cache_write_1h": 0,
+        "output": 250,
+        "reasoning": 0,
+        "unsplit": 0,
+        "total": 3450
+      },
+      "cost": {
+        "state": "partial",
+        "usd": 0.0052,
+        "usd_reported": 0,
+        "usd_estimated": 0.0052,
+        "tokens_priced": 2850,
+        "tokens_reported": 0,
+        "tokens_unpriced": 600,
+        "unpriced_models": ["acme-local-1"],
+        "unpriced_models_omitted": 0
+      },
+      "models": [
+        {
+          "model": "claude-sonnet-4-6",
+          "calls": 1,
+          "tokens": {
+            "input": 400,
+            "cache_read": 2000,
+            "cache_write_5m": 300,
+            "cache_write_1h": 0,
+            "output": 150,
+            "reasoning": 0,
+            "unsplit": 0,
+            "total": 2850
+          },
+          "cost_usd": 0.0052
+        },
+        {
+          "model": "acme-local-1",
+          "calls": 1,
+          "tokens": {
+            "input": 500,
+            "cache_read": 0,
+            "cache_write_5m": 0,
+            "cache_write_1h": 0,
+            "output": 100,
+            "reasoning": 0,
+            "unsplit": 0,
+            "total": 600
+          },
+          "cost_usd": null
+        }
+      ],
+      "models_omitted": 0,
+      "token_precision": "exact",
+      "attribution": {
+        "precision": "task_interval",
+        "exclusive": false,
+        "shared": false,
+        "coverage": "complete",
+        "actor": {
+          "tokens_attributed": 3450,
+          "tokens_ambiguous": 0,
+          "tokens_unlinked": 0,
+          "tokens_before_evidence": 0,
+          "tokens_by_basis": {
+            "session": 3450,
+            "label": 0,
+            "worktree": 0
+          },
+          "tokens_by_branch_basis": {
+            "log": 3450,
+            "ledger": 0,
+            "none": 0
+          }
+        }
+      },
+      "activity": {
+        "first_hour": "2026-11-13T10:00:00Z",
+        "last_hour": "2026-11-13T10:00:00Z",
+        "hours": 1,
+        "harnesses": ["claude-code"]
+      },
+      "incomplete_sources": []
+    }
+  ]
+}
